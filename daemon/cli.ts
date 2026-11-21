@@ -8,6 +8,7 @@ import { recordVerdict } from "./ready.ts";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
+import { capsOf, intervalOf, isDue, readTriggers, runningByTrigger } from "./triggers.ts";
 import { buildStatus, writeStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
 import { parseTokens } from "../lib/model.js";
@@ -212,6 +213,8 @@ export function main(argv: string[], log = console.log) {
       const lead = needLead(db);
       let r: any = null;
       let terminal: string | null = null;
+      const cap = capsOf(readTriggers(lead.path).triggers).manual;
+      if (start && cap !== undefined && (runningByTrigger(db).manual ?? 0) >= cap) throw new Error(`${cap} manual ticket${cap > 1 ? "s are" : " is"} running already (the manual trigger's concurrency); add it without --start`);
       // A held start still adds the ticket; it waits in the queue.
       const held = start ? startHold(db, lead.path, new Date()) : null;
       change(db, () => {
@@ -376,6 +379,47 @@ export function main(argv: string[], log = console.log) {
   }
 }
 
+// Each trigger on its own clock (daemon/triggers.ts). The stamp is written outside the
+// change: a failing gh waits its turn like a working one.
+export function runTriggers(db: Database, o: { dir: string; repo: string; slug: string; run: typeof sh; now: string; log: (s: string) => void }) {
+  for (const t of readTriggers(o.repo).triggers) {
+    const ms = intervalOf(t);
+    const key = `trigger_at:${t.name}`;
+    if (ms === null || !isDue(getMeta(db, key), Date.parse(o.now), ms)) continue;
+    if (t.on === "project_ready") {
+      setMeta(db, key, o.now);
+      try {
+        let added: number[] = [];
+        change(db, () => { added = pollQueue(db, { queue: readFactory(o.repo).queue, repo: o.slug, run: o.run, now: o.now, trigger: t }); });
+        if (added.length) o.log(`factory: ${added.map((n) => `#${n}`).join(", ")} joined from the queue`);
+      } catch (e) {
+        o.log(`factory: reading the queue: ${(e as Error).message}`);
+      }
+    } else if (t.on === "pr_review_comment") {
+      // Factory PRs waiting on you: merged or closed on GitHub, or new review comments.
+      if (o.slug === "unknown") continue;
+      setMeta(db, key, o.now);
+      if (!db.query("SELECT 1 FROM tickets t JOIN ticket_repos r ON r.ticket = t.id WHERE t.state = 'ready' AND r.pr_watched = 1").get()) continue;
+      let me: string | null = null;
+      try { me = login(db, o.run, "me"); } catch (e) { o.log(`factory: not watching PRs: ${(e as Error).message}`); }
+      if (me) for (const e of watchPrs(db, { dir: o.dir, repo: o.repo, me, run: o.run, now: o.now, log: o.log })) o.log(`factory: #${e.id}'s PR: ${e.event}`);
+    } else if (t.on === "schedule") {
+      setMeta(db, key, o.now);
+      if ((runningByTrigger(db)[t.name] ?? 0) >= (t.concurrency ?? Infinity)) continue;
+      try {
+        let id = 0;
+        change(db, () => {
+          id = newTicket(db, { text: `${t.name}, ${o.now.slice(0, 16).replace("T", " ")}`, repo: o.slug, blueprint: t.blueprint, run: o.run, now: o.now, trigger: t.name }).id;
+          startTicket(db, { dir: o.dir, repo: o.repo, id, run: o.run, now: o.now });
+        });
+        o.log(`factory: #${id} started by ${t.name}`);
+      } catch (e) {
+        o.log(`factory: trigger ${t.name}: ${(e as Error).message}`);
+      }
+    }
+  }
+}
+
 // An agent whose terminal exited without calling stage-done has still finished its turn.
 export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = sh, log = console.log) {
   const lead = leadRepo(db);
@@ -405,20 +449,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     try { change(db, () => { readIssueAnswers(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
     catch (e) { log(`factory: reading issue answers: ${(e as Error).message}`); }
   }
-  // The Project's Ready column, every 3 minutes; triage starts on what joined, a few at a time.
-  const lastPoll = getMeta(db, "queue_polled_at");
-  if (!lastPoll || Date.now() - Date.parse(lastPoll) >= 180_000) {
-    setMeta(db, "queue_polled_at", nowIso);
-    try {
-      let added: number[] = [];
-      change(db, () => {
-        added = pollQueue(db, { queue: readFactory(repoDir).queue, repo: lead.slug, run, now: nowIso });
-      });
-      if (added.length) log(`factory: ${added.map((n) => `#${n}`).join(", ")} joined from the queue`);
-    } catch (e) {
-      log(`factory: reading the queue: ${(e as Error).message}`);
-    }
-  }
+  runTriggers(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso, log });
   try {
     let groomed: number[] = [];
     change(db, () => { groomed = startPendingGrooming(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); });
@@ -426,22 +457,11 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   } catch (e) {
     log(`factory: starting triage: ${(e as Error).message}`);
   }
-  // Factory PRs waiting on you, every 2 minutes: merged or closed on GitHub, or new review comments.
-  const lastWatch = getMeta(db, "prs_watched_at");
-  const slug = lead.slug;
-  if (slug !== "unknown" && (!lastWatch || Date.now() - Date.parse(lastWatch) >= 120_000)) {
-    setMeta(db, "prs_watched_at", nowIso);
-    if (db.query("SELECT 1 FROM tickets t JOIN ticket_repos r ON r.ticket = t.id WHERE t.state = 'ready' AND r.pr_watched = 1").get()) {
-      let me: string | null = null;
-      try { me = login(db, run, "me"); } catch (e) { log(`factory: not watching PRs: ${(e as Error).message}`); }
-      if (me) for (const e of watchPrs(db, { dir: p.dir, repo: repoDir, me, run, now: nowIso, log })) log(`factory: #${e.id}'s PR: ${e.event}`);
-    }
-  }
   // Merged PRs someone reverted, every 10 minutes, for the revert rate.
   const lastReverts = getMeta(db, "reverts_checked_at");
   if (!lastReverts || Date.now() - Date.parse(lastReverts) >= 600_000) {
     setMeta(db, "reverts_checked_at", nowIso);
-    try { change(db, () => { for (const id of findReverts(db, { repo: slug, run, now: nowIso })) log(`factory: #${id}'s PR was reverted`); }); }
+    try { change(db, () => { for (const id of findReverts(db, { repo: lead.slug, run, now: nowIso })) log(`factory: #${id}'s PR was reverted`); }); }
     catch (e) { log(`factory: checking reverts: ${(e as Error).message}`); }
   }
   // Groomed tickets waiting for room: one starts as another stops running.

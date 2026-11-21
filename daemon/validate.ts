@@ -42,7 +42,7 @@ export const KINDS: Record<string, Rule> = {
   },
   trigger: {
     required: ["on", "blueprint"],
-    object: { on: { enum: ["manual", "project_ready", "pr_review_comment", "schedule"] }, filter: open, blueprint: str, concurrency: num, schedule: str },
+    object: { on: { enum: ["manual", "project_ready", "pr_review_comment", "schedule"] }, filter: open, blueprint: str, concurrency: num, schedule: str, every: str },
   },
   benchmark: {
     required: ["target", "variants"],
@@ -53,6 +53,12 @@ export const KINDS: Record<string, Rule> = {
     },
   },
 };
+
+// `every: 30m | 6h | 1d`, in milliseconds; null when it isn't that.
+export function parseEvery(v: unknown): number | null {
+  const m = typeof v === "string" ? v.trim().match(/^(\d+)([mhd])$/) : null;
+  return m && Number(m[1]) > 0 ? Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"] : null;
+}
 
 const kindOf = (path: string) =>
   path === "factory.yaml" ? "factory"
@@ -131,6 +137,11 @@ export function validateFile(path: string, text: string): string[] {
   check(doc, KINDS[kind], "", errors);
   if (kind === "agent" && !(doc as any)?.role && !(doc as any)?.from) errors.push("file: needs role, or from another agent");
   if (kind === "blueprint") blueprintRefs(doc, errors);
+  if (kind === "trigger") {
+    const t = doc as any;
+    if (t?.on === "schedule" && parseEvery(t.every) === null) errors.push("every: a schedule trigger needs every: 30m, 6h or 1d");
+    if (t?.on !== "schedule" && t?.every !== undefined) errors.push("every: only a schedule trigger has it");
+  }
   return errors;
 }
 
