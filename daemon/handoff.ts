@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { transcriptDir, parseTranscript, type Use } from "./usage.ts";
 import { flagFile, withHandoffHook } from "./handoff-hook.ts";
 import { openAgent } from "./herdr.ts";
-import { argvFor, brief, loadAgent, readFactory, type Run } from "./runner.ts";
+import { agentSettings, argvFor, brief, loadAgent, readFactory, type Run } from "./runner.ts";
+import { settingOf } from "./learn.ts";
 import { ticketRepos } from "./db.ts";
 
 export const DEFAULT_HANDOFF_AT = 0.6;
@@ -54,7 +55,7 @@ export function missingSections(text: string) {
   return SECTIONS.filter(([, re]) => !parts.some((p) => re.test(p.head) && p.body)).map(([name]) => name);
 }
 
-type Row = { id: number; ticket: number; stage: string; agent: string | null; terminal: string; argv: string; started_at: string; cwd: string | null; space: string | null; worktree: string | null };
+type Row = { id: number; ticket: number; stage: string; agent: string | null; terminal: string; argv: string; started_at: string; cwd: string | null; space: string | null; worktree: string | null; settings?: string | null };
 type Flag = { session: number; at: string; fill: number; asked?: boolean; message?: string };
 
 // The session's own transcript: the newest top-level file in its folder since it started.
@@ -75,13 +76,14 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 const say = (run: Run, terminal: string, text: string) => run(["hc", "send", "--if", "idle", terminal, text]).code === 0;
 
 export function watchContext(db: Database, o: { dir: string; repo: string; run: Run; now: string; log?: (s: string) => void }) {
-  const at = handoffAt((readFactory(o.repo) as { budget?: { handoff_at_context?: number | string } }).budget);
-  const rows = db.query(`SELECT s.id, s.ticket, s.stage, s.agent, s.terminal, s.argv, s.started_at, s.cwd, t.space, t.worktree
+  const budget = (readFactory(o.repo) as { budget?: { handoff_at_context?: number | string } }).budget;
+  const rows = db.query(`SELECT s.id, s.ticket, s.stage, s.agent, s.terminal, s.argv, s.started_at, s.cwd, t.space, t.worktree, t.settings
     FROM sessions s JOIN ticket_lead t ON t.id = s.ticket
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.state = 'running' AND t.location != 'cloud' AND s.argv LIKE '["claude"%'
     AND s.id = (SELECT MAX(id) FROM sessions WHERE ticket = s.ticket)`).all() as Row[];
   for (const s of rows) {
     try {
+      const at = handoffAt({ handoff_at_context: settingOf(s, "budget.handoff_at_context", budget?.handoff_at_context) }); // the ticket's own, fixed at its start
       const fill = sessionFill(s);
       if (fill == null) continue;
       const flag = readFlag(o.dir, s.ticket);
@@ -165,7 +167,8 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
     }
   const text = handoffBrief(db, { ...o, n });
   const agent = s.agent ? loadAgent(o.repo, s.agent) : null;
-  const argv = withHandoffHook(argvFor(agent, { harness: "claude", model: "sonnet" }, text), o.dir, s.ticket);
+  const defaults = { harness: "claude", model: "sonnet" };
+  const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket);
   run(["hc", "kill", s.terminal]);
   db.query("UPDATE sessions SET ended_at = ? WHERE id = ?").run(o.now, s.id);
   // The handoff is read; keep it, so the next one's mtime check isn't fooled by it.

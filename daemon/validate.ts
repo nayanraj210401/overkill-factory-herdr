@@ -2,6 +2,7 @@
 // line per problem. Unknown keys are errors, so a typo never silently does nothing.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { whyNotTunable } from "./learn.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -13,6 +14,7 @@ type Rule =
 const str = "string" as const, num = "number" as const, strs = "strings" as const;
 const open = { object: {}, open: true };
 const gate = { enum: ["human", "auto"] };
+const LEARN_TARGETS = ["cost_per_pr", "time_to_pr", "interactions_per_pr", "review_rounds_per_pr"];
 
 const STAGE: Rule = {
   object: {
@@ -29,7 +31,7 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: open, review: open, away: open, maintainer: open,
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: open, away: open, maintainer: open,
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
   },
@@ -137,6 +139,14 @@ export function validateFile(path: string, text: string): string[] {
   check(doc, KINDS[kind], "", errors);
   if (kind === "agent" && !(doc as any)?.role && !(doc as any)?.from) errors.push("file: needs role, or from another agent");
   if (kind === "blueprint") blueprintRefs(doc, errors);
+  if (kind === "factory") {
+    // The learner may only move settings; what steers the work stays yours.
+    const tunable = (doc as any)?.learn?.tunable;
+    if (Array.isArray(tunable)) for (const k of tunable) {
+      const why = typeof k === "string" ? whyNotTunable(k) : null;
+      if (why) errors.push(`learn.tunable: ${k} ${why}`);
+    }
+  }
   if (kind === "trigger") {
     const t = doc as any;
     if (t?.on === "schedule" && parseEvery(t.every) === null) errors.push("every: a schedule trigger needs every: 30m, 6h or 1d");

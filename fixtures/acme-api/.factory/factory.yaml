@@ -17,3 +17,9 @@ ready: [evidence, holdout, quality_floor, review, template, budget]
 quality_floor: [npm test, npm run typecheck]
 hard_stops: [push-to-main, outside-worktree, destructive-commands, secrets-in-output]
 merge: human
+learn:
+  target: cost_per_pr
+  tunable: [agents.reviewer.model, agents.checker.model, budget.handoff_at_context]
+  warmup_tickets: 20
+  pause_above: 70%
+  promote_after: 30

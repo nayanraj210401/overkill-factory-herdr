@@ -33,3 +33,8 @@ test("chords and unknown keys are left alone", () => {
   assert.equal(clamp(-1, 3), 0);
   assert.equal(clamp(0, 0), 0);
 });
+
+test("z is the Config page's undo for an override", () => {
+  assert.deepEqual(k("z"), { kind: "undo-override" });
+  assert.equal(k("z", { platform: true }), null);
+});

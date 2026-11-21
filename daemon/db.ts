@@ -121,6 +121,21 @@ export const MIGRATIONS = [
   `ALTER TABLE tickets ADD COLUMN trigger_name TEXT;`,
   // Ticket lifecycle: a hash of the issue body seen at pickup, to notice a scope change.
   `ALTER TABLE tickets ADD COLUMN issue_hash TEXT;`,
+  // Learning: tuned settings kept outside .factory/ (the active one per key has no undone_at), the
+  // copy of them a ticket takes when it starts, and the lesson store with full-text search.
+  `CREATE TABLE overrides (id INTEGER PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, undone_at TEXT);
+   ALTER TABLE tickets ADD COLUMN settings TEXT;
+   CREATE TABLE lessons (
+     id INTEGER PRIMARY KEY, area TEXT NOT NULL, text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'you',
+     hits INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, retired_at TEXT, dup_of INTEGER REFERENCES lessons(id)
+   );
+   CREATE VIRTUAL TABLE lessons_fts USING fts5(text, area, content = 'lessons', content_rowid = 'id');
+   CREATE TRIGGER lessons_ai AFTER INSERT ON lessons BEGIN INSERT INTO lessons_fts (rowid, text, area) VALUES (new.id, new.text, new.area); END;
+   CREATE TRIGGER lessons_ad AFTER DELETE ON lessons BEGIN INSERT INTO lessons_fts (lessons_fts, rowid, text, area) VALUES ('delete', old.id, old.text, old.area); END;
+   CREATE TRIGGER lessons_au AFTER UPDATE OF text, area ON lessons BEGIN
+     INSERT INTO lessons_fts (lessons_fts, rowid, text, area) VALUES ('delete', old.id, old.text, old.area);
+     INSERT INTO lessons_fts (rowid, text, area) VALUES (new.id, new.text, new.area);
+   END;`,
 ];
 
 export function open(path: string): Database {

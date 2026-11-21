@@ -31,6 +31,7 @@ import { validateMetrics } from "../lib/metrics.js";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { overwatch } from "./overwatch.ts";
+import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
 import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
@@ -62,6 +63,11 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   cloud <id> | --all                 hand a running ticket (or every one) to a Claude Code cloud session
   local <id>                         bring a ticket back from the cloud and resume it here
   away on|off                        you're away: factory.yaml's away: policy applies; Home shows a digest when you're back
+  learn set <key> <value> [--why reason]  tune a setting learn.tunable lists, for tickets that start from now on
+  learn undo <key> | learn list      drop an override / show the active ones beside the file's value
+  learn export                       print the edits that make the overrides permanent, as a patch (never writes .factory/)
+  lesson add <area> <text…> [--source s]  a lesson for code matching the area glob (src/auth/**); loaded when a ticket touches it
+  lesson list [words…] | lesson retire <id>  the store (--json), searched by words / take one out of briefs
   overwatch [--json]                 start the overwatch agent, or print the live one's terminal
   blueprints                         write blueprints.json (stages, runs in 7 days) for the Blueprint page
   plan <5h tokens> <week tokens>     your plan's limits, for the 5h and week meters: plan 20M 400M
@@ -137,6 +143,8 @@ export function main(argv: string[], log = console.log) {
   const maxRunningFlag = flag(args, "max-running");
   const queueFlag = flag(args, "queue");
   const by = flag(args, "by");
+  const why = flag(args, "why");
+  const source = flag(args, "source");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -380,6 +388,45 @@ export function main(argv: string[], log = console.log) {
       if (sub !== "on" && sub !== "off") throw new Error("usage: factory away on|off");
       change(db, () => setAway(db, sub === "on", now()));
       log(sub === "on" ? "away: the away policy applies until factory away off" : "back: Home shows what happened while you were away");
+    } else if (cmd === "learn") {
+      const lead = needLead(db);
+      if (sub === "set") {
+        const [key, ...value] = rest;
+        if (!key || !value.length) throw new Error("usage: factory learn set <key> <value> [--why reason]");
+        change(db, () => setOverride(db, { key, value: parseValue(value.join(" ")), reason: why, tunable: readFactory(lead.path).learn?.tunable, now: now() }));
+        log(`${key} = ${value.join(" ")} for tickets that start from now on`);
+      } else if (sub === "undo") {
+        if (!rest[0]) throw new Error("usage: factory learn undo <key>");
+        change(db, () => undoOverride(db, rest[0], now()));
+        log(`${rest[0]} goes back to the file's value for tickets that start from now on`);
+      } else if (sub === "list") {
+        const on = activeOverrides(db);
+        if (json) return log(JSON.stringify(on));
+        for (const o of on) log(`${o.key} = ${JSON.stringify(o.value)}  (${o.at.slice(0, 10)}${o.reason ? `: ${o.reason}` : ""})`);
+        if (!on.length) log("no overrides");
+      } else if (sub === "export") {
+        const { patch, notes } = exportPatch(lead.path, activeOverrides(db));
+        if (patch) log(patch);
+        for (const n of notes) log(`# ${n}`);
+        if (!patch && !notes.length) log("# no overrides to export");
+      } else throw new Error("usage: factory learn set|undo|list|export");
+    } else if (cmd === "lesson") {
+      if (sub === "add") {
+        const [area, ...text] = rest;
+        if (!area || !text.length) throw new Error("usage: factory lesson add <area> <text…>");
+        let r!: ReturnType<typeof addLesson>;
+        change(db, () => { r = addLesson(db, { area, text: text.join(" "), source: source ?? "you", now: now() }); });
+        log(r.dup_of ? `lesson ${r.id} added, a near-duplicate of ${r.dup_of}; it stays out of briefs` : `lesson ${r.id} added`);
+      } else if (sub === "list") {
+        const lessons = listLessons(db, rest.join(" ") || undefined);
+        if (json) return log(JSON.stringify(lessons));
+        for (const l of lessons) log(`${l.id}  ${l.area}  ${l.text}  (${l.source}, ${l.hits} hits${l.retired_at ? ", retired" : ""}${l.dup_of ? `, near-duplicate of ${l.dup_of}` : ""})`);
+        if (!lessons.length) log("no lessons");
+      } else if (sub === "retire") {
+        if (!Number.isInteger(Number(rest[0]))) throw new Error("usage: factory lesson retire <id>");
+        change(db, () => retireLesson(db, Number(rest[0]), now()));
+        log(`lesson ${rest[0]} retired`);
+      } else throw new Error("usage: factory lesson add|list|retire");
     } else if (cmd === "overwatch") {
       let r: any = null;
       change(db, () => { r = overwatch(db, { name, dir: p.dir, run: sh, now: now() }); });

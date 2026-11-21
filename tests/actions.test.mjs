@@ -63,3 +63,11 @@ test("p pauses a running ticket and resumes a paused one", () => {
   assert.deepEqual(pauseAsk(ticket({ state: "paused", stage: "implement" })).args, ["resume", "409"]);
   assert.deepEqual(pauseAsk(ticket()), { error: "#409 is ready; only a running ticket pauses" });
 });
+
+test("z undoes the selected override through factory learn undo, and names the file's value", async () => {
+  const { undoOverrideAsk } = await import("../lib/actions.js");
+  const a = undoOverrideAsk({ key: "agents.reviewer.model", value: "sonnet", file: "opus" });
+  assert.deepEqual(a.args, ["learn", "undo", "agents.reviewer.model"]);
+  assert.match(a.detail, /use opus again, not sonnet/);
+  assert.deepEqual(undoOverrideAsk(undefined), { error: "No override selected" });
+});
