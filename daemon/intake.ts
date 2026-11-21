@@ -52,14 +52,14 @@ type Item = { status?: string; assignees?: string[]; labels?: string[]; content?
 
 const repoOf = (s = "") => s.replace(/^https:\/\/github\.com\//, "").split("/").slice(0, 2).join("/").toLowerCase();
 
-function json(run: Run, argv: string[]) {
+export function json(run: Run, argv: string[]) {
   const r = run(argv);
   if (r.code !== 0) throw new Error(`${argv.slice(0, 3).join(" ")} failed: ${r.out.slice(0, 200)}`);
   try { return JSON.parse(r.out); } catch { throw new Error(`${argv.slice(0, 3).join(" ")} printed no JSON: ${r.out.slice(0, 200)}`); }
 }
 
 // Names are looked up once and kept in meta: the project's number and your login.
-function projectNumber(db: Database, run: Run, project: string) {
+export function projectNumber(db: Database, run: Run, project: string) {
   const [owner, ...rest] = project.split("/");
   const name = rest.join("/");
   if (!owner || !name) throw new Error(`queue.github_project "${project}" isn't owner/<number or title>`);

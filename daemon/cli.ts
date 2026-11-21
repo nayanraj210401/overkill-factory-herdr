@@ -17,6 +17,7 @@ import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { watchPrs } from "./watch.ts";
+import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
 import { judge } from "./comments.ts";
 import { setAway } from "./away.ts";
 import { startHold } from "./budget.ts";
@@ -49,6 +50,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   send-back <id> <note…>             a ready PR goes back to its fix stage with your note (REVIEW.md)
   answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one)
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
+  block <id> <#n>                    report that a ticket waits on issue #n (it resumes when #n closes or merges)
+  drop <id>                          remove a ticket's worktrees and close it; the branch and notes stay (keep = resume)
   diff <id>                          what the ticket changed, against the repo's branch
   merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
   merge-order <id> owner/name…       the order a cross-repo ticket's PRs merge in (default: the others, then the lead)
@@ -282,6 +285,15 @@ export function main(argv: string[], log = console.log) {
       let r: any = null;
       change(db, () => { r = pause(db, { id: Number(sub) }); });
       log(`#${sub}: paused at ${r.stage}${r.killed.length ? `; stopped ${r.killed.join(", ")}` : ""}`);
+    } else if (cmd === "block") {
+      const by = Number((rest[0] ?? "").replace(/^#/, ""));
+      if (!Number.isInteger(by) || by < 1) throw new Error("usage: factory block <id> <#n>");
+      change(db, () => reportBlocked(db, { id: Number(sub), by, run: sh, now: now() }));
+      log(`#${sub}: blocked by #${by}`);
+    } else if (cmd === "drop") {
+      let r: any = null;
+      change(db, () => { r = dropTicket(db, { id: Number(sub), run: sh, now: now() }); });
+      log(`#${sub}: dropped; ${r.removed} worktree${r.removed === 1 ? "" : "s"} removed, the branch stays${r.left ? `; ${r.left} with uncommitted work stays` : ""}`);
     } else if (cmd === "resume") {
       const repoDir = needLead(db).path;
       let r: any = null;
@@ -451,6 +463,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     catch (e) { log(`factory: reading issue answers: ${(e as Error).message}`); }
   }
   runTriggers(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso, log });
+  // Issues of running and queued tickets: blocked, scope changed, pulled back (every 5 minutes).
+  try { followIssues(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }
+  catch (e) { log(`factory: following issues: ${(e as Error).message}`); }
   try {
     let groomed: number[] = [];
     change(db, () => { groomed = startPendingGrooming(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); });

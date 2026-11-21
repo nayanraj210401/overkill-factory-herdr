@@ -514,7 +514,7 @@ export function answer(db: Database, o: { dir: string; repo: string; id: number;
 }
 
 // `p` on a running ticket: its agent stops now; the stage it was in is remembered.
-export function pause(db: Database, o: { id: number; run?: Run; now?: string }) {
+export function pause(db: Database, o: { id: number; run?: Run; now?: string; who?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT state, stage FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; stage: string | null } | null;
@@ -525,7 +525,7 @@ export function pause(db: Database, o: { id: number; run?: Run; now?: string }) 
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   db.query("UPDATE stages SET ended_at = ?, detail = 'paused' WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   db.query("UPDATE tickets SET state = 'paused', detail = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
-  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(o.id, `paused at ${t.stage ?? "start"}`, now);
+  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(o.id, o.who ?? "you", `paused at ${t.stage ?? "start"}`, now);
   // Last, so a failed kill (the terminal already gone) leaves the pause recorded.
   for (const s of open_) run(["hc", "kill", s.terminal]);
   return { stage: t.stage, killed: open_.map((s) => s.terminal) };
@@ -539,8 +539,14 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "paused") throw new Error(`#${o.id} is ${t.state}; only a paused ticket resumes`);
+  // Paused before it ever started (pulled back while queued): "keep" puts it back in the queue.
+  if (!t.worktree) {
+    db.query("UPDATE tickets SET state = 'queued', needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
+    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', 'kept it; back in the queue', ?)").run(o.id, now);
+    return { stage: null, terminal: null };
+  }
   const b = loadBlueprint(o.repo, t.blueprint);
-  db.query("UPDATE tickets SET state = 'running', updated_at = ? WHERE id = ?").run(now, o.id);
+  db.query("UPDATE tickets SET state = 'running', needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', 'resumed', ?)").run(o.id, now);
   if ((b.stages[t.stage] as BlueprintStage | undefined)?.requires === "ready") {
     enterStage(db, o.id, title(t.stage), null, plannedPath(b, t.stage).map(title), now);
