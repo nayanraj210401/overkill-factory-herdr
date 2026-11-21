@@ -331,3 +331,19 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
   const stage = restartStage(b, t.stage);
   return { stage, terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, blueprint: b, stage }) };
 }
+
+// `d`: what the ticket changed, as `git diff` text: its worktree (uncommitted work
+// too) against where its branch left the repo's current branch.
+export function ticketDiff(db: Database, o: { repo: string; id: number; run?: Run }) {
+  const run = o.run ?? sh;
+  const t = db.query("SELECT worktree FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null } | null;
+  if (!t) throw new Error(`no ticket ${o.id}`);
+  if (!t.worktree) throw new Error(`#${o.id} has no worktree yet; it hasn't started`);
+  const base = run(["git", "-C", o.repo, "symbolic-ref", "--short", "HEAD"]);
+  if (base.code !== 0) throw new Error(`can't tell the repo's branch: ${base.out}`);
+  const from = run(["git", "-C", t.worktree, "merge-base", base.out, "HEAD"]);
+  if (from.code !== 0) throw new Error(`git merge-base failed: ${from.out}`);
+  const diff = run(["git", "-C", t.worktree, "--no-optional-locks", "diff", "--no-color", "--no-ext-diff", from.out]);
+  if (diff.code !== 0) throw new Error(`git diff failed: ${diff.out}`);
+  return diff.out;
+}
