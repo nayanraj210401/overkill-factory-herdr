@@ -14,6 +14,7 @@ export default class FactoryConfig extends View {
     this.selected = null;
     this.error = null;
     this.editor = null;
+    this.checks = {};
     this.daemon = undefined; // undefined: not asked yet; null: the CLI didn't answer
     this.busy = null;
     if (!checking()) {
@@ -82,6 +83,13 @@ export default class FactoryConfig extends View {
         .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.busy || this.act(a, cx)).child(LABEL[a])));
   }
 
+  schemaLabel(t) {
+    const errors = this.checks[this.selected?.path];
+    if (!errors) return div().text_size(12).text_color(t.dim).child("Schema check: not run");
+    return div().text_size(12).text_color(errors.length ? t.blocked : t.done)
+      .child(errors.length ? `Schema check: ${errors.length} ${errors.length === 1 ? "problem" : "problems"}` : "Schema check: passes");
+  }
+
   async list() {
     const r = await exec("find", [".", "-type", "f"], { cwd: this.dir }).catch((e) => ({ code: 1, stderr: String(e) }));
     if (r.code !== 0) {
@@ -91,6 +99,10 @@ export default class FactoryConfig extends View {
     }
     this.error = null;
     this.files = configFiles(r.stdout.split("\n").filter(Boolean).map((p) => p.replace(/^\.\//, "")));
+    // The daemon's schema check, per file: path → errors (undefined while unknown).
+    if (checking()) return;
+    const v = await this.factory(["validate", this.dir, "--json"]).catch(() => null);
+    try { this.checks = Object.fromEntries(JSON.parse(v.stdout).map((x) => [x.path, x.errors])); } catch { this.checks = {}; }
   }
 
   async select(file, cx) {
@@ -113,20 +125,24 @@ export default class FactoryConfig extends View {
         .bg(on ? t.selected : t.surface).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => this.select(f, cx))
         .child(svg(`mods/workspace-chrome/${f.language === "markdown" ? "file-text" : "settings"}.svg`).size(13))
-        .child(div().truncate().child(f.path));
+        .child(div().flex_1().truncate().child(f.path))
+        .when(Boolean(this.checks[f.path]), (el) => el.child(div().text_size(11)
+          .text_color(this.checks[f.path].length ? t.blocked : t.done).child(this.checks[f.path].length ? `✗ ${this.checks[f.path].length}` : "✓")));
     };
     return v_flex().size_full().gap(8).text_size(13).child(this.daemonBar(t)).child(h_flex().flex_1().w_full().gap(8)
       .child(v_flex().id("files").w(240).flex_none().h_full().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()
         .child(div().px(8).pb(6).text_size(11).text_color(t.dim).child(".FACTORY"))
         .children(this.files.map(row))
         .when(Boolean(this.error), (el) => el.child(div().px(8).text_color(t.blocked).child(this.error))))
-      .child(v_flex().flex_1().h_full().rounded(10).bg(t.background).border(1).border_color(t.border)
+      .child(v_flex().flex_1().min_w(0).h_full().rounded(10).bg(t.background).border(1).border_color(t.border)
         .child(h_flex().h(36).px(14).gap(10).items_center().border_b(1).border_color(t.border)
           .child(div().flex_1().font_semibold().text_color(t.foreground).truncate().child(this.selected?.path ?? "No file"))
-          .child(div().text_size(12).text_color(t.dim).child("Schema check: coming in M2"))
+          .child(this.schemaLabel(t))
           .child(div().id("open").px(8).py(2).rounded(6).border(1).border_color(t.border).text_size(12).text_color(t.muted).cursor_pointer()
             .hover((s) => s.bg(t.hover)).on_click(() => this.selected && exec("open", [`${this.dir}/${this.selected.path}`]))
             .child("Open in editor ⌘O")))
+        .when(Boolean(this.checks[this.selected?.path]?.length), (el) => el.child(v_flex().px(14).py(8).gap(2).border_b(1).border_color(t.border)
+          .text_size(12).text_color(t.blocked).children(this.checks[this.selected.path].map((e) => div().w_full().truncate().child(e)))))
         .child(div().flex_1().p(4).when(Boolean(this.editor), (el) => el.child(Editor.new(this.editor).size_full())))));
   }
 }

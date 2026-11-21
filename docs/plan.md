@@ -460,7 +460,7 @@ The factory is defined by files in the repo it works on, so it can be branched, 
 
 Rules for every file:
 
-- **Checked against a schema.** The repo ships a JSON Schema per file type. `factory validate` runs it on every save and as a pre-commit hook. Unknown keys are errors, so a typo never silently does nothing.
+- **Checked against a schema.** `factory validate` checks each file kind against its rules (`daemon/validate.ts`), and Config runs it on every save. Unknown keys and duplicate keys are errors, so a typo never silently does nothing. JSON Schemas for editors can be generated from the same rules.
 - **Defaults are documented and inherited.** A factory can start from `factory.yaml` alone; every other file states only what it changes.
 - **Files refer to each other by name,** never by path: a trigger names a blueprint, a stage names an agent.
 - **Secrets by name only.** Values come from the macOS keychain or the environment.

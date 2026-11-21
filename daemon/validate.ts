@@ -1,0 +1,150 @@
+// `factory validate`: checks every .factory/ file against its kind's shape, one
+// line per problem. Unknown keys are errors, so a typo never silently does nothing.
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+
+type Rule =
+  | "string" | "number" | "boolean" | "strings" | "any"
+  | { enum: string[] }
+  | { object: Record<string, Rule>; required?: string[]; open?: boolean }
+  | { map: Rule }
+  | { list: Rule };
+
+const str = "string" as const, num = "number" as const, strs = "strings" as const;
+const open = { object: {}, open: true };
+const gate = { enum: ["human", "auto"] };
+
+const STAGE: Rule = {
+  object: {
+    agent: str, check: { enum: ["evidence", "tests", "lint"] }, output: str, next: strs, on_fail: str,
+    max_retries: num, per: { enum: ["ticket", "slice"] }, requires: str, template: str, gate, stages: "any",
+  },
+};
+
+export const KINDS: Record<string, Rule> = {
+  factory: {
+    required: ["name"],
+    object: {
+      name: str, repos: strs, tickets: { enum: ["github", "linear", "local"] },
+      queue: { object: { github_project: str, column: str, assignee: str } },
+      grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
+      max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
+      budget: open, plan: open, learn: open, review: open, away: open, maintainer: open,
+      ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, secrets: { map: "any" }, mcp: "any",
+    },
+  },
+  blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },
+  agent: {
+    object: {
+      role: { enum: ["orchestrator", "triage", "spec", "plan", "build", "review", "verify", "scorer", "maintain"] },
+      harness: str, model: str, effort: str, from: str, tools: strs, mcp: strs, skills: strs, context: strs,
+    },
+  },
+  trigger: {
+    required: ["on", "blueprint"],
+    object: { on: { enum: ["manual", "project_ready", "pr_review_comment", "schedule"] }, filter: open, blueprint: str, concurrency: num, schedule: str },
+  },
+  benchmark: {
+    required: ["target", "variants"],
+    object: {
+      target: { object: { stage: str, blueprint: str } }, size: { enum: ["smoke", "mini", "full"] }, tasks: open,
+      variants: { list: { object: { name: str, set: { map: "any" } }, required: ["name"] } },
+      score: strs, limits: { object: { max_usd: num, parallel: num } }, schedule: str,
+    },
+  },
+};
+
+const kindOf = (path: string) =>
+  path === "factory.yaml" ? "factory"
+  : path === "blueprint.yaml" || /^blueprints\/[^/]+\.ya?ml$/.test(path) ? "blueprint"
+  : /^agents\/[^/]+\.md$/.test(path) ? "agent"
+  : /^triggers\/[^/]+\.ya?ml$/.test(path) ? "trigger"
+  : /^benchmarks\/[^/]+\.ya?ml$/.test(path) ? "benchmark"
+  : null;
+
+const typeName = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "a list" : typeof v === "object" ? "a map" : typeof v);
+
+function check(v: unknown, rule: Rule, at: string, errors: string[]) {
+  const bad = (want: string) => errors.push(`${at}: expected ${want}, got ${typeName(v)}`);
+  if (rule === "any") return;
+  if (rule === "string") return typeof v === "string" || bad("text");
+  if (rule === "number") return typeof v === "number" || bad("a number");
+  if (rule === "boolean") return typeof v === "boolean" || bad("true or false");
+  if (rule === "strings") return (Array.isArray(v) && v.every((x) => typeof x === "string")) || bad("a list of text");
+  if ("enum" in rule) return rule.enum.includes(v as string) || errors.push(`${at}: "${v}" is not one of ${rule.enum.join(", ")}`);
+  if ("list" in rule) {
+    if (!Array.isArray(v)) return bad("a list");
+    return v.forEach((x, i) => check(x, rule.list, `${at}[${i}]`, errors));
+  }
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return bad("a map");
+  const o = v as Record<string, unknown>;
+  if ("map" in rule) return Object.entries(o).forEach(([k, x]) => check(x, rule.map, `${at}.${k}`, errors));
+  for (const k of rule.required ?? []) if (!(k in o)) errors.push(`${at || "file"}: missing ${k}`);
+  for (const [k, x] of Object.entries(o)) {
+    if (k in rule.object) check(x, rule.object[k], at ? `${at}.${k}` : k, errors);
+    else if (!rule.open) errors.push(`${at ? `${at}.` : ""}${k}: unknown key (allowed: ${Object.keys(rule.object).join(", ")})`);
+  }
+}
+
+// A blueprint's stages must name each other: start, next and on_fail.
+function blueprintRefs(b: any, errors: string[]) {
+  const ids = new Set(Object.keys(b?.stages ?? {}));
+  if (b?.start && !ids.has(b.start)) errors.push(`start: no stage "${b.start}"`);
+  for (const [id, s] of Object.entries<any>(b?.stages ?? {})) {
+    for (const n of s?.next ?? []) if (n !== "end" && !ids.has(n)) errors.push(`stages.${id}.next: no stage "${n}"`);
+    if (s?.on_fail && !ids.has(s.on_fail)) errors.push(`stages.${id}.on_fail: no stage "${s.on_fail}"`);
+  }
+}
+
+// YAML keeps the last of two equal keys and drops the first without a word.
+export function duplicateKeys(text: string): string[] {
+  const errors: string[] = [];
+  const scopes: { indent: number; keys: Set<string> }[] = [];
+  text.split("\n").forEach((line, i) => {
+    const m = line.match(/^(\s*)(- )?([A-Za-z_][\w.-]*):(\s|$)/);
+    if (!m || line.trimStart().startsWith("#")) return;
+    const indent = m[1].length + (m[2] ? 2 : 0);
+    while (scopes.length && scopes.at(-1)!.indent > indent) scopes.pop();
+    if (m[2] || !scopes.length || scopes.at(-1)!.indent < indent) scopes.push({ indent, keys: new Set() });
+    const keys = scopes.at(-1)!.keys;
+    if (keys.has(m[3])) errors.push(`line ${i + 1}: ${m[3]} appears twice; YAML would keep only this one`);
+    keys.add(m[3]);
+  });
+  return errors;
+}
+
+export function validateFile(path: string, text: string): string[] {
+  const kind = kindOf(path);
+  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, triggers/, benchmarks/)`];
+  let doc: unknown;
+  try {
+    if (kind === "agent") {
+      const m = text.match(/^---\n([\s\S]*?)\n---\n/);
+      if (!m) return ["agent: needs a YAML header between --- lines, then the prompt"];
+      doc = Bun.YAML.parse(m[1]);
+      if (!text.slice(m[0].length).trim()) return ["agent: the prompt after the header is empty"];
+    } else doc = Bun.YAML.parse(text);
+  } catch (e) {
+    return [`YAML: ${(e as Error).message.split("\n")[0]}`];
+  }
+  const errors: string[] = duplicateKeys(kind === "agent" ? text.split(/\n---\n/)[0] : text);
+  check(doc, KINDS[kind], "", errors);
+  if (kind === "agent" && !(doc as any)?.role && !(doc as any)?.from) errors.push("file: needs role, or from another agent");
+  if (kind === "blueprint") blueprintRefs(doc, errors);
+  return errors;
+}
+
+function files(dir: string): string[] {
+  return readdirSync(dir).flatMap((n) => {
+    const p = join(dir, n);
+    return statSync(p).isDirectory() ? files(p) : [p];
+  });
+}
+
+export function validateDir(dir: string) {
+  return files(dir)
+    .map((p) => relative(dir, p))
+    .filter((p) => !p.split("/").some((part) => part.startsWith(".")))
+    .sort()
+    .map((path) => ({ path, errors: validateFile(path, readFileSync(join(dir, path), "utf8")) }));
+}
