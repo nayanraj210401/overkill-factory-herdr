@@ -14,11 +14,14 @@ import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
 import { budgetCap, forbiddenTouched } from "./away.ts";
 import { STOPS, guardSettings, hardStopLog, takeHardStop } from "./guard.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
-import { budgetUse, startHold } from "./budget.ts";
+import { budgetUse, roundUse, startHold } from "./budget.ts";
 import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
+import { closeRound, latestBrief } from "./round.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
+  // Tests stub claude; one that forgot must never start the user's real Claude.
+  if (argv[0] === "claude" && process.env.FACTORY_TEST_SANDBOX) return { code: 1, out: "claude is stubbed in tests" };
   const r = Bun.spawnSync(argv, { cwd });
   return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() };
 };
@@ -61,6 +64,7 @@ export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").r
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
 export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = []) {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
+  const fix = latestBrief(folder);
   return [
     `Ticket #${t.id}: ${t.title}. You run its ${stage} stage.`,
     repos.length > 1 ? `It spans ${repos.length} repos, each checked out on the same branch: ${repos.map((r, i) => `${r.repo} in ${r.worktree}${i ? "" : " (here)"}`).join(", ")}. Change each one the work needs, and commit in each.` : "",
@@ -70,6 +74,7 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
     lessons.length ? `Lessons for the code this ticket touches (from earlier tickets and reviews):\n${lessons.map((l) => `- ${l}`).join("\n")}` : "",
     `Read ${folder}/STATUS.md and any INTENT.md, SLICES.md and HANDOFF.md there before you start.`,
     `If REVIEW.md or GATES.md is there, act on every note in it: a person or a reviewer sent this ticket back, or a person answered why it stopped.`,
+    fix ? `If review comments are being fixed, start from ${folder}/${fix}. It holds only the comments to fix, with the reviewer's words, the lines and the acceptance checks each touches. You are a fresh session; don't look for the one that wrote the PR.` : "",
     `When the stage's work is done, run: factory stage-done ${t.id}`,
   ].filter(Boolean).join("\n\n");
 }
@@ -252,7 +257,9 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   if (hit) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'guard', 'hard stop hit', ?, ?)").run(o.id, hit, now);
   // A ticket at its budget stops here, at the stage boundary, not mid-edit.
   const use = budgetUse(t as any, budgetCap(db, o.repo));
-  const stop = hit ? `Hard stop hit: ${hit}` : use.frac >= 1 ? `Budget used up (${use.text}). Raise the budget or drop the ticket`
+  const round = gate ? null : roundUse(db, o.repo, t as any);
+  const stop = hit ? `Hard stop hit: ${hit}` : round && round.frac >= 1 ? `Review round ${round.round} used its token cap (${round.text}; review.round_budget). Raise it, or take over`
+    : use.frac >= 1 ? `Budget used up (${use.text}). Raise the budget or drop the ticket`
     : gate && "park" in gate ? gate.park : touched.length ? `Touched ${touched.slice(0, 3).join(", ")}${touched.length > 3 ? "…" : ""}, which never runs while you're away` : null;
   if (stop) {
     db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(stop, now, o.id);
@@ -362,6 +369,8 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
     return { ...r, pr_number: number };
   });
   if (prs.length > 1 && prs.some((p, i) => repos[i].pr_number == null)) linkPrs(o, prs, rules, run);
+  // A review round's fixes are pushed: its replies and summary go on the PRs.
+  closeRound(db, { ticket: o.id, run, now });
   const others = prs.slice(1).map((p) => `${p.repo}#${p.pr_number}`).join(", ");
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
     .run(o.id, `${t.pr_number == null ? "opened" : "updated"} PR #${prs[0].pr_number}`, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}${others ? `; with ${others}` : ""}`, now);

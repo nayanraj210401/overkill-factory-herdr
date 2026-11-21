@@ -6,8 +6,10 @@
 // your own notes with `x`.
 import type { Database } from "bun:sqlite";
 import { finishPr, readFactory, reviewBack, type Run } from "./runner.ts";
-import { commentsNote, pushbackLimit, storeComments, type GhComment } from "./comments.ts";
+import { commentsNote, pushbackLimit, storeComments, type GhComment, type Row } from "./comments.ts";
 import { reviewRoundsLeft } from "./away.ts";
+import { closeRound, openRound, writeBrief } from "./round.ts";
+import { prejudge } from "./prejudge.ts";
 import { setWork, ticketRepos, type TicketRepo } from "./db.ts";
 
 function ghJson(run: Run, argv: string[]) {
@@ -24,7 +26,7 @@ export function prComments(run: Run, slug: string, pr: number) {
   const comments: GhComment[] = [
     ...(view.comments ?? []).map((c: any) => ({ ghId: `c${c.id}`, thread: `c${c.id}`, author: c.author?.login ?? "", body: c.body ?? "", at: c.createdAt, place: null, url: c.url ?? null })),
     ...(view.reviews ?? []).filter((r: any) => r.body?.trim()).map((r: any) => ({ ghId: `r${r.id}`, thread: `r${r.id}`, author: r.author?.login ?? "", body: r.body, at: r.submittedAt, place: r.state === "CHANGES_REQUESTED" ? "changes requested" : null, url: null })),
-    ...inline.map((c: any) => ({ ghId: `i${c.id}`, thread: `i${c.in_reply_to_id ?? c.id}`, author: c.user?.login ?? "", body: c.body ?? "", at: c.created_at, place: c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : null, url: c.html_url ?? null })),
+    ...inline.map((c: any) => ({ ghId: `i${c.id}`, thread: `i${c.in_reply_to_id ?? c.id}`, author: c.user?.login ?? "", body: c.body ?? "", at: c.created_at, place: c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : null, url: c.html_url ?? null, hunk: c.diff_hunk ?? null })),
   ];
   return { state: view.state as "OPEN" | "MERGED" | "CLOSED", comments: comments.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) };
 }
@@ -40,6 +42,8 @@ export function watchPrs(db: Database, o: { dir: string; repo: string; me: strin
     const repos = ticketRepos(db, id).filter((r) => r.pr_number != null);
     const name = (r: TicketRepo) => (repos.length > 1 ? `${r.repo}#${r.pr_number}` : `PR #${r.pr_number}`);
     try {
+      // A round whose fixes are pushed gets its replies and summary; one that couldn't post last time tries again.
+      closeRound(db, { ticket: id, run: o.run, now: o.now, log: o.log });
       // GitHub first, outside the transaction; a repo merged earlier isn't asked again.
       const prs = repos.map((r) => ({ r, pr: r.merged_at ? null : prComments(o.run, r.repo, r.pr_number!) }));
       db.transaction(() => {
@@ -54,16 +58,20 @@ export function watchPrs(db: Database, o: { dir: string; repo: string; me: strin
         // New is "not stored yet", not "after the last check": the pr stage moves the check
         // time when it updates the PR, and a comment made during the fix must still count.
         const limit = pushbackLimit((readFactory(o.repo) as any).review);
-        const notes: string[] = [];
+        const stored: { pr: number; rows: Row[] }[] = [];
         let count = 0;
         for (const { r, pr } of open) {
           const fresh = pr!.comments.filter((c) => c.body.trim() && c.author.toLowerCase() !== (o.me ?? "").toLowerCase());
           setWork(db, id, { pr_checked_at: o.now }, r.repo);
-          const rows = storeComments(db, { ticket: id, pr: r.pr_number!, comments: fresh, limit });
-          if (rows.length) notes.push(commentsNote({ ticket: id, pr: r.pr_number!, rows, limit }));
+          const rows = storeComments(db, { ticket: id, pr: r.pr_number!, comments: fresh, limit, repo: r.repo, round: () => openRound(db, id, o.now) });
+          if (rows.length) stored.push({ pr: r.pr_number!, rows });
           count += rows.length;
         }
         if (!count) return;
+        // A cheap model proposes a verdict for each; the notes show it, and the fix brief starts from the fix ones.
+        for (const s of stored) prejudge(db, { repo: o.repo, ticket: id, rows: s.rows, run: o.run, now: o.now });
+        writeBrief(db, { dir: o.dir, ticket: id, round: openRound(db, id, o.now) });
+        const notes = stored.map((s) => commentsNote({ ticket: id, pr: s.pr, rows: s.rows, limit }));
         const on = open.length > 1 ? open.map((p) => name(p.r)).join(", ") : name(open[0].r);
         const park = reviewRoundsLeft(db, o.repo, id) <= 0 ? `${count} new review comment${count > 1 ? "s" : ""} on ${on}; away.review_rounds is used up while you're away` : undefined;
         reviewBack(db, { dir: o.dir, repo: o.repo, id, run: o.run, now: o.now, park, text: notes.join("\n\n"),
