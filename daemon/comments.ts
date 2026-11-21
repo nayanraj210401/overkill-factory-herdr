@@ -6,23 +6,24 @@ import type { Database } from "bun:sqlite";
 import type { Run } from "./runner.ts";
 import { awayPolicy, isAway } from "./away.ts";
 
-export type GhComment = { ghId: string; thread: string; author: string; body: string; at: string; place: string | null; url: string | null };
-export type Row = { n: number; author: string; place: string | null; body: string; insisted: number; verdict: string | null; reason: string | null; thread: string };
+export type GhComment = { ghId: string; thread: string; author: string; body: string; at: string; place: string | null; url: string | null; hunk?: string | null };
+export type Row = { n: number; hunk?: string | null; suggested?: string | null; why?: string | null; author: string; place: string | null; body: string; insisted: number; verdict: string | null; reason: string | null; thread: string };
 export const VERDICTS = ["fix", "pushback", "escalate"] as const;
 
 const pushbacksIn = (db: Database, ticket: number, thread: string) =>
   (db.query("SELECT COUNT(*) AS n FROM comments WHERE ticket = ? AND thread = ? AND verdict = 'pushback'").get(ticket, thread) as { n: number }).n;
 
 // New comments only (a comment seen before keeps its number and verdict).
-export function storeComments(db: Database, o: { ticket: number; pr: number; comments: GhComment[]; limit: number }) {
+// `round` is asked for only when something new is stored, so a quiet check opens no round.
+export function storeComments(db: Database, o: { ticket: number; pr: number; comments: GhComment[]; limit: number; repo?: string; round?: () => number }) {
   const added: Row[] = [];
   for (const c of o.comments) {
     if (db.query("SELECT 1 FROM comments WHERE ticket = ? AND gh_id = ?").get(o.ticket, c.ghId)) continue;
     const n = ((db.query("SELECT MAX(n) AS m FROM comments WHERE ticket = ?").get(o.ticket) as { m: number | null }).m ?? 0) + 1;
     const insisted = pushbacksIn(db, o.ticket, c.thread) >= o.limit ? 1 : 0;
-    db.query("INSERT INTO comments (ticket, n, pr, gh_id, thread, author, place, body, at, url, insisted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(o.ticket, n, o.pr, c.ghId, c.thread, c.author, c.place, c.body, c.at, c.url, insisted);
-    added.push({ n, author: c.author, place: c.place, body: c.body, insisted, verdict: null, reason: null, thread: c.thread });
+    db.query("INSERT INTO comments (ticket, n, pr, gh_id, thread, author, place, body, at, url, insisted, repo, round, hunk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(o.ticket, n, o.pr, c.ghId, c.thread, c.author, c.place, c.body, c.at, c.url, insisted, o.repo ?? null, o.round?.() ?? 1, c.hunk ?? null);
+    added.push({ hunk: c.hunk ?? null, n, author: c.author, place: c.place, body: c.body, insisted, verdict: null, reason: null, thread: c.thread });
   }
   return added;
 }
@@ -34,7 +35,7 @@ export function commentsNote(o: { ticket: number; pr: number; rows: Row[]; limit
     `- pushback: reply on the PR first (gh pr comment ${o.pr}, or a reply on the line) with a reason a reviewer can check. After ${o.limit} pushback${o.limit === 1 ? "" : "s"} in a thread, a reviewer who insists wins.`,
     `- escalate: a product question, or a call you shouldn't make; the ticket stops and asks the person.`,
     "",
-    ...o.rows.map((c) => `- **C${c.n} · @${c.author}**${c.place ? ` (${c.place})` : ""}${c.insisted ? " · **insisted after pushbacks: fix it, or escalate**" : ""}: ${c.body.trim().replace(/\n/g, "\n  ")}`),
+    ...o.rows.map((c) => `- **C${c.n} · @${c.author}**${c.place ? ` (${c.place})` : ""}${c.insisted ? " · **insisted after pushbacks: fix it, or escalate**" : ""}: ${c.body.trim().replace(/\n/g, "\n  ")}${c.suggested ? `\n  Suggested: **${c.suggested}**${c.why ? ` (${c.why})` : ""}. A cheap model's guess; your verdict decides.` : ""}`),
   ].join("\n");
 }
 

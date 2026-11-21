@@ -79,3 +79,25 @@ export function estimateBudget(db: Database, repo: string, blueprint: string): T
   const own = capOf(section(repo, "budget").per_ticket);
   return own && Number.isFinite(own.input) && Number.isFinite(own.output) ? own : null;
 }
+
+// review.round_budget: what one review round may use, as a share of the ticket's budget
+// ("25%") or absolute tokens ("200k" is input, "200k/20k" is input/output). No key, no cap.
+export function roundCap(repo: string, t: { budget_in: number; budget_out: number }): Tokens | null {
+  const v = ((readFactory(repo) as any).review ?? {}).round_budget;
+  if (v == null || v === "") return null;
+  const text = String(v).trim();
+  if (text.endsWith("%")) {
+    const pct = parseFloat(text);
+    return pct > 0 ? { input: (t.budget_in * pct) / 100, output: (t.budget_out * pct) / 100 } : null;
+  }
+  const [input, output] = text.split("/").map((x) => parseTokens(x.trim()));
+  return input || output ? { input: input || Infinity, output: output || Infinity } : null;
+}
+
+// How far the ticket's open review round is through its cap; null with no open round or no cap.
+export function roundUse(db: Database, repo: string, t: { id: number; tokens_in: number; tokens_out: number; budget_in: number; budget_out: number }) {
+  const cap = roundCap(repo, t);
+  const r = db.query("SELECT round, tokens_in, tokens_out FROM review_rounds WHERE ticket = ? AND closed_at IS NULL ORDER BY round DESC LIMIT 1").get(t.id) as { round: number; tokens_in: number; tokens_out: number } | null;
+  if (!cap || !r) return null;
+  return { round: r.round, ...budgetUse({ tokens_in: t.tokens_in - r.tokens_in, tokens_out: t.tokens_out - r.tokens_out, budget_in: cap.input, budget_out: cap.output }) };
+}

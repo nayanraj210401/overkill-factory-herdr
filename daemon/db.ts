@@ -151,6 +151,22 @@ export const MIGRATIONS = [
      holdout_pass INTEGER, diff_lines INTEGER, pr_lines INTEGER, cwd TEXT, transcript TEXT
    );
    CREATE INDEX bench_runs_batch ON bench_runs(batch);`,
+  // Review rounds: a comment's repo, round, diff hunk, the cheap model's suggested verdict,
+  // when its pushback reply was posted and the commit that fixed it; each round's token
+  // start (for review.round_budget) and which PRs got its one summary comment.
+  `ALTER TABLE comments ADD COLUMN repo TEXT;
+   ALTER TABLE comments ADD COLUMN round INTEGER NOT NULL DEFAULT 1;
+   ALTER TABLE comments ADD COLUMN hunk TEXT;
+   ALTER TABLE comments ADD COLUMN suggested TEXT;
+   ALTER TABLE comments ADD COLUMN suggested_why TEXT;
+   ALTER TABLE comments ADD COLUMN replied_at TEXT;
+   ALTER TABLE comments ADD COLUMN fix_commit TEXT;
+   CREATE TABLE review_rounds (
+     ticket INTEGER NOT NULL REFERENCES tickets(id), round INTEGER NOT NULL, started_at TEXT NOT NULL,
+     tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, closed_at TEXT,
+     PRIMARY KEY (ticket, round)
+   );
+   CREATE TABLE review_posts (ticket INTEGER NOT NULL, round INTEGER NOT NULL, repo TEXT NOT NULL, posted_at TEXT NOT NULL, PRIMARY KEY (ticket, round, repo));`,
 ];
 
 export function open(path: string): Database {
