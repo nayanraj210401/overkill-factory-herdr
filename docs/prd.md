@@ -43,7 +43,7 @@ The factory is a product other engineers use, not one person's private setup. It
 | Human near the loop | Sees summaries and evidence, steps in when flagged | Most feature work |
 | Human outside the loop | Only sees outcomes and exceptions | Lint fixes, dependency bumps, routine migrations |
 
-&#91;embedded content: Oversight modes · 3 modes, set per type of work\]
+![Oversight modes · 3 modes, set per type of work](diagrams/prd-oversight-modes.png)
 
 The wizard sets where each type of work starts. After that, the track record moves it toward the human or away from them.
 
@@ -84,7 +84,7 @@ Rules:
 - Most users run the default loop unchanged.
 - Custom user loops are planned but out of scope for now (see section 9).
 
-&#91;embedded content: Default loop · 7 steps, 1 retry loop\]
+![Default loop · 7 steps, 1 retry loop](diagrams/prd-default-loop.png)
 
 A failed verification sends the work back to the coding agents. Only work that passes the checks and the template check becomes a PR.
 
@@ -226,7 +226,7 @@ A failed verification sends the work back to the coding agents. Only work that p
 | Overwatch agent | The user's personal agent and outer loop. The user talks to it in chat. It knows which session owns which PR and what state it's in | Ownership and status only |
 | Babysitter agent | Watches every PR the factory owns. When a change comes in, it starts a fresh session with the handoff | Ownership and status only |
 
-&#91;embedded content: Architecture · desktop app, 2 shallow agents, worker sessions, SQLite\]
+![Architecture · desktop app, 2 shallow agents, worker sessions, SQLite](diagrams/prd-architecture.png)
 
 The overwatch and the babysitter stay shallow: they only know ownership and status. Every detail of the work lives in the sessions and in SQLite, so a dead session loses nothing.
 
@@ -264,7 +264,7 @@ The overwatch and the babysitter stay shallow: they only know ownership and stat
 4. The session gives the comment a verdict and fixes, pushes back or escalates (section 6.5).
 5. The session updates the evidence pack and the handoff, and the babysitter updates the PR's status.
 
-&#91;embedded content: Review comment flow · 1 decision, 3 verdicts\]
+![Review comment flow · 1 decision, 3 verdicts](diagrams/prd-review-comment-flow.png)
 
 A dead owner never blocks a comment: the babysitter starts a new session from the handoff. A pushback turns into a fix once the reviewer insists the set number of times.
 

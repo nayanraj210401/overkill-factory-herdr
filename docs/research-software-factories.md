@@ -1,6 +1,5 @@
 # AI agent software factories
 
-Nov 20, 2026 · @nayanraj adhikary
 
 ## TL;DR
 
@@ -47,7 +46,7 @@ BCG Platinion names the same three drivers: more capable models, cheaper inferen
 
 Every published factory has the same skeleton: intent in, parallel agent loops, layered checks, one review gate, governed deploy, signals back.
 
-&#91;embedded content: AI software factory pipeline · 8 stages, 3 feedback loops · composite of StrongDM, OpenAI, Uber, Osmani, BCG\]
+![AI software factory pipeline](diagrams/research-factory-pipeline.png)
 
 Read it clockwise. Failed checks and rejected reviews loop straight back to the coding agents, and production signals return to the humans who write the next specs. The pipeline is a composite. No single company publishes all eight stages, but each stage appears in at least one of [StrongDM](https://factory.strongdm.ai/), [OpenAI](https://openai.com/index/harness-engineering/), [Uber](https://www.uber.com/blog/efficient-software-factory/) or [BCG Platinion](https://bcgplatinion.com/insights/the-dark-software-factory).
 
@@ -55,7 +54,7 @@ Read it clockwise. Failed checks and rejected reviews loop straight back to the 
 
 Dan Shapiro's six-rung scale is the shared yardstick, modelled on self-driving levels. A "factory" usually means Level 4 or 5. Shapiro says almost everyone tops out at Level 3 ([Shapiro](https://www.danshapiro.com/blog/2026/01/the-five-levels-from-spicy-autocomplete-to-the-software-factory/), [Willison](https://simonwillison.net/2026/Jan/28/the-five-levels/)).
 
-&#91;embedded content: Autonomy levels · Dan Shapiro, Jan 2026, via Simon Willison · StrongDM placement per Stanford CodeX\]
+![Autonomy levels](diagrams/research-autonomy-levels.png)
 
 The "dark" name comes from Fanuc's lights-out factories, where robots work unattended. Osmani's refinement is to set the level per loop, not for the whole company: lint fixes can run dark while auth changes stay lit ([Osmani](https://addyosmani.com/blog/software-factories/)).
 
@@ -130,7 +129,7 @@ The headline claims are self-reported and big. The independent data shows more o
 | About 42% of committed code is AI-generated | Sonar survey of 1,100+ developers ([TFiR](https://tfir.io/ai-coding-has-a-trust-problem-sonar-data-shows-verification-lagging-far-behind-adoption/)) | Jan 2026 | Vendor survey |
 | Developers 19% slower with early-2025 tools; late-2025 tools showed speedups of 4–18%, but the confidence intervals include zero | [METR](https://metr.org/blog/2026-02-24-uplift-update/) | Feb 2026 | Independent RCT; METR calls the new numbers unreliable |
 
-&#91;embedded content: Faros AI, The Acceleration Whiplash (AI Engineering Report Q2 2026) · 8 of its metrics · vendor telemetry\]
+![Faros AI, The Acceleration Whiplash, 8 of its metrics](diagrams/research-faros-metrics.png)
 
 The biggest dataset available is vendor telemetry, but it is not self-promotion. Faros found that quality metrics worsened as AI adoption deepened. That matches the practitioners' warning: generation scales, verification doesn't.
 

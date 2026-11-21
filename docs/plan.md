@@ -1,6 +1,5 @@
 # Factory herdr mod plan
 
-Nov 21, 2026 · @nayanraj adhikary
 
 ## TL;DR
 
@@ -8,10 +7,10 @@ Build the software factory as a Herdr app layout with its own mods, plus a small
 
 - **Autonomous by default.** A ticket runs from pickup to a PR ready for review without waiting on anyone. Ready rules decide when a PR is ready, not approvals. Your default touchpoint is reviewing and merging.
 - **The factory is code.** A `.factory/` folder defines it, and its blueprint is a graph of stages that an orchestrator agent moves through.
-- **The whole window is ours.** Like [herdr-roundup](https://github.com/carstenlucke/herdr-roundup), the layout clones Herdr's sidebar, tabs, pane header and status bar and rebuilds them into a factory mode: a sidebar of live tickets with the factory menu at its foot, and pages for Home, a ticket, Tickets, Overwatch, Blueprint, Metrics and Config.
+- **The whole window is ours.** Like [herdr-roundup](https://github.com/carstenlucke/herdr-roundup), the layout clones Herdr's sidebar, tabs, pane header and status bar and rebuilds them into a factory mode: a sidebar of live tickets with the factory menu at its foot, and pages for Home, a ticket, Tickets, Reviews, Overwatch, Blueprint, Metrics and Config.
 - **Markdown in front, code behind.** Every view shows a ticket's Markdown; the diff and the agent terminals are one key away.
 - **Measured.** Time to PR, cost per PR, human interactions per PR and revert rate are on screen, and benchmarks replay your own past tickets.
-- **Local only, in a new repo.** Everything runs on your machine through herdr-core. The repo is separate from flow-stack and copies the parts of flow-stack v1 that check finished work.
+- **Local first, in a new repo.** Everything runs on your machine through herdr-core; a ticket can move to a Claude Code cloud session when the laptop sleeps. The repo is separate from flow-stack and copies the parts of flow-stack v1 that check finished work.
 
 The PRD changes in one place: section 7.2's "Ship as a desktop app" becomes "Ship as a Herdr app layout plus a daemon".
 
@@ -32,7 +31,7 @@ Earlier drafts and the research pulled in different directions. Each clash is se
 | Factory as code described in two sections | One section |
 | Labels to start and route work vs. no labels | Your GitHub Project is the queue: an issue assigned to you in its Ready column joins it, or you add one by hand. The triage agent picks the blueprint |
 | Benchmarks that propose factory changes vs. monitoring | Benchmarks are monitoring: they run apart from ticket runs and only report. Separately, the factory tunes the settings you mark tunable, between tickets, as overrides you can undo |
-| Copy Warp's layout and page names vs. our own | Our own. The sidebar lists live tickets with the factory menu at the bottom, one factory per window, and the pages use our words (Tickets, Overwatch, Metrics, Config). Warp was a reference for ideas only |
+| Copy Warp's layout and page names vs. our own | Our own. The sidebar lists live tickets with the factory menu at the bottom, one factory per window, and the pages use our words (Tickets, Reviews, Overwatch, Metrics, Config). Warp was a reference for ideas only |
 
 ## Principles
 
@@ -63,7 +62,7 @@ The window has four parts:
 
 ### Pages
 
-Each page is drawn below the table (and again, with notes, in Layouts). All share one sidebar.
+Each page is drawn below the table. All share one sidebar.
 
 | Page | What it shows |
 | --- | --- |
@@ -134,7 +133,7 @@ All mods carry a `factory-` prefix, since a mod folder's name is its identity in
 | `factory-ticket` | new | A ticket's page, rendered with `TextView.markdown` |
 | `factory-list` | new | The Tickets page |
 | `factory-blueprint` | new | Blueprint graphs and their YAML |
-| `factory-metrics` | new | The four Metrics tabs |
+| `factory-metrics` | new | The five Metrics tabs |
 | `factory-config` | new | The Config page |
 | `factory-reviews` | new | The review queue, each PR's findings and check results, and the link to its pending review |
 
@@ -298,7 +297,7 @@ PRD 6.5, the authoring side. Nobody copies review comments into a session.
 
 1. **Watch.** The babysitter polls every PR the factory opened and picks up new review comments, as a `pr_review_comment` trigger.
 2. **Judge each comment.** Three questions decide the verdict: is it correct, is it required, how risky is it. A cheap model judges each comment seeing only the comment and the lines it points at; a product question goes to the PO. The verdict is **fix**, **push back** (a reply with the reasoning), or **escalate** (it goes to Needs you). Each comment and its verdict lands in REVIEW.md.
-3. **Fix.** Never by resuming the session that wrote the PR. Once its prompt cache has expired (5 minutes by default, an hour at most), resuming it re-reads its whole history at full input price to change a few lines. Instead the daemon writes a fix brief, REVIEW-ROUND-2.md, with only the comments marked fix: the reviewer's words, file and line, the diff hunk, and the acceptance check each one touches. A fresh session starts in the ticket's worktree, updated to the PR branch, and loads the brief, the touched files and a short HANDOFF summary. Its model matches the work: a cheap one for renames and wording, the builder's for logic. The affected tests and ready rules run before anything is pushed. Each round has its own token cap (\`review.round\_budget\`, a share of the ticket's budget); a round that reaches it parks instead of growing.
+3. **Fix.** Never by resuming the session that wrote the PR. Once its prompt cache has expired (5 minutes by default, an hour at most), resuming it re-reads its whole history at full input price to change a few lines. Instead the daemon writes a fix brief, REVIEW-ROUND-2.md, with only the comments marked fix: the reviewer's words, file and line, the diff hunk, and the acceptance check each one touches. A fresh session starts in the ticket's worktree, updated to the PR branch, and loads the brief, the touched files and a short HANDOFF summary. Its model matches the work: a cheap one for renames and wording, the builder's for logic. The affected tests and ready rules run before anything is pushed. Each round has its own token cap (`review.round_budget`, a share of the ticket's budget); a round that reaches it parks instead of growing.
 4. **Insistence.** After `review.max_pushbacks` (default 2), the factory makes the change the reviewer asked for. If that change breaks a ready rule, it keeps it on the branch, does not push a failing PR, and parks the ticket in Needs you with the failing check, so you decide. It defers on opinion, never silently on quality.
 5. **Learn.** A comment that keeps coming up across PRs feeds the learning loop below.
 
@@ -734,4 +733,4 @@ Open questions:
 - [gpui-kit](https://gpui-kit.com/)
 - [Warp: Factory as code](https://docs.warp.dev/factories/factory-as-code/)
 - [Zach Lloyd, Engineer Your Coding Agents Like Any Other System (talk)](https://www.youtube.com/watch?v=0LeT996Hz3E)
-- [AI Software Factory PRD](https://claude.ai/artifact/7XXJkjYYCrBJXEAD4d5grX)
+- [AI Software Factory PRD](prd.md)
