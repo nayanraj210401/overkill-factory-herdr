@@ -8,6 +8,7 @@ test("j/k/arrows move, enter opens", () => {
   assert.deepEqual(k("j"), { kind: "move", delta: 1 });
   assert.deepEqual(k("up"), { kind: "move", delta: -1 });
   assert.deepEqual(k("enter"), { kind: "open" });
+  assert.deepEqual(k("e"), { kind: "terminal" });
 });
 
 test("unbuilt actions name their milestone", () => {

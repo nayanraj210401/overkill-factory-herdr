@@ -2,7 +2,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, shared, readTextFile, nextCommand, checking, notify } from "herdr";
 import { parseStatusMd, TICKET_TABS, compact, currentTicket } from "./lib/model.js";
-import { root, status, state } from "./lib/store.js";
+import { root, status, state, peekAgent } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
@@ -51,6 +51,7 @@ export default class FactoryTicket extends View {
         // Bare 1-4 switch tabs here, as in the mockup; actions toast until their milestone.
         if (/^[1-4]$/.test(e.key) && !e.modifiers.platform && !e.modifiers.control) { this.tab = e.key; cx.stop_propagation(); cx.notify(); return; }
         const a = keyAction(e);
+        if (a?.kind === "terminal") { peekAgent(ticket); cx.stop_propagation(); return; }
         if (a?.kind === "soon") { notify({ title: `${a.label}: coming in ${a.milestone}`, level: "info", timeout: 2500 }); cx.stop_propagation(); }
       })
       .child(v_flex().id("ticket").flex_1().h_full().p(16).gap(10).rounded(10).bg(t.background).border(1).border_color(t.border).overflow_y_scroll()
@@ -74,7 +75,9 @@ export default class FactoryTicket extends View {
         .child(body ? TextView.markdown(`md-${ticket.id}-${tab.file}`, body) : div().text_color(t.dim).child(`No ${tab.file} yet.`)))
       .child(v_flex().w(380).flex_none().h_full().p(14).gap(8).rounded(10).bg(t.surface).border(1).border_color(t.border).text_color(t.muted)
         .child(div().text_color(t.foreground).child(`${ticket.stage ?? ticket.state} · ${compact(ticket.tokens.input)} in · ${compact(ticket.tokens.output)} out`))
+        .child(div().text_color(t.dim).child(ticket.terminal ? `Agent running in ${ticket.terminal}.` : "No agent is running for this ticket now."))
         .child(div().flex_1())
-        .child(div().text_color(t.dim).child("The live agent terminal opens here with e once the daemon starts agents (M2).")));
+        .when(Boolean(ticket.terminal), (el) => el.child(div().id("peek").px(10).py(6).rounded(6).border(1).border_color(t.accent).text_color(t.accent)
+          .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => peekAgent(ticket)).child("Open live terminal  e"))));
   }
 }

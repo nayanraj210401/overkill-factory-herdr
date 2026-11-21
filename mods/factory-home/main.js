@@ -4,7 +4,7 @@ import { theme, run, setShared, notify } from "herdr";
 import { needsYou, ago, compact } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status } from "./lib/store.js";
+import { status, peekAgent } from "./lib/store.js";
 
 const open = (id) => {
   setShared("factory.ticket", id);
@@ -24,6 +24,7 @@ export default class FactoryHome extends View {
     if (!a) return;
     if (a.kind === "move") this.at = clamp(this.at + a.delta, items.length);
     else if (a.kind === "open" && items[this.at]) open(items[this.at].id);
+    else if (a.kind === "terminal") peekAgent(items[this.at]);
     else if (a.kind === "soon") notify({ title: `${a.label}: coming in ${a.milestone}`, level: "info", timeout: 2500 });
     cx.stop_propagation();
     cx.notify();
