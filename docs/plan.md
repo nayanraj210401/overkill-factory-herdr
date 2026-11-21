@@ -604,8 +604,8 @@ size: mini                        # smoke, mini or full
 tasks: { from: merged-prs, repo: acme/api, pick: 15, holdout: tests-added-by-pr }
 variants:
   - name: baseline
-  - name: sonnet-builder
-    set: { agents.builder.model: sonnet }
+  - name: opus-builder
+    set: { agents.builder.model: opus }
 score: [holdout_pass, cost_usd, minutes, diff_lines]
 limits: { max_usd: 40, parallel: 3 }
 schedule: weekly

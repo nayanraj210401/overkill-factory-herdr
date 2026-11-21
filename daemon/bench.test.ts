@@ -101,7 +101,9 @@ test("a variant's dotted paths change this run's settings and never .factory/", 
   const suite = readSuite(repo, "impl");
   expect(resolveVariant(repo, suite, {})).toMatchObject([{ stage: "implement", agent: "builder", harness: "claude", model: "sonnet" }]);
   expect(resolveVariant(repo, suite, { "agents.builder.model": "opus", "agents.builder.harness": "codex" })).toMatchObject([{ harness: "codex", model: "opus" }]);
-  expect(resolveVariant(repo, suite, { "factory.defaults.model": "haiku" })[0].model).toBe("haiku");
+  // factory.defaults.model reaches an agent that names no model; an agent's own model wins over it.
+  expect(resolveVariant(repo, suite, { "factory.defaults.model": "haiku" })[0].model).toBe("sonnet");
+  expect(resolveVariant(repo, suite, { "factory.defaults.model": "haiku", "agents.builder.model": null as any })[0].model).toBe("haiku");
   // a variant can swap the stage's agent through the blueprint
   expect(resolveVariant(repo, suite, { "blueprints.feature.stages.implement.agent": "reviewer" })[0]).toMatchObject({ agent: "reviewer" });
   // a whole-blueprint target runs every agent stage in order, skipping checks and gates

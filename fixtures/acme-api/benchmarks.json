@@ -28,9 +28,9 @@
      "pr_lines": 88
     },
     {
-     "name": "sonnet-builder",
+     "name": "opus-builder",
      "set": {
-      "agents.builder.model": "sonnet"
+      "agents.builder.model": "opus"
      },
      "runs": 15,
      "passed": 11,
@@ -45,8 +45,8 @@
      "pr_lines": 88
     }
    ],
-   "winner": "sonnet-builder",
-   "recommendation": "Recommendation: sonnet-builder passed 73% of held-out tests at $0.61 a task, against 60% at $0.52 for baseline. To adopt it, change .factory/ to agents.builder.model: sonnet."
+   "winner": "opus-builder",
+   "recommendation": "Recommendation: opus-builder passed 73% of held-out tests at $0.61 a task, against 60% at $0.52 for baseline. To adopt it, change .factory/ to agents.builder.model: opus."
   }
  ]
 }

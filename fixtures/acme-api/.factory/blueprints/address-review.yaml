@@ -1,0 +1,7 @@
+# .factory/blueprints/address-review.yaml
+name: address-review
+orchestrator: foreman
+start: fix
+stages:
+  fix:    { agent: builder, next: [verify] }
+  verify: { check: tests, next: [end], on_fail: fix, max_retries: 2 }

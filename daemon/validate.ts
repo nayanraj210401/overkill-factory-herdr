@@ -196,10 +196,39 @@ function files(dir: string): string[] {
   });
 }
 
+// Names that point at other files: a stage's agent, a blueprint's orchestrator, the
+// grooming agent and the blueprints it may pick, a trigger's blueprint. A name with
+// no file would break the first run, so it fails here for every user's factory.
+function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
+  const base = (p: string, folder: string) => p.startsWith(`${folder}/`) ? p.slice(folder.length + 1).replace(/\.(md|ya?ml)$/, "") : null;
+  const agents = new Set(paths.map((p) => base(p, "agents")).filter(Boolean));
+  const blueprints = new Set(paths.map((p) => base(p, "blueprints")).filter(Boolean));
+  const parse = (p: string) => { try { return Bun.YAML.parse(readFileSync(join(dir, p), "utf8")) as any; } catch { return null; } };
+  const out: Record<string, string[]> = {};
+  const add = (p: string, e: string) => (out[p] ??= []).push(e);
+  for (const p of paths) {
+    if (kindOf(p) === "blueprint") {
+      const b = parse(p);
+      if (typeof b?.orchestrator === "string" && !agents.has(b.orchestrator)) add(p, `orchestrator: no file agents/${b.orchestrator}.md`);
+      for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
+        if (typeof s?.agent === "string" && !agents.has(s.agent)) add(p, `stages.${id}.agent: no file agents/${s.agent}.md`);
+    } else if (p === "factory.yaml") {
+      const g = parse(p)?.grooming;
+      if (typeof g?.agent === "string" && !agents.has(g.agent)) add(p, `grooming.agent: no file agents/${g.agent}.md`);
+      for (const n of Array.isArray(g?.blueprints) ? g.blueprints : []) if (!blueprints.has(n)) add(p, `grooming.blueprints: no file blueprints/${n}.yaml`);
+    } else if (kindOf(p) === "trigger") {
+      const n = parse(p)?.blueprint;
+      if (typeof n === "string" && !blueprints.has(n)) add(p, `blueprint: no file blueprints/${n}.yaml`);
+    }
+  }
+  return out;
+}
+
 export function validateDir(dir: string) {
-  return files(dir)
+  const paths = files(dir)
     .map((p) => relative(dir, p))
     .filter((p) => !p.split("/").some((part) => part.startsWith(".")))
-    .sort()
-    .map((path) => ({ path, errors: validateFile(path, readFileSync(join(dir, path), "utf8")) }));
+    .sort();
+  const dangling = danglingNames(dir, paths);
+  return paths.map((path) => ({ path, errors: [...validateFile(path, readFileSync(join(dir, path), "utf8")), ...(dangling[path] ?? [])] }));
 }
