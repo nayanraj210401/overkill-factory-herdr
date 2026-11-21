@@ -76,6 +76,16 @@ const MIGRATIONS = [
    ALTER TABLE sessions ADD COLUMN cwd TEXT;`,
   // Revert rate: the merged PR that reverted a ticket's PR, found on GitHub.
   `ALTER TABLE tickets ADD COLUMN reverted_by INTEGER;`,
+  // M3 review loop: each reviewer comment on a factory PR, numbered per ticket (C1…),
+  // with the fix agent's verdict. Inline replies share their root comment's thread,
+  // which is how a reviewer insisting after pushbacks is told apart.
+  `CREATE TABLE comments (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id), n INTEGER NOT NULL, pr INTEGER NOT NULL,
+     gh_id TEXT NOT NULL, thread TEXT NOT NULL, author TEXT NOT NULL, place TEXT, body TEXT NOT NULL, at TEXT NOT NULL, url TEXT,
+     insisted INTEGER NOT NULL DEFAULT 0,
+     verdict TEXT CHECK (verdict IN ('fix', 'pushback', 'escalate')), reason TEXT, judged_at TEXT, escalated_at TEXT,
+     UNIQUE (ticket, gh_id), UNIQUE (ticket, n)
+   );`,
 ];
 
 export function open(path: string): Database {
