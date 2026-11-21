@@ -19,11 +19,14 @@ export function ticketOf(r: Row) {
     pr: r.pr_number == null ? null : { number: r.pr_number, watched: !!r.pr_watched, checked_at: r.pr_checked_at },
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,
+    terminal: r.terminal ?? null,
   };
 }
 
 export function buildStatus(db: Database, now = new Date()) {
-  const tickets = (db.query("SELECT * FROM tickets ORDER BY id").all() as Row[]).map(ticketOf);
+  // A ticket's terminal: its latest session still open (the window's `e` opens it).
+  const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal
+    FROM tickets t ORDER BY t.id`).all() as Row[]).map(ticketOf);
   const today = now.toISOString().slice(0, 10);
   const touched = tickets.filter((t) => t.updated_at.startsWith(today));
   const beat = Date.parse(getMeta(db, "heartbeat") ?? "") || 0;

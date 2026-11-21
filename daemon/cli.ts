@@ -4,7 +4,7 @@
 // contract inside its transaction, so a bad write never lands.
 import { homedir } from "node:os";
 import { existsSync, readdirSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
 import { buildStatus, writeStatus } from "./status.ts";
@@ -12,9 +12,13 @@ import { validateStatus } from "../lib/status.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
+import { startTicket } from "./runner.ts";
+import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
-  init [--repo owner/name]           create the factory's database
+  init [--repo owner/name] [--path dir]  create the factory's database (path: the repo checkout, default .)
+  start <id>                         worktree + first stage + its agent in a herdr-core terminal
+  sessions <id>                      the agent sessions started for a ticket
   ticket add <id> <title…> [--blueprint b]
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
   stage <id> <Name> [detail…] [--next A,B]  enter a stage (the current one ends)
@@ -69,6 +73,7 @@ export function main(argv: string[], log = console.log) {
   const blueprint = flag(args, "blueprint") ?? "feature";
   const interval = Number(flag(args, "interval") ?? 5);
   const next = flag(args, "next");
+  const repoPath = flag(args, "path");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -88,7 +93,7 @@ export function main(argv: string[], log = console.log) {
   const db = open(p.db);
   try {
     if (cmd === "init") {
-      change(db, () => { setMeta(db, "name", name); setMeta(db, "repo", repo); });
+      change(db, () => { setMeta(db, "name", name); setMeta(db, "repo", repo); setMeta(db, "repo_path", resolve(repoPath ?? ".")); });
     } else if (cmd === "ticket" && sub === "add") {
       const [id, ...title] = rest;
       if (!Number.isInteger(Number(id)) || !title.length) throw new Error("usage: factory ticket add <id> <title…>");
@@ -122,6 +127,16 @@ export function main(argv: string[], log = console.log) {
         if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(Number(sub))) throw new Error(`no ticket ${sub}`);
         db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now());
       });
+    } else if (cmd === "start") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      let terminal: string | null = null;
+      change(db, () => { terminal = startTicket(db, { dir: p.dir, repo: repoDir, id: Number(sub) }); });
+      log(terminal ? `#${sub} started: agent in ${terminal}` : `#${sub} started`);
+    } else if (cmd === "sessions") {
+      for (const r of db.query("SELECT * FROM sessions WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
+        log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open"}  ${JSON.parse(r.argv)[0]}`);
+      return;
     } else if (cmd === "decide") {
       const [who, what, why] = rest;
       if (!sub || !who || !what) throw new Error("usage: factory decide <ticket> <who> <what> [why]");
