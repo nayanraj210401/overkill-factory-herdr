@@ -16,6 +16,7 @@ export function layout() {
     background: "canvas",
     theme: { light: "paper", dark: "factory" },
     divider: { width: 1, color: "border" },
+    preview: "layouts/factory.svg",
     children: [
       {
         id: "sidebar",

@@ -1,0 +1,65 @@
+# Factory
+
+Factory mode turns the whole Herdr window into the cockpit of a software factory. A sidebar lists live tickets grouped by what they need (you, an agent, a review, or nothing yet), with the factory menu at its foot and the day's token budget under it. The main area shows one page at a time. Home puts what needs you first, then what runs, then today's four numbers. The other pages are Tickets, Ticket, Config, and coming-soon cards for Reviews, Overwatch, Blueprint and Metrics. ⌘⇧F switches between factory mode and Herdr's normal window. In M1 every number comes from a sample `status.json`; in M2 a local daemon writes the same file.
+
+![Factory](preview.png)
+
+## What you see
+
+Left to right: a 268 px sidebar (theme `chrome`, 1 px `border` divider), then the work column (theme `canvas`).
+
+- **Sidebar, top (84 px, window drag):** the factory name (15 px semibold `foreground`). Below it, a 7 px dot (`done` when the daemon runs, `dim` when not) and "daemon on · 5h 42%" in 12 px `muted`; with sample data it reads "sample data". On macOS it starts 30 px down, under the traffic lights at (12, 16).
+- **Sidebar, tickets (fills the rest):** group headings in 11 px capitals: NEEDS YOU (`blocked`), RUNNING (`muted`), READY FOR REVIEW (`done`), then QUEUE · n · BLOCKED n (`muted`) and TO REVIEW · n (`accent`). Each ticket is two lines: a 7 px dot in its group's color with `#id Title` in 13 px `foreground`, then a 11.5 px `muted` subtitle such as "implement · 1.2M/3M in", "verify · in cloud", "parked · retries used up" or "watching · checked 2m ago". The open ticket's row is `selected`.
+- **Sidebar, menu (250 px, 1 px top border):** "FACTORY" in 11 px `dim`, then seven 28 px rows: icon (14 px, from `mods/workspace-chrome/`), title, and its key (⌘1–⌘7) in 11 px `dim`. The shown page's row is `selected`.
+- **Sidebar, budget (44 px):** "Today 11.2M / 40M in" and "$6.40" in 11.5 px `muted`, over a 4 px bar (`accent`, or `blocked` past 80%) on `raised`.
+- **Header (42 px, window drag, 1 px bottom border):** "acme-api ›" in `muted`, then the page title in semibold `foreground`, or `#412 Rate-limit login` on the Ticket page. Right-aligned in 12 px `dim`: "⌘1–⌘7 pages · ⌘⇧F back to Herdr".
+- **Main (8 px padding):** one page:
+  - **Home:** "Needs you" cards (`surface`, 8 px radius, a 3 px left strip in `blocked` or `done`, the title with a right-aligned tag, then the question or reason); "Running" rows (dot, title, stage, tokens in, cost); "Today", four tiles (Time to PR, Cost per PR, Interactions / PR, Revert rate) with 26 px values.
+  - **Tickets:** state chips (All, Grooming, Queue, Running, Parked, Ready, Merged, each with a count; the active chip has an `accent` border), a 220 px search box, and a table (Ticket, Stage, Blueprint, Tokens in, Cost), newest first. Merged and closed rows are dimmed.
+  - **Ticket:** the left card holds the title, STATUS.md's summary sentence, a timeline (12 px dots: `done`, `working` for the stage now with "12m so far" in `accent`, hollow `raised` for stages to come), then tabs 1 Plan, 2 Checks, 3 Questions, 4 PR rendering SLICES, EVIDENCE, GATES and PR Markdown. A 380 px right card names the stage and tokens and says the live terminal arrives with M2.
+  - **Config:** a 240 px list of the `.factory/` files (factory.yaml first, then blueprints, agents, triggers, benchmarks), and the selected file read-only with line numbers and YAML or Markdown highlighting. Its header holds the path, "Schema check: coming in M2" and "Open in editor ⌘O".
+  - **Coming soon** (Reviews, Overwatch, Blueprint, Metrics): a centered card with a "Coming in M6"-style pill in `accent` on `raised`, the title (20 px), one line on what the page will do, and the page's mockup from `docs/layouts/` at up to 900 px wide.
+- **Status bar (30 px):** a 6 px dot (`done`, or `blocked` while ready rules fail), then "1 agent · 1 in cloud · 1 PR watched · 5h window 42% · week 18% · 0 rules failing" in 11.8 px `muted`.
+
+The theme is `factory` in dark mode (`#1b1e24` background; `accent` and `working` `#5fa8f0`, `blocked` `#e5b567`, `done` `#7fc07f`) and Herdr's `paper` in light mode.
+
+## How it behaves
+
+- ⌘⇧F (global) shows this layout; inside it, ⌘⇧F shows `main` again.
+- ⌘1–⌘7, or a menu row, selects a page (`layout.select {stack: "pages", child}`). The menu and header read the shown page from the live layout tree, so keys and clicks always agree.
+- Clicking a ticket in the sidebar, a Home card, a Running row or a Tickets row opens the Ticket page on that ticket (`shared("factory.ticket")`). Clicking TO REVIEW opens Reviews.
+- Ticket tabs switch by click or ⌘⌥1–4.
+- Tickets chips filter by state; the search box matches `#412`, `412`, or words of the title, blueprint, stage or state.
+- Config reloads when a file in `.factory/` changes. ⌘O or the button opens the selected file with macOS `open`.
+- Every view updates when `status.json` changes: one loader watches the folder and republishes.
+- Herdr's agent statuses aren't shown on ticket rows yet. Fixture tickets have no terminals, so dots show the ticket's group.
+
+## Built from
+
+- `layouts/factory.json` is generated by `scripts/gen.mjs` from `lib/pages.js` (as is `keys.json`); don't edit it by hand. Its tree: root `row` (`titlebar: none`), with `sidebar` (column: `brand`, `sidebar-tickets`, `sidebar-menu`, `sidebar-budget`) and `work` (column: `header`, the `pages` stack with one block per page, `status`). Node ids are unique across the tree.
+- Mods, all `{"place": "none"}`: `factory-chrome` (brand; with `props.footer`, the budget bar), `factory-tickets`, `factory-menu`, `factory-header`, `factory-status`, `factory-home`, `factory-list` (Tickets), `factory-ticket`, `factory-config`, `factory-soon` (`props.page`).
+- Shared code in `lib/` is copied into each mod's `lib/` by `scripts/sync.sh`: `pages.js` (pages, keys, icons, milestones), `status.js` (the `status.json` contract and its validator), `model.js` (pure grouping, labels, filters, STATUS.md parser; tested with `node --test`), `store.js` (the loader).
+- Data: `factory-chrome`'s brand copy, which is always shown, reads `<appHome>/factory-data/acme-api/status.json`, validates it, and publishes `setShared("factory.state", {at, status, errors})`. It then reloads on `watchFolder`. Other views render from `shared()`. The Ticket page reads `tickets/<id>/*.md`, and Config runs `find` over `.factory/`. `shared("factory.root")` overrides the folder.
+- Herdr functions: `layout()`, `layout.select`, `layout.switch`, `shared`/`setShared`, `readTextFile`, `watchFolder`, `exec` (`find`, `open`), `nextCommand` (`factory-config.open`, `factory-ticket.tab-N`), `agents()`, `theme()`, `appHome()`, `checking()`. gpui-base: `InputState`/`Input`, `EditorState`/`Editor`, `TextView.markdown`.
+- Art: the shipped `mods/workspace-chrome/*.svg` icons, the mockups copied to `mods/factory-soon/previews/`, and `layouts/factory.svg`.
+
+## Watch out
+
+- A mod can't import outside its own folder, by relative path or by symlink. Copy `lib/` in.
+- `herdr-app check` renders once without loading `shared.json`. Shared data is null there, and a view that bails out on null tests nothing. `store.state()` returns the bundled `lib/sample.js` (written by sync.sh) while `checking()`, so checks render real data.
+- Layout ids are global: a sidebar block named `tickets` swapped places with the Tickets page.
+- `TextView`, `InputState`, `Input`, `EditorState` and `Editor` come from `gpui-base`, not `gpui-kit`.
+- An editor's language is fixed at creation. Make a new `EditorState` per file.
+- `ctrl-1`–`ctrl-4` select spaces and `cmd-1`–`cmd-9` select tabs in `global`; the layout's own section overrides only the cmd ones. keys.json has no key chords, so the plan's `g h` became ⌘1.
+- Editing a person's keys.json stops Herdr upgrading its default shortcuts. sync.sh merges keys only with `--keys`, and keeps a backup.
+- A Herdr home's socket path has to fit macOS's limit. Use `mktemp -d -t hf` for test homes.
+- Not built yet: the live agent terminal (`e`), action keys (`n m x u p b`), Runs view, cross-repo tickets, and the Reviews, Overwatch, Blueprint and Metrics pages.
+
+## Done when
+
+- `scripts/check.sh` passes: unit tests, generated files up to date, and `herdr-app check` on every mod with sample data.
+- `scripts/smoke.sh` passes: an isolated window opens on `factory`, every page in the stack renders without window errors, and `layout.switch` goes to `main` and back.
+- Home matches `docs/layouts/01-home.png`: Needs you lists #421, #409 and #425; Running lists #412 and #418; the tiles read 48m, $1.90, 1.6 and 0%.
+- The sidebar shows NEEDS YOU · 2, RUNNING · 2, READY FOR REVIEW · 1, QUEUE · 4 · BLOCKED 1 and TO REVIEW · 3.
+- The Ticket page for #412 shows three done stages, Implement now with "12m so far", three to come, and the Plan tab's slices.
+- Config lists six `.factory/` files with factory.yaml highlighted.

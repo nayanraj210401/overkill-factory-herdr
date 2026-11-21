@@ -15,6 +15,7 @@
     "width": 1,
     "color": "border"
   },
+  "preview": "layouts/factory.svg",
   "children": [
     {
       "id": "sidebar",

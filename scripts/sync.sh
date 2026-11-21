@@ -12,7 +12,7 @@ for a in "$@"; do case "$a" in --keys) keys=1 ;; *) home="$a" ;; esac; done
 
 node scripts/gen.mjs --check
 mkdir -p "$home/layouts" "$home/themes" "$home/mods" "$home/factory-data"
-cp layouts/factory.json "$home/layouts/"
+cp layouts/factory.json layouts/factory.svg "$home/layouts/"
 cp themes/factory.json "$home/themes/"
 for dir in mods/factory-*/; do
   name=$(basename "$dir")
