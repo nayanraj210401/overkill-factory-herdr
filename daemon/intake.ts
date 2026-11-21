@@ -73,7 +73,7 @@ function projectNumber(db: Database, run: Run, project: string) {
   return { owner, number: found.number };
 }
 
-function login(db: Database, run: Run, assignee: string) {
+export function login(db: Database, run: Run, assignee: string) {
   if (assignee !== "me") return assignee.replace(/^@/, "");
   const known = (db.query("SELECT value FROM meta WHERE key = 'gh_login'").get() as { value: string } | null)?.value;
   if (known) return known;

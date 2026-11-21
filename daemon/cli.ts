@@ -14,7 +14,8 @@ import { parseTokens } from "../lib/model.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
-import { newTicket, pollQueue } from "./intake.ts";
+import { login, newTicket, pollQueue } from "./intake.ts";
+import { watchPrs } from "./watch.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
@@ -353,6 +354,17 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     for (const id of groomed) log(`factory: #${id}: triage started`);
   } catch (e) {
     log(`factory: starting triage: ${(e as Error).message}`);
+  }
+  // Factory PRs waiting on you, every 2 minutes: merged or closed on GitHub, or new review comments.
+  const lastWatch = getMeta(db, "prs_watched_at");
+  const slug = getMeta(db, "repo") ?? "unknown";
+  if (slug !== "unknown" && (!lastWatch || Date.now() - Date.parse(lastWatch) >= 120_000)) {
+    setMeta(db, "prs_watched_at", nowIso);
+    if (db.query("SELECT 1 FROM tickets WHERE state = 'ready' AND pr_watched = 1").get()) {
+      let me: string | null = null;
+      try { me = login(db, run, "me"); } catch (e) { log(`factory: not watching PRs: ${(e as Error).message}`); }
+      if (me) for (const e of watchPrs(db, { dir: p.dir, repo: repoDir, slug, me, run, now: nowIso, log })) log(`factory: #${e.id}'s PR: ${e.event}`);
+    }
   }
   // Merged PRs someone reverted, every 10 minutes, for the revert rate.
   const lastReverts = getMeta(db, "reverts_checked_at");

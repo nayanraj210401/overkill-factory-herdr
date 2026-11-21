@@ -94,6 +94,7 @@ S3–S8 depend only on S0–S2 and touch separate mod folders, so they can run i
   
   Together these replace the coming-soon cards for Overwatch, cross-repo Ticket, Runs, and Metrics Throughput/Cost/Quality.
 - **M3, babysitter + away mode:** PR watcher, REVIEW.md verdicts, cloud move (`shift-c/l`).
+  - **PR watcher is built** (`daemon/watch.ts`): every 2 minutes the daemon reads each ready, watched PR on GitHub (`gh pr view` for comments and reviews, `gh api …/pulls/<n>/comments` for inline ones). Merged or closed there, the ticket follows, and its worktree goes. New comments from anyone but your own gh login go into REVIEW.md and send the ticket back to its fix stage, whose agent fixes each one or replies with its reasoning; the pr stage then updates the PR. Your own comments are skipped, because the factory acts as you; use `x` for your notes. Not yet: judging each comment with a cheap model, counting pushbacks, escalation.
 - **M4, learning + benchmarks:** Metrics Learning and Benchmarks tabs.
 - **M5, auto gates + maintainer:** revert rate on Home.
 - **M6, reviews:** Reviews page.
