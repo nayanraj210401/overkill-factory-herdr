@@ -73,7 +73,16 @@ S3–S8 depend only on S0–S2 and touch separate mod folders, so they can run i
 
 ## Later milestones as pieces (coarse; slice each when it starts)
 
-- **M2, daemon:** daemon core + SQLite → `status.json` writer (the S0 contract) → `.factory/` schema checks → graph runner through `hc` → ready rules → session recording/cost → first-run setup. Replaces the coming-soon cards for Overwatch, cross-repo Ticket, Runs, Metrics Throughput/Cost/Quality, and the action keys.
+- **M2, daemon** (TypeScript on Bun, decided 2026-11-21). Slices:
+  - **D1 Core:** SQLite (WAL, migrations), the `factory` CLI (`init`, `ticket add/set`, `status`), and `factory run`, which rewrites `~/.factory/<name>/status.json` atomically after every change. The mods read it in place of the fixture. Done when the daemon's output passes `validateStatus` and the window shows the daemon's tickets.
+  - **D2 Ticket folders:** the daemon writes STATUS.md and EVIDENCE.md from rows.
+  - **D3 `.factory/` loading:** YAML parse, a JSON Schema check per file type, and Config shows the result.
+  - **D4 Graph runner:** start stage agents in worktrees through `hc`, and record sessions with their tokens.
+  - **D5 Ready rules + PR:** evidence, budget and template rules; the daemon opens the PR.
+  - **D6 Intake + grooming:** the GitHub Project Ready column, then triage, then questions.
+  - **D7 Actions:** `n m x u p b e d` call the daemon, replacing the toasts.
+  
+  Together these replace the coming-soon cards for Overwatch, cross-repo Ticket, Runs, and Metrics Throughput/Cost/Quality.
 - **M3, babysitter + away mode:** PR watcher, REVIEW.md verdicts, cloud move (`shift-c/l`).
 - **M4, learning + benchmarks:** Metrics Learning and Benchmarks tabs.
 - **M5, auto gates + maintainer:** revert rate on Home.

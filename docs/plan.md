@@ -640,7 +640,7 @@ One repo, laid out like herdr-roundup so Herdr users recognise it, plus the daem
 | `mods/factory-*/` | The mods above |
 | `themes/factory.json` | The layout's own theme, light and dark |
 | `keys.json` | Only the `layout:factory` section, so the user's other keys stay theirs |
-| `daemon/` | SQLite, the blueprint runner, the babysitter, the benchmark runner |
+| `daemon/` | TypeScript on Bun (decided 2026-11-21): SQLite via `bun:sqlite`, the blueprint runner, the babysitter, the benchmark runner; shares `lib/status.js` with the mods; `bun build --compile` makes the one binary |
 | `schemas/` | A JSON Schema per `.factory/` file |
 | `agents/` | The default agent prompts, ported from flow-stack v1 |
 | `scripts/sync.sh` | Installs layout, mods and theme into `~/.config/herdr-app` (copies, as Herdr won't load a mod's SVGs through a symlink) |
@@ -723,7 +723,6 @@ Open questions:
 
 - Can a mod draw the blueprint graph and the Metrics charts itself, or does the daemon render SVGs the mod shows with `image()`? The SVG path works today.
 - Does the orchestrator run as its own long-lived agent per ticket, or does the daemon call it once per stage change?
-- What language is the daemon written in?
 - Which Claude Code interface does the daemon use to start a cloud session from a branch and to fetch one back, and can it start worker sessions with the flow-stack plugin turned off? Both need checking before M3.
 
 ## Sources
