@@ -7,6 +7,7 @@ import { getMeta, leadRepo, listRepos, mergeOrder } from "./db.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
 import { budgetCap, digest } from "./away.ts";
 import { budgetUse, dayCap, startHold } from "./budget.ts";
+import { setupField } from "./setup.ts";
 
 type Row = Record<string, any>;
 
@@ -41,6 +42,7 @@ export function buildStatus(db: Database, now = new Date()) {
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal,
     (SELECT COUNT(*) FROM sessions s WHERE s.ticket = t.id AND s.agent != 'cloud') AS sessions
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null));
+  const setup = lead ? setupField(db, lead.path) : null;
   const hold = lead ? startHold(db, lead.path, now) : null;
   const perDay = lead ? dayCap(lead.path) : null;
   const today = now.toISOString().slice(0, 10);
@@ -67,6 +69,8 @@ export function buildStatus(db: Database, now = new Date()) {
       budget: { input: perDay?.input ?? Number(getMeta(db, "budget_day_in") ?? 40e6), output: perDay?.output ?? Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
     away: digest(db, now.toISOString()),
+    // No .factory/ yet: Home shows the setup checklist instead.
+    ...(setup ? { setup } : {}),
     to_review: 0,
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,
