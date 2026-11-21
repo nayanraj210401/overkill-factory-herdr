@@ -43,6 +43,11 @@ const MIGRATIONS = [
    );`,
   // D4b: retries per stage, for on_fail / max_retries.
   `ALTER TABLE tickets ADD COLUMN retries INTEGER NOT NULL DEFAULT 0;`,
+  // Herdr worktrees: the ticket's space, and whether a session's agent runs in a tab's
+  // shell (done when the shell is back in front, after the agent was seen there).
+  `ALTER TABLE tickets ADD COLUMN space TEXT;
+   ALTER TABLE sessions ADD COLUMN in_space INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE sessions ADD COLUMN agent_seen INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export function open(path: string): Database {

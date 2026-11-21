@@ -15,6 +15,7 @@ import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
 import { newTicket } from "./intake.ts";
+import { sessionState } from "./herdr.ts";
 import { advance, answer, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
@@ -251,7 +252,8 @@ export function main(argv: string[], log = console.log) {
 export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = sh, log = console.log) {
   const repoDir = getMeta(db, "repo_path");
   if (!repoDir) return;
-  const open_ = db.query("SELECT ticket, terminal FROM sessions WHERE ended_at IS NULL AND terminal IS NOT NULL").all() as { ticket: number; terminal: string }[];
+  const open_ = db.query("SELECT id, ticket, terminal, in_space, agent_seen, started_at FROM sessions WHERE ended_at IS NULL AND terminal IS NOT NULL").all() as
+    { id: number; ticket: number; terminal: string; in_space: number; agent_seen: number; started_at: string }[];
   // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
   for (const { id } of db.query("SELECT id FROM tickets WHERE state = 'running' AND stage = 'pr'").all() as { id: number }[]) {
     try {
@@ -264,8 +266,13 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   }
   for (const s of open_) {
     const r = run(["hc", "get", s.terminal, "--json"]);
-    let gone = r.code !== 0;
-    try { if (!gone) gone = JSON.parse(r.out).exit_code != null; } catch { gone = true; }
+    let state = "exited";
+    try { if (r.code === 0) state = sessionState(JSON.parse(r.out)); } catch {}
+    // In a tab the shell outlives the agent: done once the agent was seen and the shell is back.
+    if (s.in_space && state === "agent" && !s.agent_seen) db.query("UPDATE sessions SET agent_seen = 1 WHERE id = ?").run(s.id);
+    // An agent quicker than a tick is never seen: a shell idle a minute after the start means it's over.
+    const idle = Date.now() - Date.parse(s.started_at) > 60_000;
+    const gone = state === "exited" || (s.in_space === 1 && state === "shell" && (s.agent_seen === 1 || idle));
     if (!gone) continue;
     try {
       change(db, () => advance(db, { dir: p.dir, repo: repoDir, id: s.ticket, run }));
