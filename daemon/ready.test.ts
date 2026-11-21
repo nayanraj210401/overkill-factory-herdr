@@ -158,8 +158,6 @@ test("u answers a parked ticket into GATES.md and reruns where it stopped", () =
   expect(answer(db, { dir, repo, id: 7, text: "The flaky test is known; skip it with .skip.", run })).toEqual({ stage: "implement", terminal: "t1" });
   expect(ticket()).toMatchObject({ state: "running", stage: "implement", retries: 0, needs_kind: null, needs_text: null });
   expect(readFileSync(join(dir, "tickets/7/GATES.md"), "utf8")).toContain("Verify failed 3 times: tests check failed\n\n**Your answer:** The flaky test is known; skip it with .skip.\n");
-  db.query("UPDATE tickets SET state = 'grooming', needs_kind = 'question', needs_text = 'Which plan?' WHERE id = 7").run();
-  expect(() => answer(db, { dir, repo, id: 7, text: "pro", run })).toThrow("answered on the issue until intake (D6)");
 });
 
 test("p pauses a running ticket (its agent killed, its stage kept) and resumes it with a fresh session", () => {

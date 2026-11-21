@@ -60,10 +60,13 @@ function jsonl(dir: string): string[] {
 // The daemon rescans every tick; a transcript that hasn't changed isn't read again.
 const seen = new Map<string, string>();
 
-// Records new usage for every ticket with a worktree, then its totals. Idempotent:
-// rows are keyed by message id, so a rescan updates rather than double counts.
+// Records new usage for every folder a ticket's agents ran in (its worktree, and the
+// ticket folder triage runs in), then its totals. Idempotent: rows are keyed by
+// message id, so a rescan updates rather than double counts.
 export function recordUsage(db: Database, log: (s: string) => void = () => {}) {
-  const tickets = db.query("SELECT id, worktree FROM tickets WHERE worktree IS NOT NULL").all() as { id: number; worktree: string }[];
+  const rows = db.query(`SELECT id, worktree AS dir FROM tickets WHERE worktree IS NOT NULL
+    UNION SELECT DISTINCT ticket, cwd FROM sessions WHERE cwd IS NOT NULL`).all() as { id: number; dir: string }[];
+  const tickets = [...Map.groupBy(rows, (r) => r.id)].map(([id, rs]) => ({ id, dirs: rs.map((r) => r.dir) }));
   const put = db.query(`INSERT INTO usage (message_id, ticket, session, at, model, input, cache_write_5m, cache_write_1h, cache_read, output, usd)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(message_id) DO UPDATE SET
     output = excluded.output, input = excluded.input, cache_write_5m = excluded.cache_write_5m,
@@ -74,8 +77,8 @@ export function recordUsage(db: Database, log: (s: string) => void = () => {}) {
   for (const t of tickets) {
     let changed = false;
     // Claude names the folder after its cwd as it sees it, which may be the real path.
-    const real = existsSync(t.worktree) ? realpathSync(t.worktree) : t.worktree;
-    for (const file of [...new Set([t.worktree, real])].flatMap((w) => jsonl(transcriptDir(w)))) {
+    const dirs = t.dirs.flatMap((d) => [d, existsSync(d) ? realpathSync(d) : d]);
+    for (const file of [...new Set(dirs)].flatMap((w) => jsonl(transcriptDir(w)))) {
       const st = statSync(file);
       const stamp = `${st.size}:${st.mtimeMs}`;
       if (seen.get(file) === stamp) continue;

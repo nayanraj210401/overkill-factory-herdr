@@ -8,6 +8,7 @@ import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { openPr, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
 import { closeSpace, openAgent, worktreePath } from "./herdr.ts";
+import { answerQuestions, finishGrooming } from "./groom.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -47,7 +48,7 @@ export function plannedPath(b: Blueprint, from: string) {
   return path;
 }
 
-const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].toUpperCase() + id.slice(1)); // pr → PR
+export const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].toUpperCase() + id.slice(1)); // pr → PR
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
@@ -117,14 +118,14 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
     if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
     terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
   }
-  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0);
+  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, t.worktree);
   return terminal;
 }
 
-type Factory = { quality_floor?: string[]; ready?: string[] };
+export type Factory = { quality_floor?: string[]; ready?: string[]; max_running?: number; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
-const readFactory = (repo: string): Factory => {
+export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
   return text ? (Bun.YAML.parse(text) as Factory) : {};
 };
@@ -181,6 +182,7 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  if (t?.state === "grooming") return finishGrooming(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
   if (!t || t.state !== "running") throw new Error(`#${o.id} isn't running`);
   const b = loadBlueprint(o.repo, t.blueprint);
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
@@ -353,12 +355,13 @@ export function sendBack(db: Database, o: { dir: string; repo: string; id: numbe
 }
 
 // `u`: answer a parked ticket and run the stage it stopped at again.
-export function answer(db: Database, o: { dir: string; repo: string; id: number; text: string; run?: Run; now?: string }) {
+export function answer(db: Database, o: { dir: string; repo: string; id: number; text: string; run?: Run; now?: string }): Record<string, any> {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
-  if (t.state === "grooming" && t.needs_kind) throw new Error(`#${o.id}'s grooming questions are answered on the issue until intake (D6) is built`);
+  if (t.state === "grooming" && t.needs_kind === "question")
+    return { stage: "groom", ...answerQuestions(db, { dir: o.dir, repo: o.repo, id: o.id, text: o.text, by: "you", where: "herdr", run, now }) };
   if (t.state !== "parked") throw new Error(`#${o.id} is ${t.state}; only a parked ticket waits for an answer`);
   if (!o.text.trim()) throw new Error("type an answer: factory answer <id> <text…>");
   if (!t.worktree) throw new Error(`#${o.id} has no worktree; factory start ${o.id}`);

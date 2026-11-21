@@ -38,7 +38,8 @@ test("x asks for a note on a ready PR; u asks a parked ticket's question", () =>
   const u = answerAsk(parked);
   assert.deepEqual([u.title, u.detail, u.args], ["Answer #409", "Verify failed 3 times", ["answer", "409"]]);
   assert.deepEqual(answerAsk(ticket()), { error: "#409 isn't waiting for an answer" });
-  assert.deepEqual(answerAsk(ticket({ state: "grooming", needs: { kind: "question", text: "?" } })), { error: "Answer #409's questions on its issue for now" });
+  const g = answerAsk(ticket({ state: "grooming", needs: { kind: "question", text: "2 questions · Q1: Which plan?" } }));
+  assert.deepEqual([g.title, g.detail, g.args, g.confirm], ["Answer #409's questions", "2 questions · Q1: Which plan?", ["answer", "409"], "Answer"]);
 });
 
 test("n asks for an issue or goal and starts it", () => {
