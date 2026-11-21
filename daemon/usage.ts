@@ -51,6 +51,47 @@ export function parseTranscript(text: string): Use[] {
   return [...byId.values()];
 }
 
+// Codex writes each session to <CODEX_HOME or ~/.codex>/sessions/YYYY/MM/DD/rollout-*.jsonl:
+// a session_meta line (its id and cwd), turn_context lines (the model), and token_count
+// events whose total_token_usage only grows. Each change in the total is one entry, so
+// repeated events don't double count. Codex's input_tokens include the cached ones.
+export const codexHome = () => process.env.CODEX_HOME ?? join(homedir(), ".codex");
+
+export function parseCodex(text: string): { cwd: string | null; uses: Use[] } {
+  let id = "";
+  let cwd: string | null = null;
+  let model = "codex";
+  let prev = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  let n = 0;
+  const uses: Use[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.includes('"session_meta"') && !line.includes('"turn_context"') && !line.includes('"total_token_usage"')) continue;
+    let e: any;
+    try { e = JSON.parse(line); } catch { continue; }
+    const p = e.payload ?? {};
+    if (e.type === "session_meta") { id = p.id ?? id; cwd = p.cwd ?? cwd; continue; }
+    if (e.type === "turn_context") { model = p.model ?? model; cwd ??= p.cwd ?? null; continue; }
+    const t = p.type === "token_count" ? p.info?.total_token_usage : null;
+    if (!t || t.total_tokens === prev.total_tokens) continue;
+    const d = (k: keyof typeof prev) => Math.max(0, (t[k] ?? 0) - prev[k]);
+    uses.push({ id: `codex:${id}:${++n}`, at: e.timestamp, model, input: Math.max(0, d("input_tokens") - d("cached_input_tokens")), w5m: 0, w1h: 0, read: d("cached_input_tokens"), output: d("output_tokens") });
+    prev = { input_tokens: t.input_tokens ?? 0, cached_input_tokens: t.cached_input_tokens ?? 0, output_tokens: t.output_tokens ?? 0, total_tokens: t.total_tokens };
+  }
+  return { cwd, uses };
+}
+
+// The day folders from a day before the first Codex session the factory started (its
+// local date can trail the UTC one), so the rest of ~/.codex/sessions isn't walked.
+function codexFiles(since: string) {
+  const root = join(codexHome(), "sessions");
+  const from = new Date(Date.parse(since) - 86_400_000).toISOString().slice(0, 10).replace(/-/g, "/");
+  const days: string[] = [];
+  for (const y of existsSync(root) ? readdirSync(root) : [])
+    for (const m of readdirSync(join(root, y)))
+      for (const d of readdirSync(join(root, y, m))) if (`${y}/${m}/${d}` >= from) days.push(join(root, y, m, d));
+  return days.flatMap(jsonl);
+}
+
 function jsonl(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
@@ -59,6 +100,7 @@ function jsonl(dir: string): string[] {
 
 // The daemon rescans every tick; a transcript that hasn't changed isn't read again.
 const seen = new Map<string, string>();
+const warned = new Set<string>();
 
 // Records new usage for every folder a ticket's agents ran in (its worktree, and the
 // ticket folder triage runs in), then its totals. Idempotent: rows are keyed by
@@ -74,6 +116,12 @@ export function recordUsage(db: Database, log: (s: string) => void = () => {}) {
   // The stage session a message belongs to: the latest one started before it.
   const sessionAt = db.query("SELECT id FROM sessions WHERE ticket = ? AND started_at <= ? ORDER BY started_at DESC, id DESC LIMIT 1");
   const unpriced = new Set<string>();
+  const record = (ticket: number, u: Use) => {
+    if (!PRICES[u.model.replace(/-\d{8}$/, "")]) unpriced.add(u.model);
+    const s = sessionAt.get(ticket, u.at) as { id: number } | null;
+    put.run(u.id, ticket, s?.id ?? null, u.at, u.model, u.input, u.w5m, u.w1h, u.read, u.output, usd(u));
+  };
+  const touched = new Set<number>();
   for (const t of tickets) {
     let changed = false;
     // Claude names the folder after its cwd as it sees it, which may be the real path.
@@ -84,15 +132,29 @@ export function recordUsage(db: Database, log: (s: string) => void = () => {}) {
       if (seen.get(file) === stamp) continue;
       seen.set(file, stamp);
       changed = true;
-      for (const u of parseTranscript(readFileSync(file, "utf8"))) {
-        if (!PRICES[u.model.replace(/-\d{8}$/, "")]) unpriced.add(u.model);
-        const s = sessionAt.get(t.id, u.at) as { id: number } | null;
-        put.run(u.id, t.id, s?.id ?? null, u.at, u.model, u.input, u.w5m, u.w1h, u.read, u.output, usd(u));
-      }
+      for (const u of parseTranscript(readFileSync(file, "utf8"))) record(t.id, u);
     }
-    if (changed) totals(db, t.id);
+    if (changed) touched.add(t.id);
   }
-  for (const m of unpriced) log(`factory: no price for ${m}; its usage counts as $0`);
+  // Codex sessions the factory started: matched to a ticket by the folder they ran in.
+  const firstCodex = (db.query(`SELECT MIN(started_at) AS at FROM sessions WHERE argv LIKE '["codex"%'`).get() as { at: string | null }).at;
+  if (firstCodex) {
+    const owner = new Map(tickets.flatMap((t) => t.dirs.flatMap((d) => [d, existsSync(d) ? realpathSync(d) : d]).map((d) => [d, t.id] as const)));
+    for (const file of codexFiles(firstCodex)) {
+      const st = statSync(file);
+      const stamp = `${st.size}:${st.mtimeMs}`;
+      if (seen.get(file) === stamp) continue;
+      seen.set(file, stamp);
+      const { cwd, uses } = parseCodex(readFileSync(file, "utf8"));
+      const ticket = cwd ? owner.get(cwd) : undefined;
+      if (ticket == null) continue;
+      for (const u of uses) record(ticket, u);
+      touched.add(ticket);
+    }
+  }
+  for (const id of touched) totals(db, id);
+  // Once per model per daemon: a model with no price (Codex's, for one) would log every tick.
+  for (const m of unpriced) if (!warned.has(m)) { warned.add(m); log(`factory: no price for ${m}; its usage counts as $0`); }
 }
 
 // "Tokens in" is what the budget limits: fresh input plus cache writes. Cache reads
