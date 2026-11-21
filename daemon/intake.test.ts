@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open } from "./db.ts";
-import { LOCAL_IDS, newTicket, parseSource } from "./intake.ts";
+import { LOCAL_IDS, newTicket, parseSource, pollQueue } from "./intake.ts";
 import type { Run } from "./runner.ts";
 
 const now = "2026-11-21T10:00:00Z";
@@ -45,4 +45,31 @@ test("goals get local ids from 10000, clear of issue numbers", () => {
   expect(add("Export API").id).toBe(LOCAL_IDS + 1);
   expect(calls).toEqual([]);
   expect(() => add("   ")).toThrow("type an issue link");
+});
+
+test("the queue adds this repo's Ready issues assigned to you as grooming tickets, once", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "intake-")), "factory.db"));
+  const calls: string[][] = [];
+  const item = (number: number, status: string, assignees: string[], repository = "acme/api", type = "Issue") =>
+    ({ status, assignees, content: { type, number, title: `Issue ${number}`, repository } });
+  const run: Run = (argv) => {
+    calls.push(argv);
+    if (argv[1] === "api") return { code: 0, out: "pat\n" };
+    if (argv[2] === "list") return { code: 0, out: JSON.stringify({ projects: [{ number: 3, title: "Engineering" }] }) };
+    return { code: 0, out: JSON.stringify({ items: [
+      item(412, "Ready", ["pat"]), item(413, "Todo", ["pat"]), item(414, "Ready", ["sam"]),
+      item(415, "Ready", ["Pat"], "other/repo"), item(416, "ready", ["Pat", "sam"]), item(417, "Ready", ["pat"], "acme/api", "PullRequest"),
+    ] }) };
+  };
+  const queue = { github_project: "acme/Engineering", column: "Ready", assignee: "me" };
+  expect(pollQueue(db, { queue, repo: "acme/api", run, now })).toEqual([412, 416]);
+  expect(calls.map((c) => c.slice(0, 4))).toEqual([["gh", "project", "list", "--owner"], ["gh", "api", "user", "-q"], ["gh", "project", "item-list", "3"]]);
+  expect(db.query("SELECT id, state, title FROM tickets ORDER BY id").all()).toEqual([
+    { id: 412, state: "grooming", title: "Issue 412" }, { id: 416, state: "grooming", title: "Issue 416" },
+  ]);
+  calls.length = 0;
+  expect(pollQueue(db, { queue, repo: "acme/api", run, now })).toEqual([]); // known already; names are cached
+  expect(calls.map((c) => c[2])).toEqual(["item-list"]);
+  expect(pollQueue(db, { queue: undefined, repo: "acme/api", run, now })).toEqual([]);
+  expect(() => pollQueue(db, { queue: { github_project: "Engineering" }, repo: "acme/api", run, now })).toThrow("isn't owner/<number or title>");
 });

@@ -43,3 +43,63 @@ export function newTicket(db: Database, o: { text: string; repo: string; bluepri
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, `added ${"goal" in src ? "a goal" : `issue #${id}`}`, o.now);
   return { id, title };
 }
+
+// D6 queue (plan: Grooming): issues in the GitHub Project's Ready column, assigned to
+// you, join as grooming tickets. factory.yaml: queue: { github_project: owner/<number
+// or title>, column: Ready, assignee: me }. Triage starts on them a few at a time.
+type Item = { status?: string; assignees?: string[]; content?: { type?: string; number?: number; title?: string; repository?: string; url?: string } };
+
+const repoOf = (s = "") => s.replace(/^https:\/\/github\.com\//, "").split("/").slice(0, 2).join("/").toLowerCase();
+
+function json(run: Run, argv: string[]) {
+  const r = run(argv);
+  if (r.code !== 0) throw new Error(`${argv.slice(0, 3).join(" ")} failed: ${r.out.slice(0, 200)}`);
+  try { return JSON.parse(r.out); } catch { throw new Error(`${argv.slice(0, 3).join(" ")} printed no JSON: ${r.out.slice(0, 200)}`); }
+}
+
+// Names are looked up once and kept in meta: the project's number and your login.
+function projectNumber(db: Database, run: Run, project: string) {
+  const [owner, ...rest] = project.split("/");
+  const name = rest.join("/");
+  if (!owner || !name) throw new Error(`queue.github_project "${project}" isn't owner/<number or title>`);
+  if (/^\d+$/.test(name)) return { owner, number: Number(name) };
+  const key = `queue_project:${project}`;
+  const known = (db.query("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | null)?.value;
+  if (known) return { owner, number: Number(known) };
+  const found = (json(run, ["gh", "project", "list", "--owner", owner, "--format", "json", "--limit", "100"]).projects as { number: number; title: string }[])
+    .find((p) => p.title.toLowerCase() === name.toLowerCase());
+  if (!found) throw new Error(`no project "${name}" for ${owner}; gh needs the project scope: gh auth refresh -s project`);
+  db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(key, String(found.number));
+  return { owner, number: found.number };
+}
+
+function login(db: Database, run: Run, assignee: string) {
+  if (assignee !== "me") return assignee.replace(/^@/, "");
+  const known = (db.query("SELECT value FROM meta WHERE key = 'gh_login'").get() as { value: string } | null)?.value;
+  if (known) return known;
+  const r = run(["gh", "api", "user", "-q", ".login"]);
+  if (r.code !== 0 || !r.out.trim()) throw new Error(`gh api user failed: ${r.out.slice(0, 200)}`);
+  db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('gh_login', ?)").run(r.out.trim());
+  return r.out.trim();
+}
+
+export function pollQueue(db: Database, o: { queue: { github_project?: string; column?: string; assignee?: string } | undefined; repo: string; run: Run; now: string }) {
+  const q = o.queue;
+  if (!q?.github_project) return [];
+  const { owner, number } = projectNumber(db, o.run, q.github_project);
+  const who = q.assignee ? login(db, o.run, q.assignee) : null;
+  const column = (q.column ?? "Ready").toLowerCase();
+  const items = (json(o.run, ["gh", "project", "item-list", String(number), "--owner", owner, "--format", "json", "--limit", "500"]).items ?? []) as Item[];
+  const added: number[] = [];
+  for (const it of items) {
+    const c = it.content;
+    if (c?.type !== "Issue" || !c.number || (it.status ?? "").toLowerCase() !== column) continue;
+    if (repoOf(c.repository ?? c.url) !== o.repo.toLowerCase()) continue; // another repo's issue
+    if (who && !(it.assignees ?? []).some((a) => a.toLowerCase() === who.toLowerCase())) continue;
+    if (db.query("SELECT 1 FROM tickets WHERE id = ?").get(c.number)) continue;
+    db.query("INSERT INTO tickets (id, title, state, updated_at) VALUES (?, ?, 'grooming', ?)").run(c.number, c.title ?? `Issue #${c.number}`, o.now);
+    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(c.number, `joined from ${q.github_project}'s ${q.column ?? "Ready"} column`, o.now);
+    added.push(c.number);
+  }
+  return added;
+}

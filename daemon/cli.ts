@@ -14,11 +14,11 @@ import { parseTokens } from "../lib/model.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
-import { newTicket } from "./intake.ts";
+import { newTicket, pollQueue } from "./intake.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
-import { ask, pick, readIssueAnswers, startGroomed, startGrooming } from "./groom.ts";
-import { advance, answer, checkReady, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { ask, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
+import { advance, answer, checkReady, readFactory, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -38,6 +38,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket, with their tokens
   usage                              read agents' Claude Code transcripts now (the daemon does every tick)
+  queue                              add the Project's Ready issues as grooming tickets now (the daemon: every 3 minutes)
   ticket add <id> <title…> [--blueprint b]
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
   stage <id> <Name> [detail…] [--next A,B]  enter a stage (the current one ends)
@@ -252,6 +253,14 @@ export function main(argv: string[], log = console.log) {
       for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
       return;
+    } else if (cmd === "queue") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const queue = readFactory(repoDir).queue;
+      if (!queue?.github_project) throw new Error("factory.yaml has no queue: { github_project: owner/<number or title>, column: Ready, assignee: me }");
+      let added: number[] = [];
+      change(db, () => { added = pollQueue(db, { queue, repo: getMeta(db, "repo") ?? "unknown", run: sh, now: now() }); });
+      log(added.length ? `added ${added.map((n) => `#${n}`).join(", ")} to grooming` : "no new issues in the queue");
     } else if (cmd === "usage") {
       change(db, () => recordUsage(db, log));
     } else if (cmd === "decide") {
@@ -297,8 +306,30 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   const nowIso = new Date().toISOString();
   const lastRead = getMeta(db, "issues_read_at");
   if (!lastRead || Date.now() - Date.parse(lastRead) >= 60_000) {
-    try { change(db, () => { setMeta(db, "issues_read_at", nowIso); readIssueAnswers(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
+    setMeta(db, "issues_read_at", nowIso); // outside the change: a failing gh waits a minute too
+    try { change(db, () => { readIssueAnswers(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
     catch (e) { log(`factory: reading issue answers: ${(e as Error).message}`); }
+  }
+  // The Project's Ready column, every 3 minutes; triage starts on what joined, a few at a time.
+  const lastPoll = getMeta(db, "queue_polled_at");
+  if (!lastPoll || Date.now() - Date.parse(lastPoll) >= 180_000) {
+    setMeta(db, "queue_polled_at", nowIso);
+    try {
+      let added: number[] = [];
+      change(db, () => {
+        added = pollQueue(db, { queue: readFactory(repoDir).queue, repo: getMeta(db, "repo") ?? "unknown", run, now: nowIso });
+      });
+      if (added.length) log(`factory: ${added.map((n) => `#${n}`).join(", ")} joined from the queue`);
+    } catch (e) {
+      log(`factory: reading the queue: ${(e as Error).message}`);
+    }
+  }
+  try {
+    let groomed: number[] = [];
+    change(db, () => { groomed = startPendingGrooming(db, { dir: p.dir, repo: repoDir, run, now: nowIso }); });
+    for (const id of groomed) log(`factory: #${id}: triage started`);
+  } catch (e) {
+    log(`factory: starting triage: ${(e as Error).message}`);
   }
   // Groomed tickets waiting for room: one starts as another stops running.
   try {

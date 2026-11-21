@@ -123,7 +123,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { quality_floor?: string[]; ready?: string[]; max_running?: number; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
