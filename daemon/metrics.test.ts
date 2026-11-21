@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open } from "./db.ts";
 import { buildStatus } from "./status.ts";
-import { findReverts, setPlan } from "./metrics.ts";
+import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
 import type { Run } from "./runner.ts";
 
 const db0 = () => open(join(mkdtempSync(join(tmpdir(), "metrics-")), "factory.db"));
@@ -41,4 +41,31 @@ test("interactions per PR count your steps before it opened; the revert rate cou
   expect(calls[0].slice(0, 7)).toEqual(["gh", "pr", "list", "--repo", "acme/api", "--state", "merged"]);
   expect(buildStatus(db, now).today.revert_rate).toBe(0.5);
   expect(findReverts(db, { repo: "acme/api", run, now: at(0) })).toEqual([]); // #41 wasn't reverted; #42 is known
+});
+
+test("metrics.json: medians, merges per day, spend by stage and model, quality by blueprint, against the week before", () => {
+  const db = db0();
+  const now = new Date("2026-11-21T12:00:00Z");
+  const at = (h: number) => new Date(now.getTime() - h * 3600e3).toISOString();
+  const ticket = (id: number, bp: string, began: number, pr: number, merged: number | null, reverted = false) => {
+    db.query("INSERT INTO tickets (id, title, blueprint, state, reverted_by, retries, updated_at) VALUES (?, 'x', ?, ?, ?, 1, ?)").run(id, bp, merged != null ? "merged" : "ready", reverted ? 99 : null, at(0));
+    db.query("INSERT INTO stages (ticket, name, started_at) VALUES (?, 'Spec', ?)").run(id, at(began));
+    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(id, `opened PR #${id}`, at(pr));
+    if (merged != null) db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, `merged PR #${id}`, at(merged));
+  };
+  ticket(1, "feature", 10, 9, 5);        // 1h to PR, 4h PR → merge
+  ticket(2, "feature", 30, 27, 26, true); // 3h to PR, reverted
+  ticket(3, "chore", 200, 199, 198);     // the week before: 1h
+  db.query("INSERT INTO sessions (id, ticket, stage, argv, started_at) VALUES (1, 1, 'implement', '[]', ?)").run(at(10));
+  db.query("INSERT INTO usage (message_id, ticket, session, at, model, input, cache_write_5m, cache_write_1h, cache_read, output, usd) VALUES ('m', 1, 1, ?, 'claude-sonnet-5-5', 0, 0, 0, 0, 0, 3)").run(at(9));
+  const r = (buildMetrics(db, now).ranges as any)["7"];
+  expect(r.headline.time_to_pr_min).toEqual([120, 60]);
+  expect(r.headline.revert_rate).toEqual([0.5, 0]);
+  expect(r.headline.cost_per_pr_usd).toEqual([1.5, 0]);
+  expect(r.cycle).toEqual({ pickup_to_pr_min: 120, pr_to_merge_min: 150, pickup_to_merge_min: 270 });
+  expect(r.days).toHaveLength(7);
+  expect(r.merged_per_day.reduce((a: number, b: number) => a + b, 0)).toBe(2);
+  expect(r.usd_by_stage).toEqual([{ name: "implement", usd: 3 }]);
+  expect(r.usd_by_model).toEqual([{ name: "claude-sonnet-5-5", usd: 3 }]);
+  expect(r.quality).toEqual([{ blueprint: "feature", merged: 2, reverted: 1, retries_per_ticket: 1 }]);
 });

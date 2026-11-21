@@ -58,3 +58,77 @@ export function setPlan(db: Database, fiveHour: number, week: number) {
   setMeta(db, "plan_5h", String(fiveHour));
   setMeta(db, "plan_week", String(week));
 }
+
+// metrics.json, beside status.json: the Metrics page's numbers for the last 7 and 30
+// days, each against the period before it. Pickup is a ticket's first stage.
+const median = (xs: number[]) => {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
+const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const round = (n: number, d = 2) => +n.toFixed(d);
+
+function period(db: Database, from: Date, to: Date) {
+  const [a, b] = [from.toISOString(), to.toISOString()];
+  const opened = db.query(`SELECT d.ticket, d.at, (SELECT MIN(started_at) FROM stages s WHERE s.ticket = d.ticket) AS began,
+      (SELECT COALESCE(SUM(usd), 0) FROM usage u WHERE u.ticket = d.ticket) AS usd
+    FROM decisions d WHERE d.who = 'daemon' AND d.what LIKE 'opened PR #%' AND d.at >= ? AND d.at < ?`).all(a, b) as { ticket: number; at: string; began: string | null; usd: number }[];
+  const merged = db.query(`SELECT d.ticket, d.at, (SELECT MIN(started_at) FROM stages s WHERE s.ticket = d.ticket) AS began,
+      (SELECT MIN(at) FROM decisions o WHERE o.ticket = d.ticket AND o.who = 'daemon' AND o.what LIKE 'opened PR #%') AS pr_at,
+      t.blueprint, t.reverted_by, t.retries
+    FROM decisions d JOIN tickets t ON t.id = d.ticket WHERE d.who = 'you' AND d.what LIKE 'merged PR %' AND d.at >= ? AND d.at < ?`).all(a, b) as
+    { ticket: number; at: string; began: string | null; pr_at: string | null; blueprint: string; reverted_by: number | null; retries: number }[];
+  const mins = (x: string | null, y: string | null) => (x && y ? (Date.parse(y) - Date.parse(x)) / 60000 : null);
+  const some = (xs: (number | null)[]) => xs.filter((x): x is number => x != null);
+  return {
+    opened, merged,
+    time_to_pr_min: Math.round(median(some(opened.map((o) => mins(o.began, o.at))))),
+    cost_per_pr_usd: round(mean(opened.map((o) => o.usd))),
+    interactions_per_pr: round(mean(opened.map((o) => interactionsBefore(db, o.ticket, o.at))), 1),
+    revert_rate: merged.length ? round(merged.filter((m) => m.reverted_by != null).length / merged.length, 3) : 0,
+    cycle: {
+      pickup_to_pr_min: Math.round(median(some(merged.map((m) => mins(m.began, m.pr_at))))),
+      pr_to_merge_min: Math.round(median(some(merged.map((m) => mins(m.pr_at, m.at))))),
+      pickup_to_merge_min: Math.round(median(some(merged.map((m) => mins(m.began, m.at))))),
+    },
+  };
+}
+
+export function buildMetrics(db: Database, now = new Date()) {
+  const day = 86_400_000;
+  const ranges: Record<string, unknown> = {};
+  for (const days of [7, 30]) {
+    const from = new Date(now.getTime() - days * day);
+    const cur = period(db, from, now);
+    const prev = period(db, new Date(from.getTime() - days * day), from);
+    const dates = Array.from({ length: days }, (_, i) => new Date(from.getTime() + (i + 1) * day).toISOString().slice(0, 10));
+    const onDay = (at: string) => at.slice(0, 10);
+    const spend = db.query(`SELECT substr(u.at, 1, 10) AS day, SUM(u.usd) AS usd FROM usage u WHERE u.at >= ? GROUP BY day`).all(from.toISOString()) as { day: string; usd: number }[];
+    const byStage = db.query(`SELECT COALESCE(s.stage, 'other') AS k, SUM(u.usd) AS usd FROM usage u LEFT JOIN sessions s ON s.id = u.session WHERE u.at >= ? GROUP BY k ORDER BY usd DESC`).all(from.toISOString()) as { k: string; usd: number }[];
+    const byModel = db.query(`SELECT model AS k, SUM(usd) AS usd FROM usage WHERE at >= ? GROUP BY k ORDER BY usd DESC`).all(from.toISOString()) as { k: string; usd: number }[];
+    const blueprints = [...new Set(cur.merged.map((m) => m.blueprint))].sort();
+    ranges[String(days)] = {
+      headline: {
+        time_to_pr_min: [cur.time_to_pr_min, prev.time_to_pr_min], cost_per_pr_usd: [cur.cost_per_pr_usd, prev.cost_per_pr_usd],
+        interactions_per_pr: [cur.interactions_per_pr, prev.interactions_per_pr], revert_rate: [cur.revert_rate, prev.revert_rate],
+      },
+      prs_opened: cur.opened.length, prs_merged: cur.merged.length,
+      cycle: cur.cycle,
+      merged_per_day: dates.map((d) => cur.merged.filter((m) => onDay(m.at) === d).length),
+      interactions_per_day: dates.map((d) => {
+        const o = cur.opened.filter((x) => onDay(x.at) === d);
+        return o.length ? round(mean(o.map((x) => interactionsBefore(db, x.ticket, x.at))), 1) : null;
+      }),
+      days: dates,
+      usd_per_day: dates.map((d) => round(spend.find((s) => s.day === d)?.usd ?? 0)),
+      usd_by_stage: byStage.map((r) => ({ name: r.k, usd: round(r.usd) })),
+      usd_by_model: byModel.map((r) => ({ name: r.k, usd: round(r.usd) })),
+      quality: blueprints.map((b) => {
+        const ms = cur.merged.filter((m) => m.blueprint === b);
+        return { blueprint: b, merged: ms.length, reverted: ms.filter((m) => m.reverted_by != null).length, retries_per_ticket: round(mean(ms.map((m) => m.retries)), 1) };
+      }),
+    };
+  }
+  return { generated_at: now.toISOString(), ranges };
+}

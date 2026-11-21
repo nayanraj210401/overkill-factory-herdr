@@ -36,6 +36,14 @@ node -e 'import("./lib/actions.js").then(({ budgetAsk }) => {
 herdr-app do layout.switch '{"name":"factory-ask-test"}' >/dev/null; sleep 1.3
 herdr-app shot "$out/ask-input.png" >/dev/null
 errors
+# Metrics' other tabs, which check never reaches (it renders the first one).
+for tab in Cost Quality; do
+  echo "{\"id\":\"root\",\"type\":\"row\",\"children\":[{\"id\":\"m\",\"type\":\"block\",\"content\":{\"mod\":\"factory-metrics\",\"props\":{\"tab\":\"$tab\"}}}]}" > "$home/layouts/factory-metrics-test.json"
+  herdr-app do layout.switch '{"name":"factory-metrics-test"}' >/dev/null; sleep 1.3
+  herdr-app shot "$out/metrics-$tab.png" >/dev/null
+  errors
+  herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
+done
 herdr-app do layout.switch '{"name":"main"}' >/dev/null; sleep 0.7
 [[ $(herdr-app status | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).layout)') == main ]]
 herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.7
