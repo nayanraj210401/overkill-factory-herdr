@@ -7,7 +7,7 @@
 import type { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getMeta } from "./db.ts";
+import { getMeta, ticketRepos } from "./db.ts";
 import { openAgent } from "./herdr.ts";
 import { enterStage } from "./ticket.ts";
 import { loadBlueprint, plannedPath, readFactory, restartStage, startStage, title, type Run } from "./runner.ts";
@@ -89,6 +89,7 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.location === "cloud") throw new Error(`#${o.id} is in the cloud already`);
   if (t.state !== "running" || !t.worktree) throw new Error(`#${o.id} is ${t.state}; only a running ticket moves to the cloud`);
+  if (ticketRepos(db, o.id).length > 1) throw new Error(`#${o.id} works in more than one repo; cross-repo tickets don't move to the cloud yet`);
   const away = (readFactory(o.repo) as any).away ?? {};
   if (away.min_agreement != null) throw new Error("away.min_agreement is set, and the babysitter's agreement with you isn't measured yet; remove it from factory.yaml to move tickets to the cloud");
   const b = loadBlueprint(o.repo, t.blueprint);
