@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+process.env.FACTORY_TEST_SANDBOX = "1"; // daemon/herdr.ts refuses a test run without it
 process.env.HERDR_APP_HOME = mkdtempSync(join(tmpdir(), "no-herdr-"));
 process.env.FACTORY_WORKTREES = mkdtempSync(join(tmpdir(), "worktrees-"));
 process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "claude-"));

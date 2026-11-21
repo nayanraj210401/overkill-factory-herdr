@@ -8,6 +8,11 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Run } from "./runner.ts";
 
+// `bun test` started outside the repo root skips bunfig.toml's preload, and its tests
+// would open spaces, agents and worktrees in the person's own Herdr. Refuse instead.
+if (process.env.NODE_ENV === "test" && !process.env.FACTORY_TEST_SANDBOX)
+  throw new Error("bun test ran without daemon/test-env.ts (bunfig.toml's preload); run it from the repo root");
+
 const appHome = () => process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");
 
 // The worktree mod's slug: anything but letters, digits, . _ - becomes a dash.
