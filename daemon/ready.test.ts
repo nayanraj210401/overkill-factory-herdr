@@ -51,8 +51,9 @@ test("the pr stage waits while a rule fails, then pushes the branch and opens a 
   expect(r).toMatchObject({ pr: 42, ready: true, stage: "merge" });
   expect(ticket()).toMatchObject({ state: "ready", pr_number: 42, pr_watched: 1, stage: "merge" });
   expect(sh(["git", "-C", origin, "branch", "--list", "factory/7-rate-limit-login"]).out).toContain("factory/7-rate-limit-login");
-  expect(gh[0].slice(0, 5)).toEqual(["gh", "pr", "create", "--draft", "--head"]);
-  const body = readFileSync(gh[0][gh[0].indexOf("--body-file") + 1], "utf8");
+  expect(gh.map((a) => a.slice(0, 3))).toEqual([["gh", "pr", "list"], ["gh", "pr", "create"]]); // no PR on the branch yet, so one opens
+  expect(gh[1].slice(0, 5)).toEqual(["gh", "pr", "create", "--draft", "--head"]);
+  const body = readFileSync(gh[1][gh[1].indexOf("--body-file") + 1], "utf8");
   expect(body).toStartWith("Rate-limits login per user");
   expect(body).toContain("- ✓ evidence: 1 checks pass after the last commit");
   expect(body).toContain("- – holdout: the blueprint has no checker stage");
@@ -62,7 +63,7 @@ test("the pr stage waits while a rule fails, then pushes the branch and opens a 
 test("evidence older than the last commit doesn't count, and an overrun budget blocks", () => {
   const { db, dir, run, ticket } = setup();
   db.query("INSERT INTO evidence (ticket, check_name, result, at) VALUES (7, 'C1', 'PASS', '2000-01-01T00:00:00Z')").run();
-  const rules = (o = {}) => readyRules(db, { id: 7, dir, worktree: ticket().worktree, rules: ["evidence", "budget"], run, ...o });
+  const rules = (o = {}) => readyRules(db, { id: 7, dir, worktrees: [ticket().worktree], rules: ["evidence", "budget"], run, ...o });
   expect(rules()[0]).toMatchObject({ result: "fail", detail: "older than the last commit: C1" });
   db.query("UPDATE tickets SET tokens_in = 9000000 WHERE id = 7").run();
   expect(rules()[1]).toMatchObject({ rule: "budget", result: "fail" });
@@ -72,7 +73,7 @@ test("holdout and review count each voter's latest verdict after the last commit
   const { db, dir, run, ticket } = setup();
   const now = new Date(Date.now() + 1000).toISOString(); // after the worktree's commit
   const rules = (expects: ("holdout" | "review")[] = ["holdout", "review"]) =>
-    readyRules(db, { id: 7, dir, worktree: ticket().worktree, rules: ["holdout", "review"], run, expects });
+    readyRules(db, { id: 7, dir, worktrees: [ticket().worktree], rules: ["holdout", "review"], run, expects });
   expect(rules([])).toMatchObject([{ result: "skipped", detail: "the blueprint has no checker stage" }, { result: "skipped", detail: "the blueprint has no reviewer stage" }]);
   expect(rules()).toMatchObject([{ result: "fail", detail: "no checker verdict recorded" }, { result: "fail", detail: "no reviewer verdict recorded" }]);
   const vote = (kind: "holdout" | "review", result: "PASS" | "FAIL", by: string, at = now, detail: string | null = null) =>
@@ -104,7 +105,7 @@ test("m merges only a ready ticket's PR: marks the draft ready, squash-merges, e
   writeFileSync(prFile, GOOD_PR);
   tryPr(db, { dir, repo, id: 7, run });
   gh.length = 0;
-  expect(mergeTicket(db, { repo, id: 7, run })).toEqual({ pr: 42 });
+  expect(mergeTicket(db, { repo, id: 7, run })).toEqual({ pr: 42, merged: ["acme/api#42"] });
   expect(gh).toEqual([["gh", "pr", "ready", "42"], ["gh", "pr", "merge", "42", "--squash"]]);
   expect(ticket()).toMatchObject({ state: "merged", pr_number: 42, pr_watched: 0 });
   expect(db.query("SELECT COUNT(*) AS n FROM stages WHERE ticket = 7 AND ended_at IS NULL").get()).toEqual({ n: 0 });

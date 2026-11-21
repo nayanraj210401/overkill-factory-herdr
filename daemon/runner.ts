@@ -2,15 +2,15 @@
 // space when the app runs), enters its blueprint's first stage, and that stage's
 // agent starts in a tab there, or in a free-floating herdr-core terminal.
 import type { Database } from "bun:sqlite";
-import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncateSync, unlinkSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
-import { openPr, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
+import { openPr, prBody, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
 import { closeSpace, openAgent, openTab, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
-import { repoOf, setWork, ticketRepos } from "./db.ts";
+import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
 import { budgetCap, forbiddenTouched } from "./away.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
@@ -137,7 +137,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { repos?: string[]; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -158,7 +158,11 @@ export function checkReady(db: Database, o: { dir: string; repo: string; id: num
   if (!t.worktree) throw new Error(`#${o.id} has no worktree yet; factory start ${o.id}`);
   const b = loadBlueprint(o.repo, t.blueprint);
   const expects = Object.values(b.stages).map((s) => verdictOf(o.repo, s)).filter((k): k is VerdictKind => !!k);
-  return readyRules(db, { id: o.id, dir: o.dir, worktree: t.worktree, rules: readFactory(o.repo).ready ?? DEFAULT_READY, run: o.run, expects, cap: budgetCap(db, o.repo) });
+  const repos = ticketRepos(db, o.id);
+  const rules = readFactory(o.repo).ready ?? DEFAULT_READY;
+  // A cross-repo ticket is ready only when its branches pass the cross check together.
+  return readyRules(db, { id: o.id, dir: o.dir, worktrees: repos.flatMap((r) => r.worktree ?? []), rules: repos.length > 1 ? [...rules, "cross_check"] : rules,
+    run: o.run, expects, cap: budgetCap(db, o.repo) });
 }
 
 // A check stage the daemon runs itself. Returns whether it passed, after recording evidence.
@@ -176,7 +180,7 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
       record(c, r.code === 0, r.code === 0 ? "passed" : `exit ${r.code}: ${tail}`);
       ok &&= r.code === 0;
     }
-    return ok;
+    return crossCheck(db, { ...o, record }) && ok;
   }
   if (o.check === "evidence") {
     // Every check's latest result must be a PASS, and there must be at least one.
@@ -186,6 +190,20 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     return ok;
   }
   throw new Error(`unknown check "${o.check}"`);
+}
+
+// A cross-repo ticket's tests check also runs factory.yaml's cross_check, in the lead's
+// worktree, with each repo's worktree in FACTORY_REPO_<NAME> (acme/web → FACTORY_REPO_WEB).
+function crossCheck(db: Database, o: { id: number; repo: string; worktree: string; run: Run; record: (name: string, ok: boolean, detail: string) => void }) {
+  const repos = ticketRepos(db, o.id);
+  if (repos.length < 2) return true;
+  const cmd = readFactory(o.repo).cross_check;
+  if (!cmd) { o.record("cross_check", false, "factory.yaml has no cross_check command for cross-repo tickets"); return false; }
+  const env = repos.map((r) => `FACTORY_REPO_${r.repo.slice(r.repo.indexOf("/") + 1).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}=${r.worktree}`);
+  const r = o.run(["env", ...env, "sh", "-c", cmd], o.worktree);
+  const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
+  o.record("cross_check", r.code === 0, r.code === 0 ? `passed across ${repos.map((x) => x.repo).join(", ")}` : `exit ${r.code}: ${tail}`);
+  return r.code === 0;
 }
 
 type BlueprintStage = Stage & { on_fail?: string; max_retries?: number; gate?: string; requires?: string };
@@ -305,11 +323,30 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
     db.query("UPDATE tickets SET detail = ? WHERE id = ?").run(detail, o.id);
     return { waiting: true, stage: t.stage, failing: failing.length };
   }
-  const number = openPr(db, { id: o.id, dir: o.dir, worktree: t.worktree, branch: t.branch, rules, run, existing: t.pr_number });
-  setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now });
+  // One draft PR per repo. A cross-repo change's bodies then name each other's PRs.
+  const repos = ticketRepos(db, o.id);
+  const prs = repos.map((r) => {
+    const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number,
+      others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })) });
+    setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now }, r.repo);
+    return { ...r, pr_number: number };
+  });
+  if (prs.length > 1 && prs.some((p, i) => repos[i].pr_number == null)) linkPrs(o, prs, rules, run);
+  const others = prs.slice(1).map((p) => `${p.repo}#${p.pr_number}`).join(", ");
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
-    .run(o.id, `${t.pr_number == null ? "opened" : "updated"} PR #${number}`, rules.map((r) => `${r.rule} ${r.result}`).join(", "), now);
-  return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now }), pr: number };
+    .run(o.id, `${t.pr_number == null ? "opened" : "updated"} PR #${prs[0].pr_number}`, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}${others ? `; with ${others}` : ""}`, now);
+  return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now }), pr: prs[0].pr_number };
+}
+
+// New PRs of a cross-repo change didn't know each other's numbers: every body gets them.
+function linkPrs(o: { dir: string; id: number }, prs: { repo: string; worktree: string | null; pr_number: number }[], rules: ReturnType<typeof checkReady>, run: Run) {
+  const md = readFileSync(join(o.dir, "tickets", String(o.id), "PR.md"), "utf8");
+  const bodyFile = join(o.dir, "tickets", String(o.id), ".pr-body.md");
+  for (const p of prs) {
+    writeFileSync(bodyFile, prBody(md, rules, prs.filter((x) => x !== p).map((x) => ({ repo: x.repo, pr: x.pr_number }))));
+    const edit = run(["gh", "pr", "edit", String(p.pr_number), "--body-file", bodyFile], p.worktree!);
+    if (edit.code !== 0) throw new Error(`gh pr edit failed in ${p.repo}: ${edit.out}`);
+  }
 }
 
 // `m` on a ready ticket: the human merge gate. The PR was opened as a draft, so it's
@@ -321,15 +358,41 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
   const t = db.query("SELECT state, pr_number FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; pr_number: number | null } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready ticket's PR merges`);
-  const pr = String(t.pr_number);
   const method = readFactory(o.repo).merge_method ?? "squash";
-  for (const argv of [["gh", "pr", "ready", pr], ["gh", "pr", "merge", pr, `--${method}`]]) {
-    const r = run(argv, o.repo);
-    // `gh pr ready` on a PR that is already ready says so and changes nothing.
-    if (r.code !== 0 && !(argv[2] === "ready" && /already .*ready/i.test(r.out))) throw new Error(`${argv.slice(0, 3).join(" ")} failed: ${r.out}`);
+  // Every repo's PR, in merge order; it stops at the first that fails. The ones merged
+  // stay merged (GitHub can't take them back), so `m` again goes on from the failure.
+  const repos = ticketRepos(db, o.id);
+  if (repos.some((r) => r.pr_number == null)) throw new Error(`#${o.id} has no PR in ${repos.filter((r) => r.pr_number == null).map((r) => r.repo).join(", ")}`);
+  const merged: string[] = [];
+  for (const r of mergeOrder(repos).filter((x) => !x.merged_at)) {
+    const pr = String(r.pr_number);
+    for (const argv of [["gh", "pr", "ready", pr], ["gh", "pr", "merge", pr, `--${method}`]]) {
+      const g = run(argv, r.path);
+      // `gh pr ready` on a PR that is already ready says so and changes nothing.
+      if (g.code !== 0 && !(argv[2] === "ready" && /already .*ready/i.test(g.out))) {
+        const failed = `${argv.slice(0, 3).join(" ")} failed${repos.length > 1 ? ` in ${r.repo}` : ""}: ${g.out}`;
+        if (!merged.length) throw new Error(failed);
+        db.query("UPDATE tickets SET detail = ?, updated_at = ? WHERE id = ?").run(`merged ${merged.join(", ")}; ${failed}`, now, o.id);
+        return { pr: t.pr_number, merged, failed };
+      }
+    }
+    setWork(db, o.id, { merged_at: now }, r.repo);
+    merged.push(`${r.repo}#${r.pr_number}`);
   }
   finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: method });
-  return { pr: t.pr_number };
+  return { pr: t.pr_number, merged };
+}
+
+// `factory merge-order <id> a/b c/d`: the plan's (or your) merge order, every repo once.
+export function setMergeOrder(db: Database, o: { id: number; slugs: string[]; now: string }) {
+  const t = db.query("SELECT state FROM tickets WHERE id = ?").get(o.id) as { state: string } | null;
+  if (!t) throw new Error(`no ticket ${o.id}`);
+  if (t.state === "merged" || t.state === "closed") throw new Error(`#${o.id} is ${t.state}`);
+  const repos = ticketRepos(db, o.id).map((r) => r.repo);
+  if (o.slugs.length !== repos.length || !repos.every((r) => o.slugs.includes(r)))
+    throw new Error(`name each of #${o.id}'s repos once: ${repos.join(", ")}`);
+  o.slugs.forEach((s, i) => setWork(db, o.id, { merge_pos: i }, s));
+  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(o.id, "you", `merge order: ${o.slugs.join(", ")}`, o.now);
 }
 
 // A ticket's PR is over: merged (by `m`, or on GitHub) or closed unmerged. The gate
@@ -473,17 +536,21 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
 }
 
 // `d`: what the ticket changed, as `git diff` text: its worktree (uncommitted work
-// too) against where its branch left the repo's current branch.
+// too) against where its branch left the repo's current branch. A cross-repo ticket's
+// repos come one after another, each path under its repo's name (web/src/app.ts).
 export function ticketDiff(db: Database, o: { repo: string; id: number; run?: Run }) {
   const run = o.run ?? sh;
-  const t = db.query("SELECT worktree FROM ticket_lead WHERE id = ?").get(o.id) as { worktree: string | null } | null;
-  if (!t) throw new Error(`no ticket ${o.id}`);
-  if (!t.worktree) throw new Error(`#${o.id} has no worktree: it hasn't started, or it merged and its worktree was removed`);
-  const base = run(["git", "-C", o.repo, "symbolic-ref", "--short", "HEAD"]);
-  if (base.code !== 0) throw new Error(`can't tell the repo's branch: ${base.out}`);
-  const from = run(["git", "-C", t.worktree, "merge-base", base.out, "HEAD"]);
-  if (from.code !== 0) throw new Error(`git merge-base failed: ${from.out}`);
-  const diff = run(["git", "-C", t.worktree, "--no-optional-locks", "diff", "--no-color", "--no-ext-diff", from.out]);
-  if (diff.code !== 0) throw new Error(`git diff failed: ${diff.out}`);
-  return diff.out;
+  if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(o.id)) throw new Error(`no ticket ${o.id}`);
+  const repos = ticketRepos(db, o.id);
+  if (!repos[0].worktree) throw new Error(`#${o.id} has no worktree: it hasn't started, or it merged and its worktree was removed`);
+  return repos.filter((r) => r.worktree).map((r) => {
+    const base = run(["git", "-C", r.path, "symbolic-ref", "--short", "HEAD"]);
+    if (base.code !== 0) throw new Error(`can't tell ${r.repo}'s branch: ${base.out}`);
+    const from = run(["git", "-C", r.worktree!, "merge-base", base.out, "HEAD"]);
+    if (from.code !== 0) throw new Error(`git merge-base failed: ${from.out}`);
+    const prefix = repos.length > 1 ? ["--src-prefix", `a/${r.repo.slice(r.repo.indexOf("/") + 1)}/`, "--dst-prefix", `b/${r.repo.slice(r.repo.indexOf("/") + 1)}/`] : [];
+    const diff = run(["git", "-C", r.worktree!, "--no-optional-locks", "diff", "--no-color", "--no-ext-diff", ...prefix, from.out]);
+    if (diff.code !== 0) throw new Error(`git diff failed: ${diff.out}`);
+    return diff.out;
+  }).filter(Boolean).join("\n");
 }

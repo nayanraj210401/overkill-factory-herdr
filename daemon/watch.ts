@@ -8,7 +8,7 @@ import type { Database } from "bun:sqlite";
 import { finishPr, readFactory, reviewBack, type Run } from "./runner.ts";
 import { commentsNote, pushbackLimit, storeComments, type GhComment } from "./comments.ts";
 import { reviewRoundsLeft } from "./away.ts";
-import { setWork } from "./db.ts";
+import { setWork, ticketRepos, type TicketRepo } from "./db.ts";
 
 function ghJson(run: Run, argv: string[]) {
   const r = run(argv);
@@ -29,32 +29,49 @@ export function prComments(run: Run, slug: string, pr: number) {
   return { state: view.state as "OPEN" | "MERGED" | "CLOSED", comments: comments.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) };
 }
 
-export function watchPrs(db: Database, o: { dir: string; repo: string; slug: string; me: string | null; run: Run; now: string; log?: (s: string) => void }) {
-  const tickets = db.query("SELECT id, pr_number, pr_checked_at FROM ticket_lead WHERE state = 'ready' AND pr_watched = 1 AND pr_number IS NOT NULL").all() as
-    { id: number; pr_number: number; pr_checked_at: string | null }[];
+// Every repo's PR of each ready, watched ticket. Merged or closed there, its repo is done;
+// when every PR is, the ticket follows (merged only if they all merged). New comments on
+// any of them go back to the fix stage together, as one review round.
+export function watchPrs(db: Database, o: { dir: string; repo: string; me: string | null; run: Run; now: string; log?: (s: string) => void }) {
+  const ids = (db.query(`SELECT DISTINCT t.id FROM tickets t JOIN ticket_repos r ON r.ticket = t.id
+    WHERE t.state = 'ready' AND r.pr_watched = 1 AND r.pr_number IS NOT NULL ORDER BY t.id`).all() as { id: number }[]).map((r) => r.id);
   const out: { id: number; event: string }[] = [];
-  for (const t of tickets) {
+  for (const id of ids) {
+    const repos = ticketRepos(db, id).filter((r) => r.pr_number != null);
+    const name = (r: TicketRepo) => (repos.length > 1 ? `${r.repo}#${r.pr_number}` : `PR #${r.pr_number}`);
     try {
-      const pr = prComments(o.run, o.slug, t.pr_number);
+      // GitHub first, outside the transaction; a repo merged earlier isn't asked again.
+      const prs = repos.map((r) => ({ r, pr: r.merged_at ? null : prComments(o.run, r.repo, r.pr_number!) }));
       db.transaction(() => {
-        if (pr.state !== "OPEN") {
-          finishPr(db, { repo: o.repo, id: t.id, run: o.run, now: o.now, state: pr.state === "MERGED" ? "merged" : "closed", why: "on GitHub", who: "daemon" });
-          return out.push({ id: t.id, event: pr.state.toLowerCase() });
+        for (const { r, pr } of prs) if (pr?.state === "MERGED") setWork(db, id, { merged_at: o.now }, r.repo);
+        const open = prs.filter((p) => p.pr?.state === "OPEN");
+        if (!open.length) {
+          const all = prs.every((p) => p.r.merged_at || p.pr?.state === "MERGED");
+          finishPr(db, { repo: o.repo, id, run: o.run, now: o.now, state: all ? "merged" : "closed", why: "on GitHub", who: "daemon" });
+          return out.push({ id, event: all ? "merged" : "closed" });
         }
+        for (const p of prs) if (p.pr && p.pr.state !== "OPEN") out.push({ id, event: `${name(p.r)} ${p.pr.state.toLowerCase()}` });
         // New is "not stored yet", not "after the last check": the pr stage moves the check
         // time when it updates the PR, and a comment made during the fix must still count.
-        const fresh = pr.comments.filter((c) => c.body.trim() && c.author.toLowerCase() !== (o.me ?? "").toLowerCase());
-        setWork(db, t.id, { pr_checked_at: o.now });
         const limit = pushbackLimit((readFactory(o.repo) as any).review);
-        const rows = storeComments(db, { ticket: t.id, pr: t.pr_number, comments: fresh, limit });
-        if (!rows.length) return;
-        const park = reviewRoundsLeft(db, o.repo, t.id) <= 0 ? `${rows.length} new review comment${rows.length > 1 ? "s" : ""} on PR #${t.pr_number}; away.review_rounds is used up while you're away` : undefined;
-        reviewBack(db, { dir: o.dir, repo: o.repo, id: t.id, run: o.run, now: o.now, park, text: commentsNote({ ticket: t.id, pr: t.pr_number, rows, limit }),
-          heading: `${rows.length} review comment${rows.length > 1 ? "s" : ""} on PR #${t.pr_number} · ${o.now.slice(0, 16).replace("T", " ")}` });
-        out.push({ id: t.id, event: `${rows.length} comment${rows.length > 1 ? "s" : ""}${park ? ", parked (away)" : ""}` });
+        const notes: string[] = [];
+        let count = 0;
+        for (const { r, pr } of open) {
+          const fresh = pr!.comments.filter((c) => c.body.trim() && c.author.toLowerCase() !== (o.me ?? "").toLowerCase());
+          setWork(db, id, { pr_checked_at: o.now }, r.repo);
+          const rows = storeComments(db, { ticket: id, pr: r.pr_number!, comments: fresh, limit });
+          if (rows.length) notes.push(commentsNote({ ticket: id, pr: r.pr_number!, rows, limit }));
+          count += rows.length;
+        }
+        if (!count) return;
+        const on = open.length > 1 ? open.map((p) => name(p.r)).join(", ") : name(open[0].r);
+        const park = reviewRoundsLeft(db, o.repo, id) <= 0 ? `${count} new review comment${count > 1 ? "s" : ""} on ${on}; away.review_rounds is used up while you're away` : undefined;
+        reviewBack(db, { dir: o.dir, repo: o.repo, id, run: o.run, now: o.now, park, text: notes.join("\n\n"),
+          heading: `${count} review comment${count > 1 ? "s" : ""} on ${on} · ${o.now.slice(0, 16).replace("T", " ")}` });
+        out.push({ id, event: `${count} comment${count > 1 ? "s" : ""}${park ? ", parked (away)" : ""}` });
       })();
     } catch (e) {
-      o.log?.(`factory: #${t.id}: watching PR #${t.pr_number}: ${(e as Error).message}`);
+      o.log?.(`factory: #${id}: watching ${repos.map(name).join(", ")}: ${(e as Error).message}`);
     }
   }
   return out;

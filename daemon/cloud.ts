@@ -25,12 +25,15 @@ const RULES: Record<string, string> = {
 export const runDir = (id: number) => join(".factory-run", String(id));
 
 export function handoffMd(o: { id: number; title: string; branch: string; blueprint: string; stage: string; left: string[]; agent: string | null;
-  ready: string[]; floor: string[]; hardStops: string[]; files: string[] }) {
+  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[] }) {
   const here = runDir(o.id);
+  const others = o.others ?? [];
   return `# #${o.id} ${o.title}: continue in the cloud
 
 You're continuing a ticket the local factory was running. The factory isn't reachable from here (there is no \`factory\` command), so you report through files. Work only on the branch \`${o.branch}\`. Never push to main, and never open, edit or merge a pull request.
-
+${others.length ? `
+This ticket changes ${others.length + 1} repos, each on the same branch \`${o.branch}\`, already pushed: this one and ${others.map((r) => `\`${r}\``).join(", ")}. Clone each other repo on that branch (\`gh repo clone ${others[0]} -- -b ${o.branch}\`), change it where the work needs, and push it to that branch too. The pack and RESULT.md stay in this repo.
+` : ""}
 ## Where it stands
 
 - Blueprint: \`${o.blueprint}\` (\`.factory/blueprints/${o.blueprint}.yaml\`).
@@ -89,11 +92,11 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.location === "cloud") throw new Error(`#${o.id} is in the cloud already`);
   if (t.state !== "running" || !t.worktree) throw new Error(`#${o.id} is ${t.state}; only a running ticket moves to the cloud`);
-  if (ticketRepos(db, o.id).length > 1) throw new Error(`#${o.id} works in more than one repo; cross-repo tickets don't move to the cloud yet`);
   const away = (readFactory(o.repo) as any).away ?? {};
   if (away.min_agreement != null) throw new Error("away.min_agreement is set, and the babysitter's agreement with you isn't measured yet; remove it from factory.yaml to move tickets to the cloud");
   const b = loadBlueprint(o.repo, t.blueprint);
   const stage = t.stage as string;
+  const repos = ticketRepos(db, o.id);
   // The local agent stops first, so it can't write after the snapshot.
   const open = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
@@ -108,10 +111,14 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   writeFileSync(join(pack, "CLOUD.md"), handoffMd({
     id: o.id, title: t.title, branch: t.branch, blueprint: t.blueprint, stage, left: plannedPath(b, stage), agent: b.stages[stage]?.agent ?? null,
     ready: f.ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], floor: f.quality_floor ?? [], hardStops: f.hard_stops ?? [], files,
+    others: repos.slice(1).map((r) => r.repo),
   }));
-  git(o.run, t.worktree, ["add", "-A"], "git add");
-  git(o.run, t.worktree, ["commit", "-q", "--allow-empty", "-m", `factory: hand #${o.id} to a cloud session at ${stage}`], "git commit");
-  git(o.run, t.worktree, ["push", "-u", "origin", t.branch], "git push");
+  // Every repo's work in progress goes up on its branch; the pack rides in the lead's.
+  for (const r of repos) {
+    git(o.run, r.worktree!, ["add", "-A"], `git add in ${r.repo}`);
+    git(o.run, r.worktree!, ["commit", "-q", "--allow-empty", "-m", `factory: hand #${o.id} to a cloud session at ${stage}`], `git commit in ${r.repo}`);
+    git(o.run, r.worktree!, ["push", "-u", "origin", r.branch!], `git push in ${r.repo}`);
+  }
   const argv = ["claude", "--cloud", `Continue the work described in ${runDir(o.id)}/CLOUD.md on branch ${t.branch}.`, "-n", `factory #${o.id} ${t.title}`.slice(0, 60)];
   const l = launch(o.run, t, argv);
   db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, 'cloud', 'cloud', ?, ?, ?, ?, ?)")
@@ -135,9 +142,12 @@ export function toLocal(db: Database, o: { dir: string; repo: string; id: number
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.location !== "cloud") throw new Error(`#${o.id} isn't in the cloud`);
-  git(o.run, t.worktree, ["fetch", "-q", "origin", t.branch], "git fetch");
-  // Only the cloud session wrote to the branch since the hand-off, so this fast-forwards.
-  git(o.run, t.worktree, ["merge", "-q", "--ff-only", `origin/${t.branch}`], "fast-forward to the cloud's commits (stop the cloud session at a step, then try again)");
+  // Only the cloud session wrote to the branches since the hand-off, so each fast-forwards.
+  for (const x of ticketRepos(db, o.id)) {
+    const where = x.lead ? "" : ` in ${x.repo}`;
+    git(o.run, x.worktree!, ["fetch", "-q", "origin", x.branch!], `git fetch${where}`);
+    git(o.run, x.worktree!, ["merge", "-q", "--ff-only", `origin/${x.branch}`], `fast-forward${where} to the cloud's commits (stop the cloud session at a step, then try again)`);
+  }
   const pack = join(t.worktree, runDir(o.id));
   const folder = join(o.dir, "tickets", String(o.id));
   mkdirSync(folder, { recursive: true });

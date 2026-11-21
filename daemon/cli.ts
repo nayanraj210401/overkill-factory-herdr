@@ -27,7 +27,7 @@ import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { overwatch } from "./overwatch.ts";
 import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
-import { advance, answer, checkReady, readFactory, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -46,6 +46,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
   diff <id>                          what the ticket changed, against the repo's branch
   merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
+  merge-order <id> owner/name…       the order a cross-repo ticket's PRs merge in (default: the others, then the lead)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket, with their tokens
   cloud <id> | --all                 hand a running ticket (or every one) to a Claude Code cloud session
@@ -281,7 +282,18 @@ export function main(argv: string[], log = console.log) {
       const repoDir = needLead(db).path;
       let r: any = null;
       change(db, () => { r = mergeTicket(db, { repo: repoDir, id: Number(sub) }); });
-      log(`#${sub}: merged PR #${r.pr}`);
+      if (r.failed) {
+        // The merges that went through are recorded; the ticket stays ready for `m` again.
+        writeStatus(db, p.status);
+        writeTicketFiles(db, p.dir, Number(sub));
+        throw new Error(`#${sub}: merged ${r.merged.join(", ")}, then stopped: ${r.failed}`);
+      }
+      log(`#${sub}: merged ${r.merged.length > 1 ? r.merged.join(", ") : `PR #${r.pr}`}`);
+    } else if (cmd === "merge-order") {
+      const id = Number(sub);
+      if (!Number.isInteger(id) || !rest.length) throw new Error("usage: factory merge-order <id> owner/name…");
+      change(db, () => setMergeOrder(db, { id, slugs: rest, now: now() }));
+      log(`#${id} merges ${rest.join(", then ")}`);
     } else if (cmd === "ready") {
       const repoDir = needLead(db).path;
       const rules = checkReady(db, { dir: p.dir, repo: repoDir, id: Number(sub), run: sh });
@@ -412,10 +424,10 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   const slug = lead.slug;
   if (slug !== "unknown" && (!lastWatch || Date.now() - Date.parse(lastWatch) >= 120_000)) {
     setMeta(db, "prs_watched_at", nowIso);
-    if (db.query("SELECT 1 FROM ticket_lead WHERE state = 'ready' AND pr_watched = 1").get()) {
+    if (db.query("SELECT 1 FROM tickets t JOIN ticket_repos r ON r.ticket = t.id WHERE t.state = 'ready' AND r.pr_watched = 1").get()) {
       let me: string | null = null;
       try { me = login(db, run, "me"); } catch (e) { log(`factory: not watching PRs: ${(e as Error).message}`); }
-      if (me) for (const e of watchPrs(db, { dir: p.dir, repo: repoDir, slug, me, run, now: nowIso, log })) log(`factory: #${e.id}'s PR: ${e.event}`);
+      if (me) for (const e of watchPrs(db, { dir: p.dir, repo: repoDir, me, run, now: nowIso, log })) log(`factory: #${e.id}'s PR: ${e.event}`);
     }
   }
   // Merged PRs someone reverted, every 10 minutes, for the revert rate.
