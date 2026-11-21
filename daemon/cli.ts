@@ -108,6 +108,16 @@ const WORK = new Set(["pr_number", "pr_watched", "pr_checked_at"]);
 function nullable(v: string) { return v === "" || v === "null" ? null : v; }
 function nullableNumber(v: string) { return v === "" || v === "null" ? null : Number(v); }
 
+// Only a terminal the factory labelled for this ticket, and never from tests.
+function closeFinished(terminal: string, ticket: number) {
+  if (process.env.FACTORY_TEST_SANDBOX) return;
+  try {
+    const t = JSON.parse(sh(["hc", "get", terminal, "--json"]).out);
+    if (t.labels?.["factory.ticket"] !== String(ticket)) return;
+  } catch { return; }
+  Bun.spawn(["sh", "-c", `sleep 5; hc kill '${terminal}' >/dev/null 2>&1`], { stdio: ["ignore", "ignore", "ignore"] }).unref();
+}
+
 const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory");
 
 export function paths(name: string, home = factoryHome()) {
@@ -304,8 +314,13 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     } else if (cmd === "stage-done") {
       const repoDir = needLead(db).path;
       let r: any = null;
+      const open = db.query("SELECT id, terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(Number(sub)) as { id: number; terminal: string }[];
       change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
       log(`#${sub}: ${r.questions ? `groomed, waiting on ${r.questions} answer${r.questions > 1 ? "s" : ""}` : r.groomed ? `groomed${r.started ? " and started" : ", queued"}` : r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
+      // The agent that said it's done is closed a few seconds later (it's usually the one
+      // running this command, so it sees the result first). Its transcript stays in Runs.
+      const ended = open.filter((s) => (db.query("SELECT ended_at FROM sessions WHERE id = ?").get(s.id) as { ended_at: string | null }).ended_at);
+      for (const s of ended) closeFinished(s.terminal, Number(sub));
     } else if (cmd === "budget") {
       const [text = ""] = rest;
       const [input, output] = text.split("/").map(parseTokens);

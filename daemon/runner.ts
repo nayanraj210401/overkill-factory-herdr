@@ -216,8 +216,11 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     return crossCheck(db, { ...o, record }) && ok;
   }
   if (o.check === "evidence") {
-    // Every check's latest result must be a PASS, and there must be at least one.
-    const latest = db.query(`SELECT check_name, result FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { result: string }[];
+    // The quality floor runs now, on the work as it stands, so a PASS is always newer than
+    // the last edit (flow-stack's evidence.sh). Then every check's latest result must be a
+    // PASS, and there must be at least one. The evidence check's own rows don't count.
+    runCheck(db, { ...o, check: "tests" });
+    const latest = db.query(`SELECT check_name, result FROM evidence e WHERE ticket = ? AND check_name != 'evidence' AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { result: string }[];
     const ok = latest.length > 0 && latest.every((r) => r.result === "PASS");
     record("evidence", ok, ok ? `${latest.length} checks pass` : latest.length ? `${latest.filter((r) => r.result !== "PASS").length} failing` : "no checks recorded");
     return ok;
