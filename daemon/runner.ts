@@ -21,7 +21,8 @@ import { closeRound, latestBrief } from "./round.ts";
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
   // Tests stub claude; one that forgot must never start the user's real Claude.
-  if (argv[0] === "claude" && process.env.FACTORY_TEST_SANDBOX) return { code: 1, out: "claude is stubbed in tests" };
+  // Tests never reach real agents or GitHub: a stub that falls through to sh gets a failure.
+  if (["claude", "codex", "gh"].includes(argv[0]) && process.env.FACTORY_TEST_SANDBOX) return { code: 1, out: `${argv[0]} is stubbed in tests` };
   const r = Bun.spawnSync(argv, { cwd });
   return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() };
 };
