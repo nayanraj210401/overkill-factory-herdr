@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "generated_at": "2026-11-21T10:00:00Z",
+  "source": "fixture",
+  "factory": { "name": "acme-api", "repo": "acme/api", "daemon": true },
+  "plan": { "window_5h": 0.42, "week": 0.18 },
+  "today": {
+    "time_to_pr_min": 48,
+    "cost_per_pr_usd": 1.9,
+    "interactions_per_pr": 1.6,
+    "revert_rate": 0,
+    "usd": 6.4,
+    "tokens": { "input": 11200000, "output": 520000 },
+    "budget": { "input": 40000000, "output": 2000000 }
+  },
+  "to_review": 3,
+  "rules_failing": 0,
+  "tickets": [
+    {
+      "id": 421, "title": "Search index rebuild", "state": "grooming", "blueprint": "feature",
+      "stage": "grooming", "detail": "2 questions", "updated_at": "2026-11-21T09:40:00Z",
+      "tokens": { "input": 180000, "output": 9000 }, "budget": { "input": 3000000, "output": 150000 },
+      "usd": 0.3, "where": "local", "pr": null, "blocked_by": null,
+      "needs": { "kind": "question", "text": "Product: per user or per IP? Asked @dana on #421. Engineering: keep old indexes? Yours to answer (u)" }
+    },
+    {
+      "id": 425, "title": "Export API", "state": "parked", "blueprint": "feature",
+      "stage": "verify", "detail": "retries used up", "updated_at": "2026-11-21T09:12:00Z",
+      "tokens": { "input": 2400000, "output": 110000 }, "budget": { "input": 3000000, "output": 150000 },
+      "usd": 2.6, "where": "local", "pr": null, "blocked_by": null,
+      "needs": { "kind": "parked", "text": "Verify retries used up: the upload test is flaky" }
+    },
+    {
+      "id": 412, "title": "Rate-limit login", "state": "running", "blueprint": "feature",
+      "stage": "implement", "detail": "slice 2 of 3", "updated_at": "2026-11-21T09:48:00Z",
+      "tokens": { "input": 1200000, "output": 64000 }, "budget": { "input": 3000000, "output": 150000 },
+      "usd": 1.8, "where": "local", "pr": null, "blocked_by": null, "needs": null
+    },
+    {
+      "id": 418, "title": "Timezone in reports", "state": "running", "blueprint": "bugfix",
+      "stage": "verify", "detail": null, "updated_at": "2026-11-21T09:29:00Z",
+      "tokens": { "input": 1500000, "output": 71000 }, "budget": { "input": 3000000, "output": 150000 },
+      "usd": 2.1, "where": "cloud", "pr": null, "blocked_by": null, "needs": null
+    },
+    {
+      "id": 409, "title": "Bump dependencies", "state": "ready", "blueprint": "chore",
+      "stage": "merge", "detail": "Review round 1: 2 fixed, 1 pushed back · 6 of 6 ready rules", "updated_at": "2026-11-21T09:58:00Z",
+      "tokens": { "input": 900000, "output": 30000 }, "budget": { "input": 1500000, "output": 80000 },
+      "usd": 0.9, "where": "local", "pr": { "number": 511, "watched": true, "checked_at": "2026-11-21T09:58:00Z" },
+      "blocked_by": null, "needs": null
+    },
+    {
+      "id": 430, "title": "Audit log retention", "state": "blocked", "blueprint": "feature",
+      "stage": null, "detail": null, "updated_at": "2026-11-21T08:00:00Z",
+      "tokens": { "input": 0, "output": 0 }, "budget": { "input": 3000000, "output": 150000 },
+      "usd": 0, "where": "local", "pr": null, "blocked_by": 425, "needs": null
+    },
+    {
+      "id": 431, "title": "Webhook retries", "state": "queued", "blueprint": "feature",
+      "stage": null, "detail": null, "updated_at": "2026-11-21T08:05:00Z",
+      "tokens": { "input": 0, "output": 0 }, "budget": { "input": 3000000, "output": 150000 },
+      "usd": 0, "where": "local", "pr": null, "blocked_by": null, "needs": null
+    },
+    {
+      "id": 432, "title": "Lint: no default exports", "state": "queued", "blueprint": "chore",
+      "stage": null, "detail": null, "updated_at": "2026-11-21T08:06:00Z",
+      "tokens": { "input": 0, "output": 0 }, "budget": { "input": 1500000, "output": 80000 },
+      "usd": 0, "where": "local", "pr": null, "blocked_by": null, "needs": null
+    },
+    {
+      "id": 433, "title": "Pagination on /users", "state": "queued", "blueprint": "feature",
+      "stage": null, "detail": null, "updated_at": "2026-11-21T08:07:00Z",
+      "tokens": { "input": 0, "output": 0 }, "budget": { "input": 3000000, "output": 150000 },
+      "usd": 0, "where": "local", "pr": null, "blocked_by": null, "needs": null
+    },
+    {
+      "id": 401, "title": "Health check endpoint", "state": "merged", "blueprint": "feature",
+      "stage": null, "detail": null, "updated_at": "2026-11-20T16:20:00Z",
+      "tokens": { "input": 1700000, "output": 82000 }, "budget": { "input": 3000000, "output": 150000 },
+      "usd": 1.7, "where": "local", "pr": { "number": 498, "watched": false, "checked_at": null },
+      "blocked_by": null, "needs": null
+    },
+    {
+      "id": 405, "title": "Drop legacy session table", "state": "closed", "blueprint": "chore",
+      "stage": null, "detail": null, "updated_at": "2026-11-19T11:00:00Z",
+      "tokens": { "input": 300000, "output": 12000 }, "budget": { "input": 1500000, "output": 80000 },
+      "usd": 0.3, "where": "local", "pr": null, "blocked_by": null, "needs": null
+    }
+  ]
+}
