@@ -17,17 +17,21 @@ import { validateDir } from "./validate.ts";
 import { newTicket } from "./intake.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
+import { ask, pick, readIssueAnswers, startGroomed, startGrooming } from "./groom.ts";
 import { advance, answer, checkReady, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database (path: the repo checkout, default .)
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
+  groom <id>                         the triage agent grooms a ticket that hasn't started
+  pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
+  question <id> product|engineering <text…>  a grooming question (product ones go to the PO on the issue)
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
   budget <id> <in>[/<out>]           set a ticket's token budget: 3M, or 3M/200k
   send-back <id> <note…>             a ready PR goes back to its fix stage with your note (REVIEW.md)
-  answer <id> <text…>                answer a parked ticket and rerun its stage (GATES.md)
+  answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one)
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
   diff <id>                          what the ticket changed, against the repo's branch
   merge <id>                         squash-merge a ready ticket's PR (marks it ready first)
@@ -171,6 +175,18 @@ export function main(argv: string[], log = console.log) {
       writeStatus(db, p.status);
       writeTicketFiles(db, p.dir, r.id);
       return;
+    } else if (cmd === "groom" || cmd === "pick" || cmd === "question") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const id = Number(sub);
+      if (!Number.isInteger(id)) throw new Error(`usage: factory ${cmd} <id>…`);
+      let out = "";
+      change(db, () => {
+        if (cmd === "groom") out = `#${id}: triage agent in ${startGrooming(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() })}`;
+        else if (cmd === "pick") { pick(db, { repo: repoDir, id, blueprint: rest[0] ?? "", now: now() }); out = `#${id} runs the ${rest[0]} blueprint`; }
+        else out = `#${id}: Q${ask(db, { id, kind: rest[0] ?? "", text: rest.slice(1).join(" "), now: now() })} asked`;
+      });
+      log(out);
     } else if (cmd === "start") {
       const repoDir = getMeta(db, "repo_path");
       if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
@@ -182,7 +198,7 @@ export function main(argv: string[], log = console.log) {
       if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
       let r: any = null;
       change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
-      log(`#${sub}: ${r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
+      log(`#${sub}: ${r.questions ? `groomed, waiting on ${r.questions} answer${r.questions > 1 ? "s" : ""}` : r.groomed ? `groomed${r.started ? " and started" : ", queued"}` : r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
     } else if (cmd === "budget") {
       const [text = ""] = rest;
       const [input, output] = text.split("/").map(parseTokens);
@@ -204,7 +220,8 @@ export function main(argv: string[], log = console.log) {
         r = cmd === "answer" ? answer(db, { dir: p.dir, repo: repoDir, id: Number(sub), text })
           : sendBack(db, { dir: p.dir, repo: repoDir, id: Number(sub), note: text });
       });
-      log(`#${sub}: back to ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
+      log(r.answered ? `#${sub}: answered ${r.answered.map((n: number) => `Q${n}`).join(", ")}; ${r.left ? `${r.left} open` : r.started ? "groomed and started" : "groomed, queued"}`
+        : `#${sub}: back to ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
     } else if (cmd === "diff") {
       const repoDir = getMeta(db, "repo_path");
       if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
@@ -275,6 +292,21 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     } catch (e) {
       log(`factory: #${id}: ${(e as Error).message}`);
     }
+  }
+  // Grooming answers given on issues, read at most once a minute (each is a gh call).
+  const nowIso = new Date().toISOString();
+  const lastRead = getMeta(db, "issues_read_at");
+  if (!lastRead || Date.now() - Date.parse(lastRead) >= 60_000) {
+    try { change(db, () => { setMeta(db, "issues_read_at", nowIso); readIssueAnswers(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
+    catch (e) { log(`factory: reading issue answers: ${(e as Error).message}`); }
+  }
+  // Groomed tickets waiting for room: one starts as another stops running.
+  try {
+    let started: number[] = [];
+    change(db, () => { started = startGroomed(db, { dir: p.dir, repo: repoDir, run, now: nowIso }); });
+    for (const id of started) log(`factory: #${id} groomed; started`);
+  } catch (e) {
+    log(`factory: starting groomed tickets: ${(e as Error).message}`);
   }
   for (const s of open_) {
     const r = run(["hc", "get", s.terminal, "--json"]);

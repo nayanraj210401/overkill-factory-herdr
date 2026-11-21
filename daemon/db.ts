@@ -64,6 +64,16 @@ const MIGRATIONS = [
      kind TEXT NOT NULL CHECK (kind IN ('holdout', 'review')), voter TEXT NOT NULL,
      result TEXT NOT NULL CHECK (result IN ('PASS', 'FAIL')), detail TEXT, at TEXT NOT NULL
    );`,
+  // D6 grooming: the triage agent's questions and their answers, when a ticket was
+  // groomed (only groomed tickets start on their own), and each session's folder
+  // (triage runs in the ticket's folder, not a worktree; its transcripts live there).
+  `CREATE TABLE questions (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id), n INTEGER NOT NULL,
+     kind TEXT NOT NULL CHECK (kind IN ('product', 'engineering')), text TEXT NOT NULL, asked_at TEXT NOT NULL,
+     answer TEXT, answered_by TEXT, answered_at TEXT, UNIQUE (ticket, n)
+   );
+   ALTER TABLE tickets ADD COLUMN groomed_at TEXT;
+   ALTER TABLE sessions ADD COLUMN cwd TEXT;`,
 ];
 
 export function open(path: string): Database {
