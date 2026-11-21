@@ -17,6 +17,7 @@ import { validateDir } from "./validate.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { watchPrs } from "./watch.ts";
 import { judge } from "./comments.ts";
+import { setAway } from "./away.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
@@ -44,6 +45,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket, with their tokens
+  away on|off                        you're away: factory.yaml's away: policy applies; Home shows a digest when you're back
   overwatch [--json]                 start the overwatch agent, or print the live one's terminal
   blueprints                         write blueprints.json (stages, runs in 7 days) for the Blueprint page
   plan <5h tokens> <week tokens>     your plan's limits, for the 5h and week meters: plan 20M 400M
@@ -270,6 +272,10 @@ export function main(argv: string[], log = console.log) {
       for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
       return;
+    } else if (cmd === "away") {
+      if (sub !== "on" && sub !== "off") throw new Error("usage: factory away on|off");
+      change(db, () => setAway(db, sub === "on", now()));
+      log(sub === "on" ? "away: the away policy applies until factory away off" : "back: Home shows what happened while you were away");
     } else if (cmd === "overwatch") {
       let r: any = null;
       change(db, () => { r = overwatch(db, { name, dir: p.dir, run: sh, now: now() }); });

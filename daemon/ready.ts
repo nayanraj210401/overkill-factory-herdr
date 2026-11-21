@@ -56,7 +56,7 @@ function verdictRule(db: Database, id: number, kind: VerdictKind, lastCommit: st
     : { rule: kind, result: "fail", detail: `${fails.length} of ${fresh.length} reviewers block${why}` };
 }
 
-export function readyRules(db: Database, o: { id: number; dir: string; worktree: string; rules: string[]; run: Run; expects?: VerdictKind[] }): Rule[] {
+export function readyRules(db: Database, o: { id: number; dir: string; worktree: string; rules: string[]; run: Run; expects?: VerdictKind[]; cap?: { input: number; output: number } | null }): Rule[] {
   const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
   const latest = db.query(`SELECT check_name, result, at FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { check_name: string; result: string; at: string }[];
   const lastCommit = o.run(["git", "-C", o.worktree, "log", "-1", "--format=%cI"]).out.trim();
@@ -73,8 +73,10 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktree:
       const ran = latest.filter((c) => c.check_name !== "evidence");
       out.push(ran.some((c) => c.result !== "PASS") ? { rule, result: "fail", detail: "a check fails" } : { rule, result: "pass", detail: "no check fails" });
     } else if (rule === "budget") {
-      const over = t.tokens_in > t.budget_in || t.tokens_out > t.budget_out;
-      out.push({ rule, result: over ? "fail" : "pass", detail: `${t.tokens_in}/${t.budget_in} in, ${t.tokens_out}/${t.budget_out} out` });
+      const bin = Math.min(t.budget_in, o.cap?.input ?? Infinity);
+      const bout = Math.min(t.budget_out, o.cap?.output ?? Infinity);
+      const over = t.tokens_in > bin || t.tokens_out > bout;
+      out.push({ rule, result: over ? "fail" : "pass", detail: `${t.tokens_in}/${bin} in, ${t.tokens_out}/${bout} out${o.cap ? " (away cap)" : ""}` });
     } else if (rule === "template") {
       const file = join(o.dir, "tickets", String(o.id), "PR.md");
       const problems = templateProblems(existsSync(file) ? readFileSync(file, "utf8") : null);

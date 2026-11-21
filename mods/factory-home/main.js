@@ -6,6 +6,9 @@ import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, act } from "./lib/store.js";
 
+// HH:MM, local; the mod runtime ignores toLocaleTimeString's options.
+const clock = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
 const open = (id) => {
   setShared("factory.ticket", id);
   run("layout.select", { stack: STACK, child: "ticket" });
@@ -54,11 +57,22 @@ export default class FactoryHome extends View {
     const items = [...needs.map((n) => n.ticket), ...running];
     const focused = this.handle.is_focused();
     const d = s.today;
+    // The digest shows while you're away and for a day after you're back.
+    const away = s.away && (s.away.on || now - Date.parse(s.away.until) < 86_400_000 || s.source === "fixture") ? s.away : null;
     const tile = (label, value) => v_flex().flex_1().p(14).gap(6).rounded(8).bg(t.surface).border(1).border_color(t.border)
       .child(div().text_size(12).text_color(t.muted).child(label))
       .child(div().text_size(26).font_semibold().text_color(t.foreground).child(value));
     return v_flex().id("home").size_full().px(18).pb(16).gap(8).bg(t.background).rounded(10).text_size(13).overflow_y_scroll()
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus()).on_key_down((e, cx) => this.key(e, items, cx))
+      .when(Boolean(away), (el) => el.child(section(s.away.on ? `Away since ${clock(s.away.since)}` : `While you were away · ${clock(s.away.since)} – ${clock(s.away.until)}`))
+        .child(v_flex().gap(2).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
+          .children(s.away.events.map((e, i) => h_flex().id(`aw-${i}`).h(24).gap(10).items_center().cursor_pointer().hover((st) => st.bg(t.hover))
+            .on_click(() => e.ticket != null && open(e.ticket))
+            .child(div().w(44).text_color(t.dim).child(clock(e.at)))
+            .child(div().w(52).text_color(t.muted).child(e.ticket != null ? `#${e.ticket}` : ""))
+            .child(div().w(70).text_color(t.dim).truncate().child(e.who))
+            .child(div().flex_1().text_color(t.foreground).truncate().child(e.what))))
+          .when(!s.away.events.length, (el) => el.child(div().text_color(t.dim).child("Nothing happened.")))))
       .child(section("Needs you"))
       .children(needs.map((n, i) => this.card(t, n, now, focused && i === this.at)))
       .child(section("Running"))

@@ -6,6 +6,7 @@ import { open, setMeta } from "./db.ts";
 import { advance, sh, startTicket, type Run } from "./runner.ts";
 import { watchPrs } from "./watch.ts";
 import { judge } from "./comments.ts";
+import { setAway } from "./away.ts";
 
 const GOOD_PR = "Rate-limits login per user.\n\n**What changed:** x.\n**Why:** y.\n**How it was verified:** z.\n**Risk:** low.\n";
 
@@ -122,4 +123,22 @@ test("every comment needs a verdict; an escalation parks for you; a reviewer ins
   expect(ticket()).toMatchObject({ state: "parked", needs_kind: "parked" });
   expect(ticket().needs_text).toStartWith('Escalated C4: @sam "Please change it." · changing the key resets every limit');
   expect(() => judge(db, { ticket: 7, n: 9, verdict: "fix", reason: "", now: "x" })).toThrow("#7 has no comment C9");
+});
+
+test("away: no pushbacks, and past away.review_rounds new comments park instead of starting a round", () => {
+  const { db, dir, repo, watch, ticket, set } = setup();
+  writeFileSync(join(repo, ".factory/factory.yaml"), 'name: t\nquality_floor: ["true"]\nready: [template]\naway: { review_rounds: 1 }\n');
+  setAway(db, true, "2026-11-21T10:15:00Z");
+  expect(() => setAway(db, true, "2026-11-21T10:16:00Z")).toThrow("already away since 2026-11-21T10:15:00Z");
+  const run: Run = (a, c) => (a[0] === "hc" ? { code: 0, out: '{"address":"t1"}' } : a[0] === "gh" ? { code: 0, out: "https://github.com/acme/api/pull/42\n" } : sh(a, c));
+  set({ state: "OPEN", comments: [{ id: 1, author: { login: "sam" }, body: "Rename it.", createdAt: "2026-11-21T10:20:00Z" }], reviews: [] });
+  expect(watch("2026-11-21T10:30:00Z")).toEqual([{ id: 7, event: "1 comment" }]); // round 1 of 1
+  expect(() => judge(db, { ticket: 7, n: 1, verdict: "pushback", reason: "no", now: "x" })).toThrow("no pushbacks while the person is away");
+  judge(db, { ticket: 7, n: 1, verdict: "fix", reason: "", now: "x" });
+  advance(db, { dir, repo, id: 7, run });
+  expect(ticket().state).toBe("ready");
+  set({ state: "OPEN", comments: [{ id: 2, author: { login: "sam" }, body: "And this.", createdAt: "2026-11-21T11:20:00Z" }], reviews: [] });
+  expect(watch("2026-11-21T11:30:00Z")).toEqual([{ id: 7, event: "1 comment, parked (away)" }]);
+  expect(ticket()).toMatchObject({ state: "parked", stage: "implement", needs_text: "1 new review comment on PR #42; away.review_rounds is used up while you're away" });
+  expect(readFileSync(join(dir, "tickets/7/REVIEW.md"), "utf8")).toContain("**C2 · @sam**: And this.");
 });

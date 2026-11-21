@@ -95,6 +95,15 @@ S3–S8 depend only on S0–S2 and touch separate mod folders, so they can run i
   Together these replace the coming-soon cards for Overwatch, cross-repo Ticket, Runs, and Metrics Throughput/Cost/Quality.
 - **M3, babysitter + away mode:** PR watcher, REVIEW.md verdicts, cloud move (`shift-c/l`).
   - **PR watcher is built** (`daemon/watch.ts`): every 2 minutes the daemon reads each ready, watched PR on GitHub (`gh pr view` for comments and reviews, `gh api …/pulls/<n>/comments` for inline ones). Merged or closed there, the ticket follows, and its worktree goes. New comments from anyone but your own gh login go into REVIEW.md and send the ticket back to its fix stage, whose agent fixes each one or replies with its reasoning; the pr stage then updates the PR. Your own comments are skipped, because the factory acts as you; use `x` for your notes. **Comment verdicts are built** (`daemon/comments.ts`): each new comment is stored once, by its GitHub id, as C1, C2… per ticket. Inline replies share their root comment's thread. The fix agent records `factory comment <id> C<n> fix|pushback|escalate <reason>`, and the stage fails while any comment lacks a verdict. An escalation parks the ticket in Needs you. A reviewer who replies again in a thread that already has `review.pushbacks` pushbacks (default 2) wins: that comment can't be pushed back. Not yet: a cheap model pre-judging each comment.
+  - **Codex usage is recorded** (`parseCodex`, from `$CODEX_HOME/sessions`).
+  - **Away mode is built** (`daemon/away.ts`): `factory away on|off`. While you're away, `away:` in factory.yaml applies:
+    - `blueprints`: only these start.
+    - `budget`: caps the ready rule's per-ticket budget (`1M/100k`).
+    - `review_rounds`: after this many rounds, new comments park the ticket instead of starting another.
+    - `never`: path globs that park a ticket touching them at its stage's end.
+    - Pushbacks are refused, since the agreement benchmark doesn't exist yet.
+    - Home shows a digest of what others decided while you were away, for a day after you're back (`status.json` `away`).
+    Not yet: the cloud move (`⇧C`/`⇧L`), and turning digest corrections into lessons.
 - **M4, learning + benchmarks:** Metrics Learning and Benchmarks tabs.
 - **M5, auto gates + maintainer:** revert rate on Home.
 - **M6, reviews:** Reviews page.
