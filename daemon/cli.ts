@@ -14,7 +14,7 @@ import { parseTokens } from "../lib/model.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
-import { advance, mergeTicket, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, answer, mergeTicket, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -22,6 +22,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
   budget <id> <in>[/<out>]           set a ticket's token budget: 3M, or 3M/200k
+  send-back <id> <note…>             a ready PR goes back to its fix stage with your note (REVIEW.md)
+  answer <id> <text…>                answer a parked ticket and rerun its stage (GATES.md)
   merge <id>                         squash-merge a ready ticket's PR (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket
@@ -161,6 +163,16 @@ export function main(argv: string[], log = console.log) {
           .run(...([input, ...(output ? [output] : []), now(), Number(sub)] as any[]));
         db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(Number(sub), `set the budget to ${text}`, now());
       });
+    } else if (cmd === "send-back" || cmd === "answer") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const text = rest.join(" ");
+      let r: any = null;
+      change(db, () => {
+        r = cmd === "answer" ? answer(db, { dir: p.dir, repo: repoDir, id: Number(sub), text })
+          : sendBack(db, { dir: p.dir, repo: repoDir, id: Number(sub), note: text });
+      });
+      log(`#${sub}: back to ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
     } else if (cmd === "merge") {
       const repoDir = getMeta(db, "repo_path");
       if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");

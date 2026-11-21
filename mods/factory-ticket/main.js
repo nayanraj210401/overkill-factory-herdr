@@ -44,6 +44,9 @@ export default class FactoryTicket extends View {
     const dot = (state) => div().size(12).flex_none().mt(3).rounded_full()
       .bg(state === "done" ? t.done : state === "now" ? t.working : t.raised).border(1).border_color(state === "next" ? t.border : t.background);
     const tab = TICKET_TABS.find((x) => x.key === this.tab);
+    const button = (id, label, primary, onClick) => div().id(id).px(10).py(6).rounded(6).cursor_pointer().on_click(onClick)
+      .bg(primary ? t.done : t.background).text_color(primary ? t.background : t.foreground).border(1).border_color(primary ? t.done : t.border)
+      .hover((s) => s.opacity(0.88)).child(label);
     const body = this.files[tab.file];
     return h_flex().size_full().gap(8).text_size(13)
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus())
@@ -78,7 +81,9 @@ export default class FactoryTicket extends View {
         .child(div().flex_1())
         .when(Boolean(ticket.terminal), (el) => el.child(div().id("peek").px(10).py(6).rounded(6).border(1).border_color(t.accent).text_color(t.accent)
           .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => peekAgent(ticket)).child("Open live terminal  e")))
-        .when(ticket.state === "ready" && Boolean(ticket.pr), (el) => el.child(div().id("merge").px(10).py(6).rounded(6).bg(t.done).text_color(t.background)
-          .cursor_pointer().hover((s) => s.opacity(0.88)).on_click(() => act({ kind: "merge" }, ticket)).child(`Merge PR #${ticket.pr?.number}  m`))));
+        .when(ticket.state === "ready" && Boolean(ticket.pr), (el) => el.child(h_flex().gap(8)
+          .child(button("merge", `Merge PR #${ticket.pr?.number}  m`, true, () => act({ kind: "merge" }, ticket)))
+          .child(button("send-back", "Send back  x", false, () => act({ kind: "send-back" }, ticket)))))
+        .when(ticket.state === "parked", (el) => el.child(button("answer", "Answer and restart  u", true, () => act({ kind: "answer" }, ticket)))));
   }
 }
