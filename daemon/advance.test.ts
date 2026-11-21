@@ -6,7 +6,7 @@ import { open, setMeta } from "./db.ts";
 import { advance, sh, startTicket, type Run } from "./runner.ts";
 import { watchSessions } from "./cli.ts";
 import { recordVerdict } from "./ready.ts";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 function setup(blueprint = "feature", floor = '"true"') {
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
@@ -107,4 +107,15 @@ test("the daemon advances a ticket whose agent's terminal exited", () => {
   expect(gets).toBe(1);
   expect(logs[0]).toBe("factory: #7's agent in t1 finished; advanced");
   expect((db.query("SELECT stage FROM tickets").get() as any).stage).toBe("plan");
+});
+
+test("blockers a reviewer gave aren't written twice when the fix stage's agent fails to start", () => {
+  const { db, dir, repo, step, evidence, verdict, run } = setup();
+  step(); step(); evidence("C1", "PASS"); step(); verdict("holdout", "PASS"); step(); // → review
+  verdict("review", "FAIL", "raw email key");
+  const down: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 1, out: "down" } : run(argv, cwd));
+  expect(() => db.transaction(() => advance(db, { dir, repo, id: 7, run: down }))()).toThrow("hc run failed");
+  expect(existsSync(join(dir, "tickets/7/REVIEW.md"))).toBe(false);
+  expect(step()).toMatchObject({ stage: "implement" });
+  expect(readFileSync(join(dir, "tickets/7/REVIEW.md"), "utf8").match(/raw email key/g)).toHaveLength(1);
 });

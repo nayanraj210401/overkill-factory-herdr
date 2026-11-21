@@ -2,7 +2,7 @@
 // space when the app runs), enters its blueprint's first stage, and that stage's
 // agent starts in a tab there, or in a free-floating herdr-core terminal.
 import type { Database } from "bun:sqlite";
-import { appendFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
@@ -123,7 +123,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -186,8 +186,15 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   if (!t || t.state !== "running") throw new Error(`#${o.id} isn't running`);
   const b = loadBlueprint(o.repo, t.blueprint);
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
-  let at = t.stage as string;
-  let failed = o.failed ?? stageVerdict(db, { dir: o.dir, repo: o.repo, id: o.id, stage: at, s: b.stages[at], now });
+  const at = t.stage as string;
+  const verdict = o.failed ? null : stageVerdict(db, { dir: o.dir, repo: o.repo, id: o.id, stage: at, s: b.stages[at], now });
+  return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? verdict?.failed ?? null }));
+}
+
+function follow(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; b: Blueprint; t: Record<string, any>; at: string; failed: string | null }) {
+  const { run, now, b, t } = o;
+  let at = o.at;
+  let failed = o.failed;
   for (let hops = 0; hops < 50; hops++) {
     const stage = b.stages[at] as BlueprintStage;
     let to: string | undefined;
@@ -245,12 +252,12 @@ function stageVerdict(db: Database, o: { dir: string; repo: string; id: number; 
   if (!kind) return null;
   const rows = db.query(`SELECT result, detail FROM verdicts WHERE kind = ? AND session = (SELECT MAX(id) FROM sessions WHERE ticket = ? AND stage = ?)`)
     .all(kind, o.id, o.stage) as { result: string; detail: string | null }[];
-  if (!rows.length) return `the ${o.s!.agent} agent ended without a verdict (factory verdict ${o.id} ${kind} pass|fail)`;
+  if (!rows.length) return { failed: `the ${o.s!.agent} agent ended without a verdict (factory verdict ${o.id} ${kind} pass|fail)` };
   const fails = rows.filter((r) => r.result !== "PASS");
   if (!fails.length) return null;
   const heading = kind === "holdout" ? "Hidden checks failed" : "Blocked in review";
-  note(o.dir, o.id, "REVIEW.md", `${heading} · ${o.now.slice(0, 16).replace("T", " ")} · ${o.s!.agent} agent`, fails.map((f) => `- ${f.detail ?? "no detail given"}`).join("\n"));
-  return `${kind}: ${fails.map((f) => f.detail ?? "failed").join("; ")}`;
+  const undo = note(o.dir, o.id, "REVIEW.md", `${heading} · ${o.now.slice(0, 16).replace("T", " ")} · ${o.s!.agent} agent`, fails.map((f) => `- ${f.detail ?? "no detail given"}`).join("\n"));
+  return { failed: `${kind}: ${fails.map((f) => f.detail ?? "failed").join("; ")}`, undo };
 }
 
 function verdictFailures(db: Database, id: number, stage: string) {
@@ -282,7 +289,8 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
 }
 
 // `m` on a ready ticket: the human merge gate. The PR was opened as a draft, so it's
-// marked ready first (gh refuses to merge a draft), then squash-merged on GitHub.
+// marked ready first (gh refuses to merge a draft), then merged on GitHub the way
+// factory.yaml's merge_method says (squash unless it names merge or rebase).
 export function mergeTicket(db: Database, o: { repo: string; id: number; run?: Run; now?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
@@ -290,7 +298,8 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready ticket's PR merges`);
   const pr = String(t.pr_number);
-  for (const argv of [["gh", "pr", "ready", pr], ["gh", "pr", "merge", pr, "--squash"]]) {
+  const method = readFactory(o.repo).merge_method ?? "squash";
+  for (const argv of [["gh", "pr", "ready", pr], ["gh", "pr", "merge", pr, `--${method}`]]) {
     const r = run(argv, o.repo);
     // `gh pr ready` on a PR that is already ready says so and changes nothing.
     if (r.code !== 0 && !(argv[2] === "ready" && /already .*ready/i.test(r.out))) throw new Error(`${argv.slice(0, 3).join(" ")} failed: ${r.out}`);
@@ -298,7 +307,7 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
   db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   db.query("DELETE FROM planned WHERE ticket = ?").run(o.id);
   db.query("UPDATE tickets SET state = 'merged', detail = NULL, pr_watched = 0, updated_at = ? WHERE id = ?").run(now, o.id);
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, 'squash', ?)").run(o.id, `merged PR #${pr}`, now);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, ?, ?)").run(o.id, `merged PR #${pr}`, method, now);
   // The plan: the worktree goes once the PR merges; the branch and the ticket's .md files stay.
   // A worktree with uncommitted work is left for a person to look at.
   const w = db.query("SELECT worktree, space FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null; space: string | null };
@@ -328,11 +337,19 @@ export function fixStage(b: Blueprint) {
   return restartStage(b, before ? (b.stages[before] as BlueprintStage).on_fail! : b.start);
 }
 
+// Appends a note and returns how to take it back: the file isn't in the transaction,
+// so a restart that fails must not leave its note behind to be written twice.
 function note(dir: string, id: number, file: string, heading: string, text: string) {
   const folder = join(dir, "tickets", String(id));
   mkdirSync(folder, { recursive: true });
   const path = join(folder, file);
-  appendFileSync(path, `${existsSync(path) ? "\n" : `# ${file.replace(".md", "")}\n\n`}## ${heading}\n\n${text.trim()}\n`);
+  const had = existsSync(path) ? statSync(path).size : null;
+  appendFileSync(path, `${had != null ? "\n" : `# ${file.replace(".md", "")}\n\n`}## ${heading}\n\n${text.trim()}\n`);
+  return () => (had == null ? unlinkSync(path) : truncateSync(path, had));
+}
+
+function withNote<T>(undo: () => void, fn: () => T): T {
+  try { return fn(); } catch (e) { undo(); throw e; }
 }
 
 function restart(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; stage: string; b: Blueprint; who: string; why: string }) {
@@ -350,8 +367,8 @@ export function sendBack(db: Database, o: { dir: string; repo: string; id: numbe
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready PR goes back`);
   if (!o.note.trim()) throw new Error("say what to change: factory send-back <id> <note…>");
   const b = loadBlueprint(o.repo, t.blueprint);
-  note(o.dir, o.id, "REVIEW.md", `Sent back by you · ${now.slice(0, 16).replace("T", " ")} · PR #${t.pr_number}`, o.note);
-  return restart(db, { ...o, run, now, b, stage: fixStage(b), who: `sent PR #${t.pr_number} back`, why: o.note.trim() });
+  const undo = note(o.dir, o.id, "REVIEW.md", `Sent back by you · ${now.slice(0, 16).replace("T", " ")} · PR #${t.pr_number}`, o.note);
+  return withNote(undo, () => restart(db, { ...o, run, now, b, stage: fixStage(b), who: `sent PR #${t.pr_number} back`, why: o.note.trim() }));
 }
 
 // `u`: answer a parked ticket and run the stage it stopped at again.
@@ -366,8 +383,8 @@ export function answer(db: Database, o: { dir: string; repo: string; id: number;
   if (!o.text.trim()) throw new Error("type an answer: factory answer <id> <text…>");
   if (!t.worktree) throw new Error(`#${o.id} has no worktree; factory start ${o.id}`);
   const b = loadBlueprint(o.repo, t.blueprint);
-  note(o.dir, o.id, "GATES.md", `Parked · ${now.slice(0, 16).replace("T", " ")}`, `${t.needs_text ?? "Stopped."}\n\n**Your answer:** ${o.text.trim()}`);
-  return restart(db, { ...o, run, now, b, stage: restartStage(b, t.stage), who: "answered and restarted", why: o.text.trim() });
+  const undo = note(o.dir, o.id, "GATES.md", `Parked · ${now.slice(0, 16).replace("T", " ")}`, `${t.needs_text ?? "Stopped."}\n\n**Your answer:** ${o.text.trim()}`);
+  return withNote(undo, () => restart(db, { ...o, run, now, b, stage: restartStage(b, t.stage), who: "answered and restarted", why: o.text.trim() }));
 }
 
 // `p` on a running ticket: its agent stops now; the stage it was in is remembered.

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta } from "./db.ts";
@@ -196,4 +196,29 @@ test("d shows what the ticket changed, committed or not, against the repo's bran
   expect(d).toContain("+export const MAX = 6;");
   db.query("INSERT INTO tickets (id, title, updated_at) VALUES (8, 'Later', '2026-11-21T10:00:00Z')").run();
   expect(() => ticketDiff(db, { repo, id: 8, run })).toThrow("#8 has no worktree");
+});
+
+test("a send-back whose agent can't start leaves no note behind, so a retry writes it once", () => {
+  const { db, dir, repo, run, prFile } = setup();
+  advance(db, { dir, repo, id: 7, run });
+  writeFileSync(prFile, GOOD_PR);
+  tryPr(db, { dir, repo, id: 7, run });
+  const down: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 1, out: "herdr-core isn't running" } : run(argv, cwd));
+  const review = join(dir, "tickets/7/REVIEW.md");
+  expect(() => db.transaction(() => sendBack(db, { dir, repo, id: 7, note: "429, not 403.", run: down }))()).toThrow("hc run failed");
+  expect(existsSync(review)).toBe(false);
+  sendBack(db, { dir, repo, id: 7, note: "429, not 403.", run });
+  expect(readFileSync(review, "utf8").match(/429, not 403/g)).toHaveLength(1);
+});
+
+test("merge_method in factory.yaml picks how the PR merges", () => {
+  const { db, dir, repo, run, gh, prFile } = setup();
+  writeFileSync(join(repo, ".factory/factory.yaml"), 'name: t\nquality_floor: ["true"]\nready: [template]\nmerge_method: rebase\n');
+  advance(db, { dir, repo, id: 7, run });
+  writeFileSync(prFile, GOOD_PR);
+  tryPr(db, { dir, repo, id: 7, run });
+  gh.length = 0;
+  mergeTicket(db, { repo, id: 7, run });
+  expect(gh[1]).toEqual(["gh", "pr", "merge", "42", "--rebase"]);
+  expect((db.query("SELECT why FROM decisions ORDER BY id DESC").get() as any).why).toBe("rebase");
 });

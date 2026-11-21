@@ -30,7 +30,7 @@ export const KINDS: Record<string, Rule> = {
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
       budget: open, plan: open, learn: open, review: open, away: open, maintainer: open,
-      ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, secrets: { map: "any" }, mcp: "any",
+      ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
   },
   blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },

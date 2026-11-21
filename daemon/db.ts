@@ -74,6 +74,8 @@ const MIGRATIONS = [
    );
    ALTER TABLE tickets ADD COLUMN groomed_at TEXT;
    ALTER TABLE sessions ADD COLUMN cwd TEXT;`,
+  // Revert rate: the merged PR that reverted a ticket's PR, found on GitHub.
+  `ALTER TABLE tickets ADD COLUMN reverted_by INTEGER;`,
 ];
 
 export function open(path: string): Database {
