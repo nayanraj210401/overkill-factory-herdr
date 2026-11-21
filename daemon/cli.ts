@@ -15,7 +15,7 @@ import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
 import { newTicket } from "./intake.ts";
-import { advance, answer, mergeTicket, pause, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, answer, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -27,6 +27,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   send-back <id> <note…>             a ready PR goes back to its fix stage with your note (REVIEW.md)
   answer <id> <text…>                answer a parked ticket and rerun its stage (GATES.md)
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
+  diff <id>                          what the ticket changed, against the repo's branch
   merge <id>                         squash-merge a ready ticket's PR (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket
@@ -191,6 +192,10 @@ export function main(argv: string[], log = console.log) {
           : sendBack(db, { dir: p.dir, repo: repoDir, id: Number(sub), note: text });
       });
       log(`#${sub}: back to ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
+    } else if (cmd === "diff") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      return log(ticketDiff(db, { repo: repoDir, id: Number(sub) }));
     } else if (cmd === "pause") {
       let r: any = null;
       change(db, () => { r = pause(db, { id: Number(sub) }); });

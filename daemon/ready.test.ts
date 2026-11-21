@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta } from "./db.ts";
-import { advance, answer, fixStage, loadBlueprint, mergeTicket, pause, restartStage, resume, sendBack, sh, startTicket, tryPr, type Run } from "./runner.ts";
+import { advance, answer, fixStage, loadBlueprint, mergeTicket, pause, restartStage, ticketDiff, resume, sendBack, sh, startTicket, tryPr, type Run } from "./runner.ts";
 import { readyRules, templateProblems } from "./ready.ts";
 
 const GOOD_PR = "Rate-limits login per user; nothing else changes.\n\n**What changed:** middleware.\n**Why:** brute force.\n**How it was verified:** 14 tests.\n**Risk:** low.\n";
@@ -154,4 +154,19 @@ test("a ticket paused while waiting at pr resumes waiting there, with no agent",
   expect(pause(db, { id: 7, run })).toEqual({ stage: "pr", killed: [] });
   expect(resume(db, { dir, repo, id: 7, run })).toEqual({ stage: "pr", terminal: null });
   expect(ticket()).toMatchObject({ state: "running", stage: "pr" });
+});
+
+test("d shows what the ticket changed, committed or not, against the repo's branch", () => {
+  const { db, repo, run, ticket } = setup();
+  const wt = ticket().worktree;
+  expect(ticketDiff(db, { repo, id: 7, run })).toBe("");
+  writeFileSync(join(wt, "limit.ts"), "export const MAX = 5;\n");
+  sh(["git", "-C", wt, "add", "."]);
+  sh(["git", "-C", wt, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "limit"]);
+  writeFileSync(join(wt, "limit.ts"), "export const MAX = 6;\n"); // not committed yet
+  const d = ticketDiff(db, { repo, id: 7, run });
+  expect(d).toContain("diff --git a/limit.ts b/limit.ts");
+  expect(d).toContain("+export const MAX = 6;");
+  db.query("INSERT INTO tickets (id, title, updated_at) VALUES (8, 'Later', '2026-11-21T10:00:00Z')").run();
+  expect(() => ticketDiff(db, { repo, id: 8, run })).toThrow("#8 has no worktree yet");
 });
