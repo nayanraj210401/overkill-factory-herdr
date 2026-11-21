@@ -155,3 +155,22 @@ test("tickets from the queue wait for triage, at most max_running triage agents 
   expect(hc.length).toBe(3);
   expect(ticket(412).needs_kind).toBe("question");
 });
+
+test("an answer stays answered when the groomed ticket can't start yet; a later tick starts it", () => {
+  const { db, dir, repo, run, gh, add, ticket } = setup();
+  add(412);
+  startGrooming(db, { dir, repo, id: 412, run, now });
+  ask(db, { id: 412, kind: "engineering", text: "Redis?", now });
+  advance(db, { dir, repo, id: 412, run, now });
+  const logs: string[] = [];
+  const down: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 1, out: "down" } : run(argv, cwd));
+  gh.length = 0;
+  const r = db.transaction(() => answer(db, { dir, repo, id: 412, text: "yes", run: down, now }))();
+  expect(r).toMatchObject({ groomed: true, started: false });
+  expect(ticket()).toMatchObject({ state: "queued", worktree: null });
+  expect(gh.filter((a) => a[2] === "comment")).toHaveLength(1);
+  expect(startGroomed(db, { dir, repo, run: down, now, log: (s) => logs.push(s) })).toEqual([]);
+  expect(logs[0]).toStartWith("factory: #412 didn't start: hc run failed");
+  expect(startGroomed(db, { dir, repo, run, now })).toEqual([412]);
+  expect(ticket().state).toBe("running");
+});

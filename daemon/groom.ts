@@ -191,14 +191,24 @@ function groomed(db: Database, o: { dir: string; repo: string; id: number; run: 
   return { groomed: true, started: started.includes(o.id) };
 }
 
+// Each start in its own savepoint: one that fails (a bad branch, hc down) rolls back
+// alone, so what led up to it (an answer, a posted comment) stays, and a later tick retries.
+function each(db: Database, ids: number[], start: (id: number) => unknown, log?: (s: string) => void) {
+  const ok: number[] = [];
+  for (const id of ids) {
+    try { db.transaction(() => start(id))(); ok.push(id); }
+    catch (e) { log?.(`factory: #${id} didn't start: ${(e as Error).message}`); }
+  }
+  return ok;
+}
+
 // Groomed tickets start oldest first while fewer than max_running tickets run.
-export function startGroomed(db: Database, o: { dir: string; repo: string; run: Run; now: string }) {
+export function startGroomed(db: Database, o: { dir: string; repo: string; run: Run; now: string; log?: (s: string) => void }) {
   const max = readFactory(o.repo).max_running ?? 3;
   const running = (db.query("SELECT COUNT(*) AS n FROM tickets WHERE state = 'running'").get() as { n: number }).n;
   const waiting = db.query("SELECT id FROM tickets WHERE state = 'queued' AND groomed_at IS NOT NULL ORDER BY groomed_at, id LIMIT ?")
     .all(Math.max(0, max - running)) as { id: number }[];
-  for (const { id } of waiting) startTicket(db, { dir: o.dir, repo: o.repo, id, run: o.run, now: o.now });
-  return waiting.map((w) => w.id);
+  return each(db, waiting.map((w) => w.id), (id) => startTicket(db, { dir: o.dir, repo: o.repo, id, run: o.run, now: o.now }), o.log);
 }
 
 // Answers on the issue: `A1:` comments newer than the questions, not the factory's own.
@@ -225,12 +235,11 @@ export function readIssueAnswers(db: Database, o: { dir: string; repo: string; r
 
 // Tickets waiting for triage (from the queue: grooming, no session yet, nothing
 // asked) start it oldest first, with at most max_running triage agents at once.
-export function startPendingGrooming(db: Database, o: { dir: string; repo: string; run: Run; now: string }) {
+export function startPendingGrooming(db: Database, o: { dir: string; repo: string; run: Run; now: string; log?: (s: string) => void }) {
   const max = readFactory(o.repo).max_running ?? 3;
   const busy = (db.query("SELECT COUNT(*) AS n FROM sessions WHERE stage = 'groom' AND ended_at IS NULL").get() as { n: number }).n;
   const pending = db.query(`SELECT id FROM tickets t WHERE state = 'grooming' AND needs_kind IS NULL
       AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL) ORDER BY updated_at, id LIMIT ?`)
     .all(Math.max(0, max - busy)) as { id: number }[];
-  for (const { id } of pending) startGrooming(db, { ...o, id });
-  return pending.map((p) => p.id);
+  return each(db, pending.map((p) => p.id), (id) => startGrooming(db, { ...o, id }), o.log);
 }

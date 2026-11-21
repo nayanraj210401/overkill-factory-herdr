@@ -17,6 +17,7 @@ import { validateDir } from "./validate.ts";
 import { newTicket, pollQueue } from "./intake.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
+import { findReverts, setPlan } from "./metrics.ts";
 import { ask, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
@@ -34,9 +35,10 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one)
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
   diff <id>                          what the ticket changed, against the repo's branch
-  merge <id>                         squash-merge a ready ticket's PR (marks it ready first)
+  merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket, with their tokens
+  plan <5h tokens> <week tokens>     your plan's limits, for the 5h and week meters: plan 20M 400M
   usage                              read agents' Claude Code transcripts now (the daemon does every tick)
   queue                              add the Project's Ready issues as grooming tickets now (the daemon: every 3 minutes)
   ticket add <id> <title…> [--blueprint b]
@@ -253,6 +255,11 @@ export function main(argv: string[], log = console.log) {
       for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
       return;
+    } else if (cmd === "plan") {
+      const [h5, wk] = [parseTokens(sub ?? ""), parseTokens(rest[0] ?? "")];
+      if (!h5 || !wk) throw new Error("usage: factory plan <5h tokens> <week tokens>, like factory plan 20M 400M");
+      change(db, () => setPlan(db, h5, wk));
+      log(`plan meters: ${sub} per 5 hours, ${rest[0]} per week`);
     } else if (cmd === "queue") {
       const repoDir = getMeta(db, "repo_path");
       if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
@@ -326,15 +333,22 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   }
   try {
     let groomed: number[] = [];
-    change(db, () => { groomed = startPendingGrooming(db, { dir: p.dir, repo: repoDir, run, now: nowIso }); });
+    change(db, () => { groomed = startPendingGrooming(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); });
     for (const id of groomed) log(`factory: #${id}: triage started`);
   } catch (e) {
     log(`factory: starting triage: ${(e as Error).message}`);
   }
+  // Merged PRs someone reverted, every 10 minutes, for the revert rate.
+  const lastReverts = getMeta(db, "reverts_checked_at");
+  if (!lastReverts || Date.now() - Date.parse(lastReverts) >= 600_000) {
+    setMeta(db, "reverts_checked_at", nowIso);
+    try { change(db, () => { for (const id of findReverts(db, { repo: getMeta(db, "repo") ?? "unknown", run, now: nowIso })) log(`factory: #${id}'s PR was reverted`); }); }
+    catch (e) { log(`factory: checking reverts: ${(e as Error).message}`); }
+  }
   // Groomed tickets waiting for room: one starts as another stops running.
   try {
     let started: number[] = [];
-    change(db, () => { started = startGroomed(db, { dir: p.dir, repo: repoDir, run, now: nowIso }); });
+    change(db, () => { started = startGroomed(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); });
     for (const id of started) log(`factory: #${id} groomed; started`);
   } catch (e) {
     log(`factory: starting groomed tickets: ${(e as Error).message}`);
