@@ -1,10 +1,10 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, run, setShared, notify } from "herdr";
+import { theme, run, setShared } from "herdr";
 import { FILTERS, filterTickets, countBy, groupOf, subtitle } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status, peekAgent } from "./lib/store.js";
+import { status, act } from "./lib/store.js";
 
 const open = (id) => { setShared("factory.ticket", id); run("layout.select", { stack: STACK, child: "ticket" }); };
 const DOT = { needs: "blocked", running: "working", ready: "done", queue: "dim" };
@@ -34,8 +34,7 @@ export default class FactoryList extends View {
     if (!a) return;
     if (a.kind === "move") this.at = clamp(this.at + a.delta, rows.length);
     else if (a.kind === "open" && rows[this.at]) open(rows[this.at].id);
-    else if (a.kind === "terminal") peekAgent(rows[this.at]);
-    else if (a.kind === "soon") notify({ title: `${a.label}: coming in ${a.milestone}`, level: "info", timeout: 2500 });
+    else act(a, rows[this.at]);
     cx.stop_propagation();
     cx.notify();
   }

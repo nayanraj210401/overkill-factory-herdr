@@ -1,8 +1,8 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
-import { theme, shared, readTextFile, nextCommand, checking, notify } from "herdr";
+import { theme, shared, readTextFile, nextCommand, checking } from "herdr";
 import { parseStatusMd, TICKET_TABS, compact, currentTicket } from "./lib/model.js";
-import { root, status, state, peekAgent } from "./lib/store.js";
+import { root, status, state, peekAgent, act } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
@@ -48,11 +48,10 @@ export default class FactoryTicket extends View {
     return h_flex().size_full().gap(8).text_size(13)
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus())
       .on_key_down((e, cx) => {
-        // Bare 1-4 switch tabs here, as in the mockup; actions toast until their milestone.
+        // Bare 1-4 switch tabs here, as in the mockup; action keys act on this ticket.
         if (/^[1-4]$/.test(e.key) && !e.modifiers.platform && !e.modifiers.control) { this.tab = e.key; cx.stop_propagation(); cx.notify(); return; }
         const a = keyAction(e);
-        if (a?.kind === "terminal") { peekAgent(ticket); cx.stop_propagation(); return; }
-        if (a?.kind === "soon") { notify({ title: `${a.label}: coming in ${a.milestone}`, level: "info", timeout: 2500 }); cx.stop_propagation(); }
+        if (a && a.kind !== "move" && a.kind !== "open") { act(a, ticket); cx.stop_propagation(); }
       })
       .child(v_flex().id("ticket").flex_1().h_full().p(16).gap(10).rounded(10).bg(t.background).border(1).border_color(t.border).overflow_y_scroll()
         .child(div().text_size(17).font_semibold().text_color(t.foreground).child(`#${ticket.id} ${ticket.title}`))
@@ -78,6 +77,8 @@ export default class FactoryTicket extends View {
         .child(div().text_color(t.dim).child(ticket.terminal ? `Agent running in ${ticket.terminal}.` : "No agent is running for this ticket now."))
         .child(div().flex_1())
         .when(Boolean(ticket.terminal), (el) => el.child(div().id("peek").px(10).py(6).rounded(6).border(1).border_color(t.accent).text_color(t.accent)
-          .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => peekAgent(ticket)).child("Open live terminal  e"))));
+          .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => peekAgent(ticket)).child("Open live terminal  e")))
+        .when(ticket.state === "ready" && Boolean(ticket.pr), (el) => el.child(div().id("merge").px(10).py(6).rounded(6).bg(t.done).text_color(t.background)
+          .cursor_pointer().hover((s) => s.opacity(0.88)).on_click(() => act({ kind: "merge" }, ticket)).child(`Merge PR #${ticket.pr?.number}  m`))));
   }
 }

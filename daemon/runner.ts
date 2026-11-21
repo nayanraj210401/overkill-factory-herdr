@@ -214,3 +214,24 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
     .run(o.id, `opened PR #${number}`, rules.map((r) => `${r.rule} ${r.result}`).join(", "), now);
   return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now }), pr: number };
 }
+
+// `m` on a ready ticket: the human merge gate. The PR was opened as a draft, so it's
+// marked ready first (gh refuses to merge a draft), then squash-merged on GitHub.
+export function mergeTicket(db: Database, o: { repo: string; id: number; run?: Run; now?: string }) {
+  const run = o.run ?? sh;
+  const now = o.now ?? new Date().toISOString();
+  const t = db.query("SELECT state, pr_number FROM tickets WHERE id = ?").get(o.id) as { state: string; pr_number: number | null } | null;
+  if (!t) throw new Error(`no ticket ${o.id}`);
+  if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready ticket's PR merges`);
+  const pr = String(t.pr_number);
+  for (const argv of [["gh", "pr", "ready", pr], ["gh", "pr", "merge", pr, "--squash"]]) {
+    const r = run(argv, o.repo);
+    // `gh pr ready` on a PR that is already ready says so and changes nothing.
+    if (r.code !== 0 && !(argv[2] === "ready" && /already .*ready/i.test(r.out))) throw new Error(`${argv.slice(0, 3).join(" ")} failed: ${r.out}`);
+  }
+  db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
+  db.query("DELETE FROM planned WHERE ticket = ?").run(o.id);
+  db.query("UPDATE tickets SET state = 'merged', detail = NULL, pr_watched = 0, updated_at = ? WHERE id = ?").run(now, o.id);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, 'squash', ?)").run(o.id, `merged PR #${pr}`, now);
+  return { pr: t.pr_number };
+}

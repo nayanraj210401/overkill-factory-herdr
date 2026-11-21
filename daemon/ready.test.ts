@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta } from "./db.ts";
-import { advance, sh, startTicket, tryPr, type Run } from "./runner.ts";
+import { advance, mergeTicket, sh, startTicket, tryPr, type Run } from "./runner.ts";
 import { readyRules, templateProblems } from "./ready.ts";
 
 const GOOD_PR = "Rate-limits login per user; nothing else changes.\n\n**What changed:** middleware.\n**Why:** brute force.\n**How it was verified:** 14 tests.\n**Risk:** low.\n";
@@ -66,4 +66,29 @@ test("evidence older than the last commit doesn't count, and an overrun budget b
   expect(rules()[0]).toMatchObject({ result: "fail", detail: "older than the last commit: C1" });
   db.query("UPDATE tickets SET tokens_in = 9000000 WHERE id = 7").run();
   expect(rules()[1]).toMatchObject({ rule: "budget", result: "fail" });
+});
+
+test("m merges only a ready ticket's PR: marks the draft ready, squash-merges, ends the gate", () => {
+  const { db, dir, repo, run, gh, prFile, ticket } = setup();
+  expect(() => mergeTicket(db, { repo, id: 7, run })).toThrow("#7 is running with no PR");
+  advance(db, { dir, repo, id: 7, run });
+  writeFileSync(prFile, GOOD_PR);
+  tryPr(db, { dir, repo, id: 7, run });
+  gh.length = 0;
+  expect(mergeTicket(db, { repo, id: 7, run })).toEqual({ pr: 42 });
+  expect(gh).toEqual([["gh", "pr", "ready", "42"], ["gh", "pr", "merge", "42", "--squash"]]);
+  expect(ticket()).toMatchObject({ state: "merged", pr_number: 42, pr_watched: 0 });
+  expect(db.query("SELECT COUNT(*) AS n FROM stages WHERE ticket = 7 AND ended_at IS NULL").get()).toEqual({ n: 0 });
+  expect(() => mergeTicket(db, { repo, id: 7, run })).toThrow("#7 is merged");
+});
+
+test("a failed gh merge leaves the ticket ready, with gh's reason", () => {
+  const { db, dir, repo, run, prFile, ticket } = setup();
+  advance(db, { dir, repo, id: 7, run });
+  writeFileSync(prFile, GOOD_PR);
+  tryPr(db, { dir, repo, id: 7, run });
+  const failing: Run = (argv, cwd) => argv[2] === "merge" ? { code: 1, out: "Pull request is not mergeable: checks failing" }
+    : argv[2] === "ready" ? { code: 1, out: "! Pull request #42 is already \"ready for review\"" } : run(argv, cwd);
+  expect(() => mergeTicket(db, { repo, id: 7, run: failing })).toThrow("gh pr merge failed: Pull request is not mergeable");
+  expect(ticket().state).toBe("ready");
 });

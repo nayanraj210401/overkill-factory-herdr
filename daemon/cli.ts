@@ -5,7 +5,7 @@
 import { homedir } from "node:os";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { readyRules } from "./ready.ts";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
 import { buildStatus, writeStatus } from "./status.ts";
@@ -13,13 +13,14 @@ import { validateStatus } from "../lib/status.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
-import { advance, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, mergeTicket, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database (path: the repo checkout, default .)
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
+  merge <id>                         squash-merge a ready ticket's PR (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket
   ticket add <id> <title…> [--blueprint b]
@@ -94,6 +95,9 @@ export function main(argv: string[], log = console.log) {
     return;
   }
   if (cmd === "run" && all) return runAll(interval, log);
+  // Only init makes a factory: a typo'd --name (or the window pointed at sample data)
+  // must not leave a stray database for `run --all` to serve.
+  if (cmd !== "init" && !existsSync(p.db)) throw new Error(`no factory "${name}" in ${dirname(p.dir)}; run factory init first`);
   const db = open(p.db);
   try {
     if (cmd === "init") {
@@ -143,6 +147,12 @@ export function main(argv: string[], log = console.log) {
       let r: any = null;
       change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
       log(`#${sub}: ${r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
+    } else if (cmd === "merge") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      let r: any = null;
+      change(db, () => { r = mergeTicket(db, { repo: repoDir, id: Number(sub) }); });
+      log(`#${sub}: merged PR #${r.pr}`);
     } else if (cmd === "ready") {
       const t = db.query("SELECT worktree FROM tickets WHERE id = ?").get(Number(sub)) as any;
       if (!t?.worktree) throw new Error(`#${sub} has no worktree yet; factory start ${sub}`);

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, paths } from "./cli.ts";
@@ -45,4 +45,11 @@ test("bad input names the problem", () => {
   expect(() => run("ticket", "set", "1", "state=running")).toThrow(/no ticket 1/);
   expect(() => run("ticket", "add", "x")).toThrow(/usage/);
   expect(() => run("frobnicate")).toThrow(/unknown command/);
+});
+
+test("only init creates a factory; other commands refuse a missing one", () => {
+  const { run } = factory();
+  expect(() => main(["merge", "7", "--name", "typo"], () => {})).toThrow('no factory "typo"');
+  expect(existsSync(paths("typo").dir)).toBe(false);
+  run("ticket", "add", "7", "Still", "fine");
 });
