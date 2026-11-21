@@ -33,6 +33,14 @@ const MIGRATIONS = [
      id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id),
      check_name TEXT NOT NULL, result TEXT NOT NULL CHECK (result IN ('PASS', 'FAIL')), detail TEXT, at TEXT NOT NULL
    );`,
+  // D4: where each ticket works, and every agent session started for it.
+  `ALTER TABLE tickets ADD COLUMN worktree TEXT;
+   ALTER TABLE tickets ADD COLUMN branch TEXT;
+   CREATE TABLE sessions (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id), stage TEXT NOT NULL,
+     agent TEXT, terminal TEXT, argv TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT,
+     tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0
+   );`,
 ];
 
 export function open(path: string): Database {
