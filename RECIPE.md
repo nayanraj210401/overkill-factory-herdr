@@ -28,7 +28,8 @@ The theme is `factory` in dark mode (`#1b1e24` background; `accent` and `working
 - ⌘⇧F (global) shows this layout; inside it, ⌘⇧F shows `main` again.
 - ⌘1–⌘7, or a menu row, selects a page (`layout.select {stack: "pages", child}`). The menu and header read the shown page from the live layout tree, so keys and clicks always agree.
 - Clicking a ticket in the sidebar, a Home card, a Running row or a Tickets row opens the Ticket page on that ticket (`shared("factory.ticket")`). Clicking TO REVIEW opens Reviews.
-- Ticket tabs switch by click or ⌘⌥1–4.
+- Ticket tabs switch by click, ⌘⌥1–4, or bare 1–4 while the page has focus.
+- Home, Tickets and Ticket take the keyboard when clicked. `j`/`k` (or arrows) move a highlight, `enter` opens the ticket, and `/` jumps to search on Tickets (escape leaves it). The action keys `n m x u p b e d` and `⇧C ⇧L` toast "<action>: coming in M2/M3" until their milestone builds them (`lib/keys.js`). Keys bubble up from the search box, so Tickets ignores them while you type.
 - Tickets chips filter by state; the search box matches `#412`, `412`, or words of the title, blueprint, stage or state.
 - Config reloads when a file in `.factory/` changes. ⌘O or the button opens the selected file with macOS `open`.
 - Every view updates when `status.json` changes: one loader watches the folder and republishes.
@@ -53,7 +54,8 @@ The theme is `factory` in dark mode (`#1b1e24` background; `accent` and `working
 - `ctrl-1`–`ctrl-4` select spaces and `cmd-1`–`cmd-9` select tabs in `global`; the layout's own section overrides only the cmd ones. keys.json has no key chords, so the plan's `g h` became ⌘1.
 - Editing a person's keys.json stops Herdr upgrading its default shortcuts. sync.sh merges keys only with `--keys`, and keeps a backup.
 - A Herdr home's socket path has to fit macOS's limit. Use `mktemp -d -t hf` for test homes.
-- Not built yet: the live agent terminal (`e`), action keys (`n m x u p b`), Runs view, cross-repo tickets, and the Reviews, Overwatch, Blueprint and Metrics pages.
+- Bare-letter keys live in the page mods (focus + `on_key_down`), not in keys.json: a layout-level `j` would also fire while typing in search.
+- Not built yet: the live agent terminal and the actions behind `n m x u p b e d` (they toast), Runs view, cross-repo tickets, and the Reviews, Overwatch, Blueprint and Metrics pages.
 
 ## Done when
 

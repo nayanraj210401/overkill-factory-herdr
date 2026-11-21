@@ -1,0 +1,25 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { keyAction, clamp } from "../lib/keys.js";
+
+const k = (key, modifiers = {}) => keyAction({ key, modifiers });
+
+test("j/k/arrows move, enter opens", () => {
+  assert.deepEqual(k("j"), { kind: "move", delta: 1 });
+  assert.deepEqual(k("up"), { kind: "move", delta: -1 });
+  assert.deepEqual(k("enter"), { kind: "open" });
+});
+
+test("unbuilt actions name their milestone", () => {
+  assert.deepEqual(k("m"), { kind: "soon", label: "Merge the ready PR", milestone: "M2" });
+  assert.equal(k("c", { shift: true }).milestone, "M3");
+});
+
+test("chords and unknown keys are left alone", () => {
+  assert.equal(k("m", { platform: true }), null);
+  assert.equal(k("j", { control: true }), null);
+  assert.equal(k("q"), null);
+  assert.equal(clamp(5, 3), 2);
+  assert.equal(clamp(-1, 3), 0);
+  assert.equal(clamp(0, 0), 0);
+});
