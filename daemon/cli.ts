@@ -16,6 +16,7 @@ import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
 import { newTicket } from "./intake.ts";
 import { sessionState } from "./herdr.ts";
+import { recordUsage } from "./usage.ts";
 import { advance, answer, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
@@ -31,7 +32,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   diff <id>                          what the ticket changed, against the repo's branch
   merge <id>                         squash-merge a ready ticket's PR (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
-  sessions <id>                      the agent sessions started for a ticket
+  sessions <id>                      the agent sessions started for a ticket, with their tokens
+  usage                              read agents' Claude Code transcripts now (the daemon does every tick)
   ticket add <id> <title…> [--blueprint b]
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
   stage <id> <Name> [detail…] [--next A,B]  enter a stage (the current one ends)
@@ -222,9 +224,11 @@ export function main(argv: string[], log = console.log) {
       for (const r of rules) log(`${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`);
       return;
     } else if (cmd === "sessions") {
-      for (const r of db.query("SELECT * FROM sessions WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
-        log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open"}  ${JSON.parse(r.argv)[0]}`);
+      for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
+        log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
       return;
+    } else if (cmd === "usage") {
+      change(db, () => recordUsage(db, log));
     } else if (cmd === "decide") {
       const [who, what, why] = rest;
       if (!sub || !who || !what) throw new Error("usage: factory decide <ticket> <who> <what> [why]");
@@ -234,7 +238,7 @@ export function main(argv: string[], log = console.log) {
       log(`${s.factory.name}: ${s.tickets.length} tickets, daemon ${s.factory.daemon ? "on" : "off"} → ${p.status}`);
       return;
     } else if (cmd === "run") {
-      const tick = () => { setMeta(db, "heartbeat", now()); watchSessions(db, p); writeAll(db, p); };
+      const tick = () => { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); };
       tick();
       log(`factory ${name}: writing ${p.status} every ${interval}s`);
       setInterval(tick, interval * 1000);
@@ -303,6 +307,7 @@ function runAll(interval: number, log: (s: string) => void) {
       const db = (open_[name] ??= open(p.db));
       try {
         setMeta(db, "heartbeat", new Date().toISOString());
+        recordUsage(db, log);
         watchSessions(db, p, sh, log);
         writeAll(db, p);
       } catch (e) {

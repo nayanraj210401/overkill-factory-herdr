@@ -48,6 +48,15 @@ const MIGRATIONS = [
   `ALTER TABLE tickets ADD COLUMN space TEXT;
    ALTER TABLE sessions ADD COLUMN in_space INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE sessions ADD COLUMN agent_seen INTEGER NOT NULL DEFAULT 0;`,
+  // Token recording: one row per Claude message an agent sent, from its transcript.
+  `CREATE TABLE usage (
+     message_id TEXT PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id), session INTEGER REFERENCES sessions(id),
+     at TEXT NOT NULL, model TEXT NOT NULL,
+     input INTEGER NOT NULL, cache_write_5m INTEGER NOT NULL, cache_write_1h INTEGER NOT NULL,
+     cache_read INTEGER NOT NULL, output INTEGER NOT NULL, usd REAL NOT NULL
+   );
+   CREATE INDEX usage_ticket ON usage(ticket);
+   CREATE INDEX usage_at ON usage(at);`,
 ];
 
 export function open(path: string): Database {
