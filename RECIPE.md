@@ -17,7 +17,7 @@ Left to right: a 268 px sidebar (theme `chrome`, 1 px `border` divider), then th
   - **Home:** "Needs you" cards (`surface`, 8 px radius, a 3 px left strip in `blocked` or `done`, the title with a right-aligned tag, then the question or reason); "Running" rows (dot, title, stage, tokens in, cost); "Today", four tiles (Time to PR, Cost per PR, Interactions / PR, Revert rate) with 26 px values.
   - **Tickets:** state chips (All, Grooming, Queue, Running, Parked, Ready, Merged, each with a count; the active chip has an `accent` border), a 220 px search box, and a table (Ticket, Stage, Blueprint, Tokens in, Cost), newest first. Merged and closed rows are dimmed.
   - **Ticket:** the left card holds the title, STATUS.md's summary sentence, a timeline (12 px dots: `done`, `working` for the stage now with "12m so far" in `accent`, hollow `raised` for stages to come), then tabs 1 Plan, 2 Checks, 3 Questions, 4 PR rendering SLICES, EVIDENCE, GATES and PR Markdown. A 380 px right card names the stage and tokens and says the live terminal arrives with M2.
-  - **Config:** a 240 px list of the `.factory/` files (factory.yaml first, then blueprints, agents, triggers, benchmarks), and the selected file read-only with line numbers and YAML or Markdown highlighting. Its header holds the path, "Schema check: coming in M2" and "Open in editor ⌘O".
+  - **Config:** a 40 px **Daemon** bar on top: a dot (`done` running, `dim` not installed, `blocked` stopped or failing), the state ("Running · pid 4242 · starts at login", "Not installed: …", or the CLI's own error), and buttons for the state: Install (accent), or Restart, Uninstall and Logs. Below it, a 240 px list of the `.factory/` files (factory.yaml first, then blueprints, agents, triggers, benchmarks), and the selected file read-only with line numbers and YAML or Markdown highlighting. Its header holds the path, "Schema check: coming in M2" and "Open in editor ⌘O".
   - **Coming soon** (Reviews, Overwatch, Blueprint, Metrics): a centered card with a "Coming in M6"-style pill in `accent` on `raised`, the title (20 px), one line on what the page will do, and the page's mockup from `docs/layouts/` at up to 900 px wide.
 - **Status bar (30 px):** a 6 px dot (`done`, or `blocked` while ready rules fail), then "1 agent · 1 in cloud · 1 PR watched · 5h window 42% · week 18% · 0 rules failing" in 11.8 px `muted`.
 
@@ -31,6 +31,7 @@ The theme is `factory` in dark mode (`#1b1e24` background; `accent` and `working
 - Ticket tabs switch by click, ⌘⌥1–4, or bare 1–4 while the page has focus.
 - Home, Tickets and Ticket take the keyboard when clicked. `j`/`k` (or arrows) move a highlight, `enter` opens the ticket, and `/` jumps to search on Tickets (escape leaves it). The action keys `n m x u p b e d` and `⇧C ⇧L` toast "<action>: coming in M2/M3" until their milestone builds them (`lib/keys.js`). Keys bubble up from the search box, so Tickets ignores them while you type.
 - Tickets chips filter by state; the search box matches `#412`, `412`, or words of the title, blueprint, stage or state.
+- Config asks `factory service status --json` every 10 s. The buttons run `factory service install|restart|uninstall`, show "Installing…" while busy, and toast the CLI's error if it fails. Logs opens `~/.factory/logs`. Clicking the daemon line in the sidebar opens Config.
 - Config reloads when a file in `.factory/` changes. ⌘O or the button opens the selected file with macOS `open`.
 - Every view updates when `status.json` changes: one loader watches the folder and republishes.
 - Herdr's agent statuses aren't shown on ticket rows yet. Fixture tickets have no terminals, so dots show the ticket's group.
@@ -51,6 +52,7 @@ The theme is `factory` in dark mode (`#1b1e24` background; `accent` and `working
 - Layout ids are global: a sidebar block named `tickets` swapped places with the Tickets page.
 - `TextView`, `InputState`, `Input`, `EditorState` and `Editor` come from `gpui-base`, not `gpui-kit`.
 - An editor's language is fixed at creation. Make a new `EditorState` per file.
+- The window runs the CLI as `bun <checkout>/daemon/cli.ts` (path written to `lib/cli.js` by sync.sh), never `dist/factory`: a binary built from an older commit answered `--json` with plain text.
 - `ctrl-1`–`ctrl-4` select spaces and `cmd-1`–`cmd-9` select tabs in `global`; the layout's own section overrides only the cmd ones. keys.json has no key chords, so the plan's `g h` became ⌘1.
 - Editing a person's keys.json stops Herdr upgrading its default shortcuts. sync.sh merges keys only with `--keys`, and keeps a backup.
 - A Herdr home's socket path has to fit macOS's limit. Use `mktemp -d -t hf` for test homes.

@@ -52,7 +52,7 @@ const launchctl: Run = (args) => {
 };
 
 export function service(cmd: string, o: {
-  factoryHome: string; label?: string; agentsDir?: string; run?: Run; uid?: number; log?: (s: string) => void;
+  factoryHome: string; label?: string; agentsDir?: string; run?: Run; uid?: number; log?: (s: string) => void; json?: boolean;
 }) {
   const label = o.label ?? LABEL;
   const run = o.run ?? launchctl;
@@ -73,12 +73,18 @@ export function service(cmd: string, o: {
     run(["bootout", `${domain}/${label}`]);
     if (existsSync(file)) rmSync(file);
     log(`removed ${label}`);
+  } else if (cmd === "restart") {
+    const r = run(["kickstart", "-k", `${domain}/${label}`]);
+    if (r.code !== 0) throw new Error(`not running under launchd; run factory service install (${r.out.trim()})`);
+    log(`restarted ${label}`);
   } else if (cmd === "status") {
+    // The window reads --json: {installed, state, pid, logs}.
     const r = run(["print", `${domain}/${label}`]);
-    if (r.code !== 0) return log(`${label}: not installed`), "absent";
-    const state = r.out.match(/^\s*state = (\S+)/m)?.[1] ?? "unknown";
-    const pid = r.out.match(/^\s*pid = (\d+)/m)?.[1];
-    log(`${label}: ${state}${pid ? ` (pid ${pid})` : ""}`);
+    const state = r.code !== 0 ? "absent" : r.out.match(/^\s*state = (\S+)/m)?.[1] ?? "unknown";
+    const pid = Number(r.out.match(/^\s*pid = (\d+)/m)?.[1]) || null;
+    const logs = join(o.factoryHome, "logs");
+    if (o.json) log(JSON.stringify({ installed: state !== "absent", state, pid, logs }));
+    else log(state === "absent" ? `${label}: not installed` : `${label}: ${state}${pid ? ` (pid ${pid})` : ""}`);
     return state;
-  } else throw new Error("usage: factory service install|uninstall|status");
+  } else throw new Error("usage: factory service install|uninstall|restart|status [--json]");
 }
