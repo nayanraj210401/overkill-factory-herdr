@@ -4,14 +4,15 @@
 // blueprints: only these start while you're away. budget: a lower cap per ticket.
 // review_rounds: rounds of review comments a PR may take before it waits for you.
 // never: paths no unattended run may touch; a ticket that does parks.
-// The babysitter may not push back while away (its agreement with you isn't measured
-// yet), so it fixes or escalates. Grooming questions still wait, and merge stays human.
+// min_agreement: the agreement benchmark's bar (off unless set). The benchmark isn't
+// built, so setting it means no pushbacks while away and no cloud moves. Grooming
+// questions still wait, and merge stays human.
 import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
 import { parseTokens } from "../lib/model.js";
 import { readFactory, type Run } from "./runner.ts";
 
-export type AwayPolicy = { blueprints?: string[]; budget?: string; review_rounds?: number; never?: string[] };
+export type AwayPolicy = { blueprints?: string[]; budget?: string; review_rounds?: number; never?: string[]; min_agreement?: number };
 
 export const awaySince = (db: Database) => (getMeta(db, "away_until") ? null : getMeta(db, "away_since"));
 export const isAway = (db: Database) => awaySince(db) != null;

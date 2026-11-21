@@ -4,7 +4,7 @@
 // 2) wins: that comment can't be pushed back again.
 import type { Database } from "bun:sqlite";
 import type { Run } from "./runner.ts";
-import { isAway } from "./away.ts";
+import { awayPolicy, isAway } from "./away.ts";
 
 export type GhComment = { ghId: string; thread: string; author: string; body: string; at: string; place: string | null; url: string | null };
 export type Row = { n: number; author: string; place: string | null; body: string; insisted: number; verdict: string | null; reason: string | null; thread: string };
@@ -39,12 +39,13 @@ export function commentsNote(o: { ticket: number; pr: number; rows: Row[]; limit
 }
 
 // `factory comment <ticket> C3 fix|pushback|escalate <reason…>`
-export function judge(db: Database, o: { ticket: number; n: number; verdict: string; reason: string; now: string }) {
+export function judge(db: Database, o: { ticket: number; n: number; verdict: string; reason: string; now: string; repo?: string }) {
   if (!(VERDICTS as readonly string[]).includes(o.verdict)) throw new Error(`a verdict is ${VERDICTS.join(", ")}`);
   const c = db.query("SELECT * FROM comments WHERE ticket = ? AND n = ?").get(o.ticket, o.n) as Record<string, any> | null;
   if (!c) throw new Error(`#${o.ticket} has no comment C${o.n}`);
-  // The plan: below the measured agreement with you, no pushbacks while you're away. It isn't measured yet.
-  if (o.verdict === "pushback" && isAway(db)) throw new Error(`C${o.n}: no pushbacks while the person is away; fix it, or escalate`);
+  // The plan: below the measured agreement with you, no pushbacks while you're away. It
+  // isn't measured yet, so only a factory that sets away.min_agreement holds to it.
+  if (o.verdict === "pushback" && isAway(db) && o.repo && awayPolicy(o.repo).min_agreement != null) throw new Error(`C${o.n}: no pushbacks while the person is away; fix it, or escalate`);
   if (o.verdict === "pushback" && c.insisted) throw new Error(`C${o.n}: @${c.author} insisted after pushbacks; fix it, or escalate`);
   if (!o.reason.trim() && o.verdict !== "fix") throw new Error(`say why: factory comment ${o.ticket} C${o.n} ${o.verdict} <reason>`);
   db.query("UPDATE comments SET verdict = ?, reason = ?, judged_at = ? WHERE id = ?").run(o.verdict, o.reason.trim() || null, o.now, c.id);

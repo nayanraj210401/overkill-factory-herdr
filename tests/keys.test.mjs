@@ -18,8 +18,10 @@ test("j/k/arrows move, enter opens", () => {
   assert.deepEqual(k("u"), { kind: "answer" });
 });
 
-test("unbuilt actions name their milestone", () => {
-  assert.equal(k("c", { shift: true }).milestone, "M3");
+test("⇧C and ⇧L move a ticket to the cloud and back", () => {
+  assert.deepEqual(k("c", { shift: true }), { kind: "cloud" });
+  assert.deepEqual(k("l", { shift: true }), { kind: "local" });
+  assert.deepEqual(k("c"), null);
 });
 
 test("chords and unknown keys are left alone", () => {

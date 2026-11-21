@@ -127,14 +127,15 @@ test("every comment needs a verdict; an escalation parks for you; a reviewer ins
 
 test("away: no pushbacks, and past away.review_rounds new comments park instead of starting a round", () => {
   const { db, dir, repo, watch, ticket, set } = setup();
-  writeFileSync(join(repo, ".factory/factory.yaml"), 'name: t\nquality_floor: ["true"]\nready: [template]\naway: { review_rounds: 1 }\n');
+  writeFileSync(join(repo, ".factory/factory.yaml"), 'name: t\nquality_floor: ["true"]\nready: [template]\naway: { review_rounds: 1, min_agreement: 0.85 }\n');
   setAway(db, true, "2026-11-21T10:15:00Z");
   expect(() => setAway(db, true, "2026-11-21T10:16:00Z")).toThrow("already away since 2026-11-21T10:15:00Z");
   const run: Run = (a, c) => (a[0] === "hc" ? { code: 0, out: '{"address":"t1"}' } : a[0] === "gh" ? { code: 0, out: "https://github.com/acme/api/pull/42\n" } : sh(a, c));
   set({ state: "OPEN", comments: [{ id: 1, author: { login: "sam" }, body: "Rename it.", createdAt: "2026-11-21T10:20:00Z" }], reviews: [] });
   expect(watch("2026-11-21T10:30:00Z")).toEqual([{ id: 7, event: "1 comment" }]); // round 1 of 1
-  expect(() => judge(db, { ticket: 7, n: 1, verdict: "pushback", reason: "no", now: "x" })).toThrow("no pushbacks while the person is away");
-  judge(db, { ticket: 7, n: 1, verdict: "fix", reason: "", now: "x" });
+  expect(() => judge(db, { ticket: 7, n: 1, verdict: "pushback", reason: "no", now: "x", repo })).toThrow("no pushbacks while the person is away");
+  writeFileSync(join(repo, ".factory/factory.yaml"), 'name: t\nquality_floor: ["true"]\nready: [template]\naway: { review_rounds: 1 }\n');
+  judge(db, { ticket: 7, n: 1, verdict: "pushback", reason: "the benchmark is off, so pushbacks are allowed", now: "x", repo });
   advance(db, { dir, repo, id: 7, run });
   expect(ticket().state).toBe("ready");
   set({ state: "OPEN", comments: [{ id: 2, author: { login: "sam" }, body: "And this.", createdAt: "2026-11-21T11:20:00Z" }], reviews: [] });

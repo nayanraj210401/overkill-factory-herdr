@@ -18,6 +18,7 @@ import { login, newTicket, pollQueue } from "./intake.ts";
 import { watchPrs } from "./watch.ts";
 import { judge } from "./comments.ts";
 import { setAway } from "./away.ts";
+import { toCloud, toLocal } from "./cloud.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
@@ -45,6 +46,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket, with their tokens
+  cloud <id> | --all                 hand a running ticket (or every one) to a Claude Code cloud session
+  local <id>                         bring a ticket back from the cloud and resume it here
   away on|off                        you're away: factory.yaml's away: policy applies; Home shows a digest when you're back
   overwatch [--json]                 start the overwatch agent, or print the live one's terminal
   blueprints                         write blueprints.json (stages, runs in 7 days) for the Blueprint page
@@ -171,7 +174,7 @@ export function main(argv: string[], log = console.log) {
       const [c = "", verdict = "", ...why] = rest;
       const n = Number(c.replace(/^C/i, ""));
       if (!Number.isInteger(Number(sub)) || !Number.isInteger(n) || n < 1) throw new Error("usage: factory comment <id> C<n> fix|pushback|escalate <reason…>");
-      change(db, () => judge(db, { ticket: Number(sub), n, verdict, reason: why.join(" "), now: now() }));
+      change(db, () => judge(db, { ticket: Number(sub), n, verdict, reason: why.join(" "), now: now(), repo: getMeta(db, "repo_path") ?? undefined }));
       log(`#${sub}: C${n} ${verdict}`);
     } else if (cmd === "verdict") {
       const [kind, result, ...detail] = rest;
@@ -272,6 +275,25 @@ export function main(argv: string[], log = console.log) {
       for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
       return;
+    } else if (cmd === "cloud" || cmd === "local") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const ids = cmd === "cloud" && all
+        ? (db.query("SELECT id FROM tickets WHERE state = 'running' AND location = 'local' AND worktree IS NOT NULL ORDER BY id").all() as { id: number }[]).map((r) => r.id)
+        : [Number(sub)];
+      if (!ids.every(Number.isInteger)) throw new Error(`usage: factory ${cmd} <id>${cmd === "cloud" ? " | --all" : ""}`);
+      for (const id of ids) {
+        let r: any = null;
+        // One at a time: a ticket that fails to move stays local; the others still go.
+        try { change(db, () => { r = (cmd === "cloud" ? toCloud : toLocal)(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); }); }
+        catch (e) { if (ids.length === 1) throw e; log(`#${id}: ${(e as Error).message}`); continue; }
+        log(cmd === "cloud" ? `#${id}: in a cloud session from ${r.stage}; claude --cloud runs in ${r.terminal}`
+          : `#${id}: back${r.parked ? ", parked on the cloud's questions" : ` at ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`}`);
+        writeTicketFiles(db, p.dir, id);
+      }
+      if (!ids.length) log("no running tickets to move");
+      writeStatus(db, p.status);
+      return;
     } else if (cmd === "away") {
       if (sub !== "on" && sub !== "off") throw new Error("usage: factory away on|off");
       change(db, () => setAway(db, sub === "on", now()));
@@ -328,10 +350,12 @@ export function main(argv: string[], log = console.log) {
 export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = sh, log = console.log) {
   const repoDir = getMeta(db, "repo_path");
   if (!repoDir) return;
-  const open_ = db.query("SELECT id, ticket, terminal, in_space, agent_seen, started_at FROM sessions WHERE ended_at IS NULL AND terminal IS NOT NULL").all() as
+  // A ticket in the cloud is out of sight until ⇧L brings it back: its sessions aren't watched.
+  const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
+    WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as
     { id: number; ticket: number; terminal: string; in_space: number; agent_seen: number; started_at: string }[];
   // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
-  for (const { id } of db.query("SELECT id FROM tickets WHERE state = 'running' AND stage = 'pr'").all() as { id: number }[]) {
+  for (const { id } of db.query("SELECT id FROM tickets WHERE state = 'running' AND stage = 'pr' AND location != 'cloud'").all() as { id: number }[]) {
     try {
       let r: any;
       change(db, () => { r = tryPr(db, { dir: p.dir, repo: repoDir, id, run }); });
