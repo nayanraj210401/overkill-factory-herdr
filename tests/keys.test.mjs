@@ -9,6 +9,7 @@ test("j/k/arrows move, enter opens", () => {
   assert.deepEqual(k("up"), { kind: "move", delta: -1 });
   assert.deepEqual(k("enter"), { kind: "open" });
   assert.deepEqual(k("e"), { kind: "terminal" });
+  assert.deepEqual(k("n"), { kind: "new" });
   assert.deepEqual(k("m"), { kind: "merge" });
   assert.deepEqual(k("b"), { kind: "budget" });
   assert.deepEqual(k("x"), { kind: "send-back" });
