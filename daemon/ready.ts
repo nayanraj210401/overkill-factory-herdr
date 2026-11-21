@@ -56,10 +56,12 @@ function verdictRule(db: Database, id: number, kind: VerdictKind, lastCommit: st
     : { rule: kind, result: "fail", detail: `${fails.length} of ${fresh.length} reviewers block${why}` };
 }
 
-export function readyRules(db: Database, o: { id: number; dir: string; worktree: string; rules: string[]; run: Run; expects?: VerdictKind[]; cap?: { input: number; output: number } | null }): Rule[] {
+// `worktrees`: every repo's checkout; a commit in any of them makes older evidence stale.
+export function readyRules(db: Database, o: { id: number; dir: string; worktrees: string[]; rules: string[]; run: Run; expects?: VerdictKind[]; cap?: { input: number; output: number } | null }): Rule[] {
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
   const latest = db.query(`SELECT check_name, result, at FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { check_name: string; result: string; at: string }[];
-  const lastCommit = o.run(["git", "-C", o.worktree, "log", "-1", "--format=%cI"]).out.trim();
+  const lastCommit = o.worktrees.map((w) => o.run(["git", "-C", w, "log", "-1", "--format=%cI"]).out.trim())
+    .filter((c) => !Number.isNaN(Date.parse(c))).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? "";
   const out: Rule[] = [];
   for (const rule of o.rules) {
     if (rule === "evidence") {
@@ -81,6 +83,13 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktree:
       const file = join(o.dir, "tickets", String(o.id), "PR.md");
       const problems = templateProblems(existsSync(file) ? readFileSync(file, "utf8") : null);
       out.push(problems.length ? { rule, result: "fail", detail: problems.join("; ") } : { rule, result: "pass", detail: "PR.md follows the template" });
+    } else if (rule === "cross_check") {
+      // Added for cross-repo tickets: the check across every repo's branch, run by the tests check.
+      const c = latest.find((x) => x.check_name === "cross_check");
+      out.push(!c ? { rule, result: "fail", detail: "the cross check hasn't run" }
+        : c.result !== "PASS" ? { rule, result: "fail", detail: "the cross check fails" }
+        : lastCommit && Date.parse(c.at) < Date.parse(lastCommit) ? { rule, result: "fail", detail: "the cross check is older than the last commit" }
+        : { rule, result: "pass", detail: "the cross check passes on every repo's branch" });
     } else if (rule === "holdout" || rule === "review") {
       out.push(verdictRule(db, o.id, rule, lastCommit, o.expects?.includes(rule) ?? false));
     } else {
@@ -92,23 +101,30 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktree:
 
 export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fail");
 
+// The PR body: PR.md, the other repos' PRs of a cross-repo change, and the rule results.
+export function prBody(md: string, rules: Rule[], others: { repo: string; pr: number | null }[] = []) {
+  const table = rules.map((r) => `- ${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`).join("\n");
+  const part = others.length ? `\n\n**Part of one change across repos:** ${others.map((x) => (x.pr ? `${x.repo}#${x.pr}` : x.repo)).join(", ")}` : "";
+  return `${md.trim()}${part}\n\n**Ready rules**\n${table}\n`;
+}
+
 // All rules pass: push the ticket's branch and open the PR from PR.md, as a draft
 // with the rule results appended. Agents can't push; only the daemon does (plan: Hard stops).
-export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null }) {
+export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null; others?: { repo: string; pr: number | null }[] }) {
   const t = db.query("SELECT title FROM ticket_lead WHERE id = ?").get(o.id) as { title: string };
-  const md = readFileSync(join(o.dir, "tickets", String(o.id), "PR.md"), "utf8").trim();
-  const table = o.rules.map((r) => `- ${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`).join("\n");
-  const body = `${md}\n\n**Ready rules**\n${table}\n`;
+  const md = readFileSync(join(o.dir, "tickets", String(o.id), "PR.md"), "utf8");
   const bodyFile = join(o.dir, "tickets", String(o.id), ".pr-body.md");
   mkdirSync(join(o.dir, "tickets", String(o.id)), { recursive: true });
-  writeFileSync(bodyFile, body);
+  writeFileSync(bodyFile, prBody(md, o.rules, o.others));
   const push = o.run(["git", "-C", o.worktree, "push", "-u", "origin", o.branch]);
   if (push.code !== 0) throw new Error(`git push failed: ${push.out}`);
+  // A PR this branch already has: one a failed run opened before its rows rolled back.
+  const found = o.existing ?? (Number(o.run(["gh", "pr", "list", "--head", o.branch, "--state", "open", "--json", "number", "-q", ".[0].number"], o.worktree).out) || null);
   // Sent back and fixed: the PR it already has gets the new commits and a fresh body.
-  if (o.existing != null) {
-    const edit = o.run(["gh", "pr", "edit", String(o.existing), "--body-file", bodyFile], o.worktree);
+  if (found != null) {
+    const edit = o.run(["gh", "pr", "edit", String(found), "--body-file", bodyFile], o.worktree);
     if (edit.code !== 0) throw new Error(`gh pr edit failed: ${edit.out}`);
-    return o.existing;
+    return found;
   }
   const pr = o.run(["gh", "pr", "create", "--draft", "--head", o.branch, "--title", t.title, "--body-file", bodyFile], o.worktree);
   if (pr.code !== 0) throw new Error(`gh pr create failed: ${pr.out}`);

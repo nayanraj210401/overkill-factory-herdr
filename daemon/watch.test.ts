@@ -40,7 +40,7 @@ function setup() {
   mkdirSync(join(dir, "tickets/7"), { recursive: true });
   writeFileSync(join(dir, "tickets/7/PR.md"), GOOD_PR);
   advance(db, { dir, repo, id: 7, run, now: "2026-11-21T10:10:00Z" }); // implement → verify → pr: PR #42 opens, checked at 10:10
-  const watch = (now: string, logs: string[] = []) => watchPrs(db, { dir, repo, slug: "acme/api", me: "pat", run, now, log: (s) => logs.push(s) });
+  const watch = (now: string, logs: string[] = []) => watchPrs(db, { dir, repo, me: "pat", run, now, log: (s) => logs.push(s) });
   const ticket = () => db.query("SELECT * FROM ticket_lead WHERE id = 7").get() as any;
   return { db, dir, repo, gh, watch, ticket, set: (p: any, i: any[] = []) => { pr = p; inline = i; }, down: (v: boolean) => { fail = v; } };
 }

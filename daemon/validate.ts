@@ -25,7 +25,7 @@ export const KINDS: Record<string, Rule> = {
   factory: {
     required: ["name"],
     object: {
-      name: str, repos: strs, tickets: { enum: ["github", "linear", "local"] },
+      name: str, repos: strs, cross_check: str, tickets: { enum: ["github", "linear", "local"] },
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },

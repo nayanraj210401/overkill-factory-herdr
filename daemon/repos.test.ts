@@ -24,8 +24,8 @@ test("migration 11 moves a one-repo factory's repo and each ticket's work to the
   const db = open(path);
   expect(listRepos(db)).toEqual([{ slug: "acme/api", path: "/src/api", lead: true }]);
   expect(db.query("SELECT * FROM ticket_repos ORDER BY ticket").all()).toEqual([
-    { ticket: 1, repo: "acme/api", lead: 1, worktree: null, branch: "factory/1-a", pr_number: 41, pr_watched: 0, pr_checked_at: "2026-11-20T09:00:00Z", merged_at: "2026-11-20T10:00:00Z" },
-    { ticket: 2, repo: "acme/api", lead: 1, worktree: "/wt/2", branch: "factory/2-b", pr_number: 42, pr_watched: 1, pr_checked_at: "2026-11-21T09:00:00Z", merged_at: null },
+    { ticket: 1, repo: "acme/api", lead: 1, worktree: null, branch: "factory/1-a", pr_number: 41, pr_watched: 0, pr_checked_at: "2026-11-20T09:00:00Z", merged_at: "2026-11-20T10:00:00Z", merge_pos: null },
+    { ticket: 2, repo: "acme/api", lead: 1, worktree: "/wt/2", branch: "factory/2-b", pr_number: 42, pr_watched: 1, pr_checked_at: "2026-11-21T09:00:00Z", merged_at: null, merge_pos: null },
   ]);
   // The one-repo columns and meta keys are gone; the view reads as the old row did.
   const cols = (db.query("PRAGMA table_info(tickets)").all() as { name: string }[]).map((c) => c.name);
