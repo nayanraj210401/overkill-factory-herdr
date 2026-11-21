@@ -16,6 +16,7 @@ test("j/k/arrows move, enter opens", () => {
   assert.deepEqual(k("b"), { kind: "budget" });
   assert.deepEqual(k("x"), { kind: "send-back" });
   assert.deepEqual(k("u"), { kind: "answer" });
+  assert.deepEqual(k("r"), { kind: "runs" });
 });
 
 test("⇧C and ⇧L move a ticket to the cloud and back", () => {

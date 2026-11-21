@@ -25,6 +25,7 @@ import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { watchContext } from "./handoff.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
+import { writeRuns } from "./runs.ts";
 import { validateMetrics } from "../lib/metrics.js";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
@@ -92,7 +93,7 @@ const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory"
 
 export function paths(name: string, home = factoryHome()) {
   const dir = join(home, name);
-  return { dir, db: join(dir, "factory.db"), status: join(dir, "status.json"), blueprints: join(dir, "blueprints.json"), metrics: join(dir, "metrics.json") };
+  return { dir, db: join(dir, "factory.db"), status: join(dir, "status.json"), blueprints: join(dir, "blueprints.json"), metrics: join(dir, "metrics.json"), runs: join(dir, "runs.json") };
 }
 
 // Runs a change, then refuses it (rolling back) if status.json would break the contract.
@@ -500,6 +501,7 @@ function writeAll(db: Database, p: ReturnType<typeof paths>) {
   const lead = leadRepo(db);
   if (lead) writeBlueprints(db, lead.path, p.blueprints);
   writeMetrics(db, p.metrics);
+  writeRuns(db, p.runs);
   for (const t of s.tickets) writeTicketFiles(db, p.dir, t.id);
 }
 

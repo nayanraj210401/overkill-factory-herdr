@@ -1,16 +1,19 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, run, setShared } from "herdr";
-import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subtitle } from "./lib/model.js";
+import { theme, run, setShared, readTextFile, watchFolder, checking, props, exec, notify } from "herdr";
+import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subtitle, compact } from "./lib/model.js";
+import { validateRuns, kindCounts, filterRuns, duration, runWhat, startedAt, runModel } from "./lib/runs.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status, act } from "./lib/store.js";
+import { status, act, root } from "./lib/store.js";
 
 const open = (id) => { setShared("factory.ticket", id); run("layout.select", { stack: STACK, child: "ticket" }); };
 const DOT = { needs: "blocked", running: "working", ready: "done", queue: "dim" };
 const COLS = [["Stage", 230], ["Blueprint", 100], ["Tokens in", 90], ["Cost", 70]];
+const RUN_COLS = [["Kind", 140], ["Harness · model", 190], ["Started", 100], ["Time", 70], ["Tokens in / out", 110], ["Cost", 60]];
 
 // The Tickets page: every ticket, chips by state, search (docs/layouts/03-tickets.png).
+// r swaps it for the Runs view: every agent session, newest first, with its transcript.
 export default class FactoryList extends View {
   init(_props, cx) {
     this.filter = "all";
@@ -22,6 +25,37 @@ export default class FactoryList extends View {
     this.input.on("blur", () => { this.typing = false; });
     this.handle = cx.focus_handle();
     this.at = 0;
+    this.view = props()?.view === "runs" ? "runs" : "tickets"; // a prop only smoke.sh passes
+    this.kind = null; // a run kind, or null for every kind
+    this.doc = null;
+    this.error = null;
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const dir = root();
+        const text = await readTextFile(`${dir}/runs.json`);
+        if (text == null) [this.doc, this.error] = [null, "No runs.json yet: the daemon writes it (factory run)."];
+        else {
+          try {
+            const doc = JSON.parse(text);
+            const errors = validateRuns(doc);
+            [this.doc, this.error] = errors.length ? [null, `runs.json: ${errors[0]}`] : [doc, null];
+          } catch (e) { [this.doc, this.error] = [null, `runs.json: ${e.message}`]; }
+        }
+        cx.notify();
+        if (checking()) return;
+        const watch = watchFolder(dir);
+        await Promise.race([watch, new Promise((done) => cx.timer.after(5000, done))]);
+        watch.cancel();
+      }
+    });
+  }
+
+  // A run's transcript, in your own editor (as the Config page's Open does).
+  openTranscript(r) {
+    if (!r) return;
+    if (!r.transcript) return notify({ title: `Run ${r.id} has no transcript on this machine`, level: "info", timeout: 2500 });
+    if (status()?.source !== "daemon") return notify({ title: "This is sample data", body: "Start a factory (factory init) to open a run's transcript.", level: "info", timeout: 3500 });
+    exec("open", [r.transcript]);
   }
 
   // Keys bubble up from the search box too: leave them to it while it has focus.
@@ -33,17 +67,66 @@ export default class FactoryList extends View {
     if (e.key === "/") { this.input.focus(); cx.stop_propagation(); return; }
     const a = keyAction(e);
     if (!a) return;
-    if (a.kind === "move") this.at = clamp(this.at + a.delta, rows.length);
+    if (a.kind === "runs") { this.view = this.view === "runs" ? "tickets" : "runs"; this.at = 0; }
+    else if (this.view === "runs") { // only moving and opening make sense on a run
+      if (a.kind === "move") this.at = clamp(this.at + a.delta, rows.length);
+      else if (a.kind === "open") this.openTranscript(rows[this.at]);
+      else return;
+    }
+    else if (a.kind === "move") this.at = clamp(this.at + a.delta, rows.length);
     else if (a.kind === "open" && rows[this.at]) open(rows[this.at].id);
     else act(a, rows[this.at]);
     cx.stop_propagation();
     cx.notify();
   }
 
+  renderRuns(t) {
+    const runs = this.doc?.runs ?? [];
+    const kinds = kindCounts(runs);
+    if (!kinds.some((k) => k.id === this.kind)) this.kind = null;
+    const rows = filterRuns(runs, this.kind);
+    const chip = (id, label, n) => {
+      const on = id === this.kind;
+      return div().id(`k-${id ?? "all"}`).px(10).py(3).rounded(12).border(1).cursor_pointer().text_size(12)
+        .border_color(on ? t.accent : t.border).bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)
+        .on_click((_e, cx) => { this.kind = id; this.at = 0; cx.notify(); })
+        .child(`${label} · ${n}`);
+    };
+    const cell = (w, text, color) => div().w(w).flex_none().truncate().text_color(color).child(text);
+    const focused = this.handle.is_focused();
+    return v_flex().size_full().p(16).gap(10).bg(t.background).rounded(10).text_size(13)
+      .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus()).on_key_down((e, cx) => this.key(e, rows, cx))
+      .child(h_flex().gap(6).items_center()
+        .child(chip(null, "All runs", runs.length))
+        .children(kinds.map((k) => chip(k.id, k.title, k.n)))
+        .child(div().flex_1())
+        .child(div().text_size(11.5).text_color(t.dim).child("j k · enter opens the transcript"))
+        .child(div().id("tickets").px(10).py(4).rounded(6).border(1).border_color(t.border).text_color(t.muted).text_size(12).cursor_pointer()
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).hover((st) => st.bg(t.hover))
+          .on_click((_e, cx) => { this.view = "tickets"; this.at = 0; cx.notify(); }).child("Tickets  r")))
+      .child(h_flex().px(8).pb(4).gap(8).border_b(1).border_color(t.border).text_size(11.5).text_color(t.dim)
+        .child(div().flex_1().child("Ticket"))
+        .children(RUN_COLS.map(([name, w]) => div().w(w).flex_none().child(name))))
+      .child(v_flex().id("rows").flex_1().overflow_y_scroll()
+        .children(rows.map((r, i) => h_flex().id(`run-${r.id}`).h(34).px(8).gap(8).items_center().rounded(6).cursor_pointer()
+          .when(focused && i === this.at, (el) => el.bg(t.selected))
+          .hover((st) => st.bg(t.hover))
+          .on_click(() => this.openTranscript(r))
+          .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(`#${r.ticket} ${r.title}`))
+          .child(cell(140, runWhat(r), t.muted))
+          .child(cell(190, runModel(r), t.muted))
+          .child(cell(100, startedAt(r.started_at), t.muted))
+          .child(cell(70, duration(r.duration_s), r.duration_s == null ? t.accent : t.muted))
+          .child(cell(110, `${compact(r.tokens_in)} / ${compact(r.tokens_out)}`, t.muted))
+          .child(cell(60, r.usd ? `$${r.usd.toFixed(2)}` : "–", t.foreground))))
+        .when(!rows.length, (el) => el.child(div().p(12).text_color(t.dim).child(this.error ?? "No runs yet."))));
+  }
+
   render() {
     const t = theme();
     const s = status();
     if (!s) return div().size_full().bg(t.background);
+    if (this.view === "runs") return this.renderRuns(t);
     const repos = factoryRepos(s);
     if (!repos.includes(this.repo)) this.repo = null;
     const counts = countBy(s.tickets, this.repo, s.factory.repo);
@@ -75,6 +158,9 @@ export default class FactoryList extends View {
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .child(Input.new(this.input).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
         .child(div().text_size(11.5).text_color(t.dim).child("/ search · j k enter"))
+        .child(div().id("runs").px(10).py(4).rounded(6).border(1).border_color(t.border).text_color(t.muted).text_size(12).cursor_pointer()
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).hover((st) => st.bg(t.hover))
+          .on_click((_e, cx) => { this.view = "runs"; this.at = 0; cx.notify(); }).child("Runs  r"))
         .child(div().id("new").px(10).py(4).rounded(6).bg(t.accent).text_color(t.background).text_size(12).cursor_pointer()
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).hover((st) => st.opacity(0.88))
           .on_click(() => act({ kind: "new" })).child("New ticket  n")))
