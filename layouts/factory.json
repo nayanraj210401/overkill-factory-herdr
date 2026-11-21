@@ -135,10 +135,7 @@
               "id": "blueprint",
               "type": "block",
               "content": {
-                "mod": "factory-soon",
-                "props": {
-                  "page": "blueprint"
-                }
+                "mod": "factory-blueprint"
               }
             },
             {
