@@ -3,15 +3,33 @@
 // and opens as an unnamed space, which Herdr nests under the repo's space. Each
 // stage's agent is a tab there. When the app isn't running (the daemon runs from
 // launchd), callers fall back to a free-floating `hc run`.
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Run } from "./runner.ts";
 
 // `bun test` started outside the repo root skips bunfig.toml's preload, and its tests
 // would open spaces, agents and worktrees in the person's own Herdr. Refuse instead.
 if (process.env.NODE_ENV === "test" && !process.env.FACTORY_TEST_SANDBOX)
   throw new Error("bun test ran without daemon/test-env.ts (bunfig.toml's preload); run it from the repo root");
+
+// An agent reports through the factory CLI (factory pick, stage-done, verdict…), so it
+// needs \`factory\` on its PATH and to know which factory it works for: its cwd (a ticket
+// folder or a worktree) doesn't name one. \`dir\` is the factory's data folder,
+// <FACTORY_HOME>/<name>; the command is a small script in <FACTORY_HOME>/bin that runs
+// this checkout's CLI with bun.
+export function withFactory(argv: string[], dir: string) {
+  const home = dirname(dir);
+  const bin = join(home, "bin");
+  const script = `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, "cli.ts")}' "$@"\n`;
+  const file = join(bin, "factory");
+  if (!existsSync(file) || readFileSync(file, "utf8") !== script) {
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(file, script);
+    chmodSync(file, 0o755);
+  }
+  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, ...argv];
+}
 
 const appHome = () => process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");
 

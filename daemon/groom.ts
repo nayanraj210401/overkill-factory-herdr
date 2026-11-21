@@ -12,7 +12,7 @@ import { LOCAL_IDS } from "./intake.ts";
 import { capsOf, readTriggers, runningByTrigger, withinCaps } from "./triggers.ts";
 import { argvFor, loadAgent, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
 import { mayStart } from "./away.ts";
-import { openAgent } from "./herdr.ts";
+import { openAgent, withFactory } from "./herdr.ts";
 import { estimateBudget, startHold } from "./budget.ts";
 import { compact } from "../lib/model.js";
 
@@ -65,9 +65,10 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const agent = loadAgent(o.repo, g.agent);
   const argv = argvFor(agent, { harness: "claude", model: "sonnet" },
     triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));
+  const cmd = withFactory(argv, o.dir);
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
   // later), so you can watch the triage agent and answer it. No window: a background terminal.
-  const made = openAgent(o.run, { folder, space: t.space ?? null, name: "groom", argv });
+  const made = openAgent(o.run, { folder, space: t.space ?? null, name: "groom", argv: cmd });
   let terminal: string;
   if (made) {
     terminal = made.terminal;
@@ -75,7 +76,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
     db.query("UPDATE tickets SET space = ? WHERE id = ?").run(made.space, o.id);
   } else {
     const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f${o.id}-groom`, "--cwd", folder,
-      "--label", `factory.ticket=${o.id}`, "--label", "factory.stage=groom", ...argv]);
+      "--label", `factory.ticket=${o.id}`, "--label", "factory.stage=groom", ...cmd]);
     if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
     terminal = (() => { try { return JSON.parse(hc.out).address ?? `f${o.id}-groom`; } catch { return `f${o.id}-groom`; } })();
   }

@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { openPr, prBody, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
-import { closeSpace, openAgent, openTab, worktreePath } from "./herdr.ts";
+import { closeSpace, openAgent, openTab, withFactory, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
 import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
@@ -146,11 +146,12 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
   const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons)), o.dir, o.id, guard);
+  const cmd = withFactory(argv, o.dir); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   // The ticket's first worktree stage: the other repos' shell tabs join its space with it.
   const first = !db.query("SELECT 1 FROM sessions WHERE ticket = ? AND stage != 'groom' AND in_space = 1").get(o.id);
-  const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
+  const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv: cmd });
   let terminal: string;
   if (made) {
     terminal = made.terminal;
@@ -160,7 +161,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
     if (made.space !== t.space || first) for (const r of repos.slice(1)) if (r.worktree) openTab(o.run, { space: made.space, folder: r.worktree, name: r.repo.slice(r.repo.indexOf("/") + 1) });
   } else {
     const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", name, "--cwd", t.worktree,
-      ...labels.flatMap((l) => ["--label", l]), ...argv]);
+      ...labels.flatMap((l) => ["--label", l]), ...cmd]);
     if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
     terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
   }

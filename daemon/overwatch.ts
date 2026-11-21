@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { getMeta, leadRepo, setMeta } from "./db.ts";
 import { argvFor, loadAgent, type Run } from "./runner.ts";
+import { withFactory } from "./herdr.ts";
 
 export function overwatchBrief(o: { name: string; dir: string; repo: string | null }) {
   return [
@@ -27,7 +28,7 @@ export function overwatch(db: Database, o: { name: string; dir: string; run: Run
   const agent = repo ? loadAgent(repo, "overwatch") : null;
   const argv = argvFor(agent, { harness: "claude", model: "sonnet" }, overwatchBrief({ name: o.name, dir: o.dir, repo }));
   const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f-overwatch-${o.name}`.slice(0, 32),
-    "--cwd", o.dir, "--label", "factory.overwatch=1", ...argv]);
+    "--cwd", o.dir, "--label", "factory.overwatch=1", ...withFactory(argv, o.dir)]);
   if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
   let terminal: string;
   try { terminal = JSON.parse(hc.out).address; } catch { throw new Error(`hc run printed no address: ${hc.out.slice(0, 200)}`); }

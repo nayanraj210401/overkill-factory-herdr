@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSy
 import { join } from "node:path";
 import { transcriptDir, parseTranscript, type Use } from "./usage.ts";
 import { flagFile, withHandoffHook } from "./handoff-hook.ts";
-import { openAgent } from "./herdr.ts";
+import { openAgent, withFactory } from "./herdr.ts";
 import { agentSettings, argvFor, brief, loadAgent, readFactory, type Run } from "./runner.ts";
 import { settingOf } from "./learn.ts";
 import { ticketRepos } from "./db.ts";
@@ -169,6 +169,7 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
   const agent = s.agent ? loadAgent(o.repo, s.agent) : null;
   const defaults = { harness: "claude", model: "sonnet" };
   const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket);
+  const cmd = withFactory(argv, o.dir);
   run(["hc", "kill", s.terminal]);
   db.query("UPDATE sessions SET ended_at = ? WHERE id = ?").run(o.now, s.id);
   // The handoff is read; keep it, so the next one's mtime check isn't fooled by it.
@@ -176,14 +177,14 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
   if (existsSync(file)) renameSync(file, join(o.folder, `HANDOFF.session-${n - 1}.md`));
   const name = `f${s.ticket}-${s.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${s.ticket}`, `factory.stage=${s.stage}`];
-  const made = openAgent(run, { folder: s.worktree!, space: s.space, name: s.stage, argv });
+  const made = openAgent(run, { folder: s.worktree!, space: s.space, name: s.stage, argv: cmd });
   let terminal: string;
   if (made) {
     terminal = made.terminal;
     run(["hc", "label", terminal, ...labels]);
     db.query("UPDATE tickets SET space = ? WHERE id = ?").run(made.space, s.ticket);
   } else {
-    const hc = run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", name, "--cwd", s.worktree!, ...labels.flatMap((l) => ["--label", l]), ...argv]);
+    const hc = run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", name, "--cwd", s.worktree!, ...labels.flatMap((l) => ["--label", l]), ...cmd]);
     if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
     terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
   }
