@@ -41,6 +41,8 @@ const MIGRATIONS = [
      agent TEXT, terminal TEXT, argv TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT,
      tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0
    );`,
+  // D4b: retries per stage, for on_fail / max_retries.
+  `ALTER TABLE tickets ADD COLUMN retries INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export function open(path: string): Database {

@@ -44,7 +44,7 @@ export function plannedPath(b: Blueprint, from: string) {
   return path;
 }
 
-const title = (id: string) => id[0].toUpperCase() + id.slice(1);
+const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].toUpperCase() + id.slice(1)); // pr → PR
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
@@ -98,4 +98,96 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now);
   return terminal;
+}
+
+type Factory = { quality_floor?: string[] };
+const readFactory = (repo: string): Factory => {
+  const text = readYaml(repo, "factory.yaml");
+  return text ? (Bun.YAML.parse(text) as Factory) : {};
+};
+
+// A check stage the daemon runs itself. Returns whether it passed, after recording evidence.
+export function runCheck(db: Database, o: { id: number; repo: string; worktree: string; check: string; run: Run; now: string }) {
+  const record = (name: string, ok: boolean, detail: string) =>
+    db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(o.id, name, ok ? "PASS" : "FAIL", detail, o.now);
+  if (o.check === "tests" || o.check === "lint") {
+    const commands = readFactory(o.repo).quality_floor ?? [];
+    if (!commands.length) { record(o.check, false, "factory.yaml has no quality_floor commands"); return false; }
+    let ok = true;
+    for (const c of commands) {
+      const r = o.run(["sh", "-c", c], o.worktree);
+      // Agents see the first failing lines; full logs stay out of the prompt (PRD 6.10).
+      const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
+      record(c, r.code === 0, r.code === 0 ? "passed" : `exit ${r.code}: ${tail}`);
+      ok &&= r.code === 0;
+    }
+    return ok;
+  }
+  if (o.check === "evidence") {
+    // Every check's latest result must be a PASS, and there must be at least one.
+    const latest = db.query(`SELECT check_name, result FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { result: string }[];
+    const ok = latest.length > 0 && latest.every((r) => r.result === "PASS");
+    record("evidence", ok, ok ? `${latest.length} checks pass` : latest.length ? `${latest.filter((r) => r.result !== "PASS").length} failing` : "no checks recorded");
+    return ok;
+  }
+  throw new Error(`unknown check "${o.check}"`);
+}
+
+type BlueprintStage = Stage & { on_fail?: string; max_retries?: number; gate?: string; requires?: string };
+
+// The current stage's work is over (an agent said so, its terminal exited, or a
+// check ran): close its session, then follow the blueprint until something waits.
+export function advance(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string; failed?: string }) {
+  const run = o.run ?? sh;
+  const now = o.now ?? new Date().toISOString();
+  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  if (!t || t.state !== "running") throw new Error(`#${o.id} isn't running`);
+  const b = loadBlueprint(o.repo, t.blueprint);
+  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
+  let at = t.stage as string;
+  let failed = o.failed ?? null;
+  for (let hops = 0; hops < 50; hops++) {
+    const stage = b.stages[at] as BlueprintStage;
+    let to: string | undefined;
+    if (failed) {
+      const retries = (db.query("SELECT retries FROM tickets WHERE id = ?").get(o.id) as any).retries + 1;
+      if (!stage.on_fail || retries > (stage.max_retries ?? 3)) {
+        db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?")
+          .run(`${title(at)} failed ${retries} times: ${failed}`, now, o.id);
+        db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
+        return { parked: true, stage: at };
+      }
+      db.query("UPDATE tickets SET retries = ? WHERE id = ?").run(retries, o.id);
+      to = stage.on_fail;
+    } else {
+      // Retries count failures of one check; only that check passing clears them.
+      if (stage.check) db.query("UPDATE tickets SET retries = 0 WHERE id = ?").run(o.id);
+      to = stage.next?.[0]; // the orchestrator agent picks among `next` later; first is the default
+    }
+    if (!to || to === "end") {
+      db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
+      db.query("UPDATE tickets SET state = 'ready', updated_at = ? WHERE id = ?").run(now, o.id);
+      return { ready: true, stage: at };
+    }
+    const next = b.stages[to] as BlueprintStage;
+    if (next.check) {
+      enterStage(db, o.id, title(to), `check: ${next.check}`, plannedPath(b, to).map(title), now);
+      at = to;
+      failed = runCheck(db, { id: o.id, repo: o.repo, worktree: t.worktree, check: next.check, run, now }) ? null : `${next.check} check failed`;
+      continue;
+    }
+    if (next.gate === "human") {
+      enterStage(db, o.id, title(to), "waiting on you", plannedPath(b, to).map(title), now);
+      db.query("UPDATE tickets SET state = 'ready', updated_at = ? WHERE id = ?").run(now, o.id);
+      return { ready: true, stage: to };
+    }
+    if (!next.agent) {
+      // The pr stage opens the PR once the ready rules pass (D5); until then it waits here.
+      enterStage(db, o.id, title(to), next.requires ? `waits for ${next.requires} rules (D5)` : null, plannedPath(b, to).map(title), now);
+      return { waiting: true, stage: to };
+    }
+    const terminal = startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, blueprint: b, stage: to });
+    return { terminal, stage: to };
+  }
+  throw new Error("blueprint loops without an agent or a gate");
 }
