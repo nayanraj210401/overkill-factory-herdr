@@ -17,7 +17,9 @@ import { validateDir } from "./validate.ts";
 import { newTicket, pollQueue } from "./intake.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
-import { findReverts, setPlan } from "./metrics.ts";
+import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
+import { validateMetrics } from "../lib/metrics.js";
+import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { ask, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
@@ -72,7 +74,7 @@ const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory"
 
 export function paths(name: string, home = factoryHome()) {
   const dir = join(home, name);
-  return { dir, db: join(dir, "factory.db"), status: join(dir, "status.json"), blueprints: join(dir, "blueprints.json") };
+  return { dir, db: join(dir, "factory.db"), status: join(dir, "status.json"), blueprints: join(dir, "blueprints.json"), metrics: join(dir, "metrics.json") };
 }
 
 // Runs a change, then refuses it (rolling back) if status.json would break the contract.
@@ -385,7 +387,18 @@ function writeAll(db: Database, p: ReturnType<typeof paths>) {
   const s = writeStatus(db, p.status);
   const repoDir = getMeta(db, "repo_path");
   if (repoDir) writeBlueprints(db, repoDir, p.blueprints);
+  writeMetrics(db, p.metrics);
   for (const t of s.tickets) writeTicketFiles(db, p.dir, t.id);
+}
+
+// metrics.json for the Metrics page, checked against lib/metrics.js and written atomically.
+export function writeMetrics(db: Database, path: string, now = new Date()) {
+  const doc = buildMetrics(db, now);
+  const errors = validateMetrics(doc);
+  if (errors.length) throw new Error(`metrics.json would break the contract:\n${errors.join("\n")}`);
+  writeFileSync(`${path}.tmp`, JSON.stringify(doc) + "\n");
+  renameSync(`${path}.tmp`, path);
+  return doc;
 }
 
 // One daemon for every factory under FACTORY_HOME; new ones are picked up on the next tick.

@@ -142,10 +142,7 @@
               "id": "metrics",
               "type": "block",
               "content": {
-                "mod": "factory-soon",
-                "props": {
-                  "page": "metrics"
-                }
+                "mod": "factory-metrics"
               }
             },
             {
