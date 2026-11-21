@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
-import { openPr, readyRules, rulesPass } from "./ready.ts";
+import { openPr, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
 import { closeSpace, openAgent, worktreePath } from "./herdr.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
@@ -51,12 +51,15 @@ const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].toUpper
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string) {
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string) {
+  const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return [
     `Ticket #${t.id}: ${t.title}. You run its ${stage} stage.`,
     prompt ?? "",
+    verdict === "holdout" ? `Write hidden checks the builder never sees: keep them in ${folder}/holdout/, never in the worktree. Run them against the worktree, then record the result: factory verdict ${t.id} holdout pass, or factory verdict ${t.id} holdout fail <what fails, without the check's code>.` : "",
+    verdict === "review" ? `Record your verdict before you finish: factory verdict ${t.id} review pass, or factory verdict ${t.id} review fail <each blocker>. Only a blocker fails; put suggestions in a pass's detail.` : "",
     `Read ${folder}/STATUS.md and any INTENT.md, SLICES.md and HANDOFF.md there before you start.`,
-    `If REVIEW.md or GATES.md is there, act on every note in it from a person: they sent this ticket back or answered why it stopped.`,
+    `If REVIEW.md or GATES.md is there, act on every note in it: a person or a reviewer sent this ticket back, or a person answered why it stopped.`,
     `When the stage's work is done, run: factory stage-done ${t.id}`,
   ].filter(Boolean).join("\n\n");
 }
@@ -99,7 +102,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   if (!s.agent) return null; // check and gate stages are the daemon's own (D4b)
   const agent = loadAgent(o.repo, s.agent);
   const defaults = { harness: "claude", model: "sonnet" };
-  const argv = argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id))));
+  const argv = argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id)), agent?.role));
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
@@ -125,6 +128,23 @@ const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
   return text ? (Bun.YAML.parse(text) as Factory) : {};
 };
+
+// The verdict an agent stage owes: its agent's role decides (verify → holdout, review → review).
+const verdictOf = (repo: string, s: Stage | undefined): VerdictKind | undefined => {
+  const role = s?.agent ? loadAgent(repo, s.agent)?.role : undefined;
+  return role ? VERDICT_OF_ROLE[role] : undefined;
+};
+
+// The ready rules as the pr stage sees them: factory.yaml's list, and the verdicts
+// the ticket's blueprint has stages for.
+export function checkReady(db: Database, o: { dir: string; repo: string; id: number; run: Run }) {
+  const t = db.query("SELECT worktree, blueprint FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null; blueprint: string } | null;
+  if (!t) throw new Error(`no ticket ${o.id}`);
+  if (!t.worktree) throw new Error(`#${o.id} has no worktree yet; factory start ${o.id}`);
+  const b = loadBlueprint(o.repo, t.blueprint);
+  const expects = Object.values(b.stages).map((s) => verdictOf(o.repo, s)).filter((k): k is VerdictKind => !!k);
+  return readyRules(db, { id: o.id, dir: o.dir, worktree: t.worktree, rules: readFactory(o.repo).ready ?? DEFAULT_READY, run: o.run, expects });
+}
 
 // A check stage the daemon runs itself. Returns whether it passed, after recording evidence.
 export function runCheck(db: Database, o: { id: number; repo: string; worktree: string; check: string; run: Run; now: string }) {
@@ -165,12 +185,15 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   const b = loadBlueprint(o.repo, t.blueprint);
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   let at = t.stage as string;
-  let failed = o.failed ?? null;
+  let failed = o.failed ?? stageVerdict(db, { dir: o.dir, repo: o.repo, id: o.id, stage: at, s: b.stages[at], now });
   for (let hops = 0; hops < 50; hops++) {
     const stage = b.stages[at] as BlueprintStage;
     let to: string | undefined;
     if (failed) {
-      const retries = (db.query("SELECT retries FROM tickets WHERE id = ?").get(o.id) as any).retries + 1;
+      // A verdict stage counts its own failed sessions since a person last restarted the
+      // ticket: the verify check between review and implement resets the shared counter.
+      const retries = verdictOf(o.repo, stage) ? verdictFailures(db, o.id, at)
+        : (db.query("SELECT retries FROM tickets WHERE id = ?").get(o.id) as any).retries + 1;
       if (!stage.on_fail || retries > (stage.max_retries ?? 3)) {
         db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?")
           .run(`${title(at)} failed ${retries} times: ${failed}`, now, o.id);
@@ -212,13 +235,36 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   throw new Error("blueprint loops without an agent or a gate");
 }
 
+// A checker or reviewer stage is over: its session must have given a verdict. A
+// FAIL (or none) fails the stage, so on_fail reruns the stage that fixes it, and
+// the blockers go into REVIEW.md, which that stage's brief says to act on.
+function stageVerdict(db: Database, o: { dir: string; repo: string; id: number; stage: string; s: Stage | undefined; now: string }) {
+  const kind = verdictOf(o.repo, o.s);
+  if (!kind) return null;
+  const rows = db.query(`SELECT result, detail FROM verdicts WHERE kind = ? AND session = (SELECT MAX(id) FROM sessions WHERE ticket = ? AND stage = ?)`)
+    .all(kind, o.id, o.stage) as { result: string; detail: string | null }[];
+  if (!rows.length) return `the ${o.s!.agent} agent ended without a verdict (factory verdict ${o.id} ${kind} pass|fail)`;
+  const fails = rows.filter((r) => r.result !== "PASS");
+  if (!fails.length) return null;
+  const heading = kind === "holdout" ? "Hidden checks failed" : "Blocked in review";
+  note(o.dir, o.id, "REVIEW.md", `${heading} · ${o.now.slice(0, 16).replace("T", " ")} · ${o.s!.agent} agent`, fails.map((f) => `- ${f.detail ?? "no detail given"}`).join("\n"));
+  return `${kind}: ${fails.map((f) => f.detail ?? "failed").join("; ")}`;
+}
+
+function verdictFailures(db: Database, id: number, stage: string) {
+  return (db.query(`SELECT COUNT(*) AS n FROM sessions s WHERE ticket = ? AND stage = ?
+      AND started_at >= COALESCE((SELECT MAX(at) FROM decisions WHERE ticket = s.ticket AND who = 'you'), '')
+      AND (NOT EXISTS (SELECT 1 FROM verdicts v WHERE v.session = s.id) OR EXISTS (SELECT 1 FROM verdicts v WHERE v.session = s.id AND v.result = 'FAIL'))`)
+    .get(id, stage) as { n: number }).n;
+}
+
 // The pr stage: check the ready rules; when they all pass, open the PR and move on
 // to the next stage (merge, a human gate by default). Called on entry and every tick.
 export function tryPr(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
-  const rules = readyRules(db, { id: o.id, dir: o.dir, worktree: t.worktree, rules: readFactory(o.repo).ready ?? DEFAULT_READY, run });
+  const rules = checkReady(db, { dir: o.dir, repo: o.repo, id: o.id, run });
   if (!rulesPass(rules)) {
     const failing = rules.filter((r) => r.result === "fail");
     const detail = `${rules.length - failing.length} of ${rules.length} ready rules · ${failing[0].rule}: ${failing[0].detail}`;

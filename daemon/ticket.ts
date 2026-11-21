@@ -38,16 +38,29 @@ export function statusMd(t: ReturnType<typeof ticketOf>, stages: Stage[], planne
   ].join("\n");
 }
 
-export function evidenceMd(checks: Check[]) {
-  if (!checks.length) return "# Evidence\n\nNo checks have run yet.\n";
+type Verdict = { kind: string; voter: string; result: string; detail: string | null; at: string };
+
+export function evidenceMd(checks: Check[], verdicts: Verdict[] = []) {
   const cell = (s: string) => s.replace(/\|/g, "\\|");
+  const result = (r: string) => (r === "PASS" ? "✓ PASS" : "✗ FAIL");
+  const when = (at: string) => at.slice(0, 16).replace("T", " ");
   return [
     "# Evidence",
     "",
-    "| Check | Result | Detail | When |",
-    "| --- | --- | --- | --- |",
-    ...checks.map((c) => `| \`${cell(c.check_name)}\` | ${c.result === "PASS" ? "✓ PASS" : "✗ FAIL"} | ${cell(c.detail ?? "")} | ${c.at.slice(0, 16).replace("T", " ")} |`),
+    ...(checks.length ? [
+      "| Check | Result | Detail | When |",
+      "| --- | --- | --- | --- |",
+      ...checks.map((c) => `| \`${cell(c.check_name)}\` | ${result(c.result)} | ${cell(c.detail ?? "")} | ${when(c.at)} |`),
+    ] : ["No checks have run yet."]),
     "",
+    ...(verdicts.length ? [
+      "## Verdicts",
+      "",
+      "| Kind | From | Result | Detail | When |",
+      "| --- | --- | --- | --- | --- |",
+      ...verdicts.map((v) => `| ${v.kind} | ${cell(v.voter)} | ${result(v.result)} | ${cell(v.detail ?? "")} | ${when(v.at)} |`),
+      "",
+    ] : []),
   ].join("\n");
 }
 
@@ -65,7 +78,8 @@ export function writeTicketFiles(db: Database, dir: string, id: number, now = ne
   const folder = join(dir, "tickets", String(id));
   mkdirSync(folder, { recursive: true });
   write(join(folder, "STATUS.md"), statusMd(ticketOf(row), stages, planned, now));
-  write(join(folder, "EVIDENCE.md"), evidenceMd(checks));
+  const verdicts = db.query("SELECT kind, voter, result, detail, at FROM verdicts WHERE ticket = ? ORDER BY id").all(id) as Verdict[];
+  write(join(folder, "EVIDENCE.md"), evidenceMd(checks, verdicts));
 }
 
 // Moves a ticket into a stage: the stage it was in ends now, the new one starts.

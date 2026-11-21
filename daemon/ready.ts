@@ -18,7 +18,45 @@ export function templateProblems(md: string | null) {
   return problems;
 }
 
-export function readyRules(db: Database, o: { id: number; dir: string; worktree: string; rules: string[]; run: Run }): Rule[] {
+export type VerdictKind = "holdout" | "review";
+// The agent roles whose stage must end with a verdict, and the verdict they give.
+export const VERDICT_OF_ROLE: Record<string, VerdictKind> = { verify: "holdout", review: "review" };
+
+// `factory verdict`: a checker or reviewer agent reports. The vote is the open
+// session's agent's unless --by names another voter.
+export function recordVerdict(db: Database, o: { id: number; kind: VerdictKind; result: "PASS" | "FAIL"; detail: string | null; by?: string | null; now: string }) {
+  if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(o.id)) throw new Error(`no ticket ${o.id}`);
+  const s = db.query("SELECT id, agent FROM sessions WHERE ticket = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1").get(o.id) as { id: number; agent: string | null } | null;
+  const voter = o.by ?? s?.agent ?? "you";
+  db.query("INSERT INTO verdicts (ticket, session, kind, voter, result, detail, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(o.id, s?.id ?? null, o.kind, voter, o.result, o.detail, o.now);
+  return voter;
+}
+
+// Each voter's latest verdict, counted only if it is newer than the last commit.
+// Holdout: every hidden check run passes. Review: a majority reports no blockers.
+// With no fresh verdict, the rule fails when the blueprint has a stage that should
+// have given one, and is skipped when it has none.
+function verdictRule(db: Database, id: number, kind: VerdictKind, lastCommit: string, expected: boolean): Rule {
+  const rows = db.query(`SELECT voter, result, detail, at FROM verdicts v WHERE ticket = ? AND kind = ? AND id = (SELECT MAX(id) FROM verdicts WHERE ticket = v.ticket AND kind = v.kind AND voter = v.voter)`)
+    .all(id, kind) as { voter: string; result: string; detail: string | null; at: string }[];
+  const fresh = rows.filter((r) => !lastCommit || Date.parse(r.at) >= Date.parse(lastCommit));
+  const who = kind === "holdout" ? "checker" : "reviewer";
+  if (!fresh.length) {
+    if (!expected) return { rule: kind, result: "skipped", detail: `the blueprint has no ${who} stage` };
+    return { rule: kind, result: "fail", detail: rows.length ? `the ${who}'s verdict is older than the last commit` : `no ${who} verdict recorded` };
+  }
+  const fails = fresh.filter((r) => r.result !== "PASS");
+  const why = fails[0]?.detail ? `: ${fails[0].detail}` : "";
+  if (kind === "holdout")
+    return fails.length ? { rule: kind, result: "fail", detail: `hidden checks fail${why}` } : { rule: kind, result: "pass", detail: "hidden checks pass" };
+  const passes = fresh.length - fails.length;
+  return passes * 2 > fresh.length
+    ? { rule: kind, result: "pass", detail: `${passes} of ${fresh.length} reviewers report no blockers` }
+    : { rule: kind, result: "fail", detail: `${fails.length} of ${fresh.length} reviewers block${why}` };
+}
+
+export function readyRules(db: Database, o: { id: number; dir: string; worktree: string; rules: string[]; run: Run; expects?: VerdictKind[] }): Rule[] {
   const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
   const latest = db.query(`SELECT check_name, result, at FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { check_name: string; result: string; at: string }[];
   const lastCommit = o.run(["git", "-C", o.worktree, "log", "-1", "--format=%cI"]).out.trim();
@@ -41,8 +79,10 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktree:
       const file = join(o.dir, "tickets", String(o.id), "PR.md");
       const problems = templateProblems(existsSync(file) ? readFileSync(file, "utf8") : null);
       out.push(problems.length ? { rule, result: "fail", detail: problems.join("; ") } : { rule, result: "pass", detail: "PR.md follows the template" });
+    } else if (rule === "holdout" || rule === "review") {
+      out.push(verdictRule(db, o.id, rule, lastCommit, o.expects?.includes(rule) ?? false));
     } else {
-      out.push({ rule, result: "skipped", detail: "not built yet" }); // holdout (checker agent), review (reviewer vote)
+      out.push({ rule, result: "skipped", detail: "not a rule the factory knows" });
     }
   }
   return out;

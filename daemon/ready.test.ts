@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta } from "./db.ts";
 import { advance, answer, fixStage, loadBlueprint, mergeTicket, pause, restartStage, ticketDiff, resume, sendBack, sh, startTicket, tryPr, type Run } from "./runner.ts";
-import { readyRules, templateProblems } from "./ready.ts";
+import { readyRules, recordVerdict, templateProblems } from "./ready.ts";
 
 const GOOD_PR = "Rate-limits login per user; nothing else changes.\n\n**What changed:** middleware.\n**Why:** brute force.\n**How it was verified:** 14 tests.\n**Risk:** low.\n";
 
@@ -55,7 +55,7 @@ test("the pr stage waits while a rule fails, then pushes the branch and opens a 
   const body = readFileSync(gh[0][gh[0].indexOf("--body-file") + 1], "utf8");
   expect(body).toStartWith("Rate-limits login per user");
   expect(body).toContain("- ✓ evidence: 1 checks pass after the last commit");
-  expect(body).toContain("- – holdout: not built yet");
+  expect(body).toContain("- – holdout: the blueprint has no checker stage");
   expect((db.query("SELECT what FROM decisions").get() as any).what).toBe("opened PR #42");
 });
 
@@ -66,6 +66,35 @@ test("evidence older than the last commit doesn't count, and an overrun budget b
   expect(rules()[0]).toMatchObject({ result: "fail", detail: "older than the last commit: C1" });
   db.query("UPDATE tickets SET tokens_in = 9000000 WHERE id = 7").run();
   expect(rules()[1]).toMatchObject({ rule: "budget", result: "fail" });
+});
+
+test("holdout and review count each voter's latest verdict after the last commit", () => {
+  const { db, dir, run, ticket } = setup();
+  const now = new Date(Date.now() + 1000).toISOString(); // after the worktree's commit
+  const rules = (expects: ("holdout" | "review")[] = ["holdout", "review"]) =>
+    readyRules(db, { id: 7, dir, worktree: ticket().worktree, rules: ["holdout", "review"], run, expects });
+  expect(rules([])).toMatchObject([{ result: "skipped", detail: "the blueprint has no checker stage" }, { result: "skipped", detail: "the blueprint has no reviewer stage" }]);
+  expect(rules()).toMatchObject([{ result: "fail", detail: "no checker verdict recorded" }, { result: "fail", detail: "no reviewer verdict recorded" }]);
+  const vote = (kind: "holdout" | "review", result: "PASS" | "FAIL", by: string, at = now, detail: string | null = null) =>
+    recordVerdict(db, { id: 7, kind, result, detail, by, now: at });
+  vote("holdout", "PASS", "checker", "2000-01-01T00:00:00Z");
+  expect(rules()[0]).toMatchObject({ result: "fail", detail: "the checker's verdict is older than the last commit" });
+  vote("holdout", "FAIL", "checker", now, "a 6th try in a minute isn't refused");
+  expect(rules()[0]).toMatchObject({ result: "fail", detail: "hidden checks fail: a 6th try in a minute isn't refused" });
+  vote("holdout", "PASS", "checker");
+  expect(rules()[0]).toMatchObject({ result: "pass" });
+  vote("review", "PASS", "reviewer");
+  vote("review", "FAIL", "security", now, "the limit key is the raw email");
+  expect(rules()[1]).toMatchObject({ result: "fail", detail: "1 of 2 reviewers block: the limit key is the raw email" }); // a tie blocks
+  vote("review", "PASS", "style");
+  expect(rules()[1]).toMatchObject({ result: "pass", detail: "2 of 3 reviewers report no blockers" });
+});
+
+test("a verdict is the open session's agent's unless --by names the voter", () => {
+  const { db } = setup();
+  expect(recordVerdict(db, { id: 7, kind: "review", result: "PASS", detail: null, now: "2026-11-21T10:00:00Z" })).toBe("builder");
+  expect(recordVerdict(db, { id: 7, kind: "review", result: "PASS", detail: null, by: "security", now: "2026-11-21T10:00:00Z" })).toBe("security");
+  expect(() => recordVerdict(db, { id: 9, kind: "review", result: "PASS", detail: null, now: "2026-11-21T10:00:00Z" })).toThrow("no ticket 9");
 });
 
 test("m merges only a ready ticket's PR: marks the draft ready, squash-merges, ends the gate", () => {

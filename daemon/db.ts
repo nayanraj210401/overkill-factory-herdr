@@ -57,6 +57,13 @@ const MIGRATIONS = [
    );
    CREATE INDEX usage_ticket ON usage(ticket);
    CREATE INDEX usage_at ON usage(at);`,
+  // Holdout and review ready rules: what the checker and reviewer agents decided.
+  // `voter` is the agent (or --by name); its latest verdict is its vote.
+  `CREATE TABLE verdicts (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id), session INTEGER REFERENCES sessions(id),
+     kind TEXT NOT NULL CHECK (kind IN ('holdout', 'review')), voter TEXT NOT NULL,
+     result TEXT NOT NULL CHECK (result IN ('PASS', 'FAIL')), detail TEXT, at TEXT NOT NULL
+   );`,
 ];
 
 export function open(path: string): Database {

@@ -29,7 +29,7 @@ function setup() {
 
 test("the planned path follows each stage's first next", () => {
   const b = loadBlueprint(join(import.meta.dir, "../fixtures/acme-api"), "feature");
-  expect(plannedPath(b, "spec")).toEqual(["plan", "implement", "verify", "review", "pr", "merge"]);
+  expect(plannedPath(b, "spec")).toEqual(["plan", "implement", "verify", "holdout", "review", "pr", "merge"]);
 });
 
 test("start: own worktree and branch, first stage, its agent in a herdr-core terminal", () => {
