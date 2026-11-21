@@ -10,11 +10,14 @@ import { open, setMeta } from "./db.ts";
 import { buildStatus, writeStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
 import { service } from "./service.ts";
+import { enterStage, writeTicketFiles } from "./ticket.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name]           create the factory's database
   ticket add <id> <title…> [--blueprint b]
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
+  stage <id> <Name> [detail…] [--next A,B]  enter a stage (the current one ends)
+  evidence <id> <check> pass|fail [detail…] record a check result
   decide <ticket> <who> <what> [why] log a decision
   status                             write status.json and print a summary
   run [--interval seconds] [--all]   the daemon: keep status.json fresh (--all: every factory)
@@ -63,6 +66,7 @@ export function main(argv: string[], log = console.log) {
   const repo = flag(args, "repo") ?? "unknown";
   const blueprint = flag(args, "blueprint") ?? "feature";
   const interval = Number(flag(args, "interval") ?? 5);
+  const next = flag(args, "next");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -93,6 +97,21 @@ export function main(argv: string[], log = console.log) {
           .run(...sets.map(([, v]) => v as any), now(), Number(id));
         if (r.changes === 0) throw new Error(`no ticket ${id}`);
       });
+    } else if (cmd === "stage") {
+      const [name, ...detail] = rest;
+      if (!Number.isInteger(Number(sub)) || !name) throw new Error("usage: factory stage <id> <Name> [detail…] [--next A,B]");
+      change(db, () => {
+        if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(Number(sub))) throw new Error(`no ticket ${sub}`);
+        enterStage(db, Number(sub), name, detail.join(" ") || null, next ? next.split(",").filter(Boolean) : null, now());
+      });
+    } else if (cmd === "evidence") {
+      const [check, result, ...detail] = rest;
+      const r = result?.toUpperCase();
+      if (!Number.isInteger(Number(sub)) || !check || (r !== "PASS" && r !== "FAIL")) throw new Error("usage: factory evidence <id> <check> pass|fail [detail…]");
+      change(db, () => {
+        if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(Number(sub))) throw new Error(`no ticket ${sub}`);
+        db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now());
+      });
     } else if (cmd === "decide") {
       const [who, what, why] = rest;
       if (!sub || !who || !what) throw new Error("usage: factory decide <ticket> <who> <what> [why]");
@@ -102,16 +121,24 @@ export function main(argv: string[], log = console.log) {
       log(`${s.factory.name}: ${s.tickets.length} tickets, daemon ${s.factory.daemon ? "on" : "off"} → ${p.status}`);
       return;
     } else if (cmd === "run") {
-      const tick = () => { setMeta(db, "heartbeat", now()); writeStatus(db, p.status); };
+      const tick = () => { setMeta(db, "heartbeat", now()); writeAll(db, p); };
       tick();
       log(`factory ${name}: writing ${p.status} every ${interval}s`);
       setInterval(tick, interval * 1000);
       return;
     } else throw new Error(`unknown command "${[cmd, sub].filter(Boolean).join(" ")}"\n${USAGE}`);
     writeStatus(db, p.status);
+    const id = cmd === "ticket" ? Number(rest[0]) : Number(sub);
+    if (Number.isInteger(id)) writeTicketFiles(db, p.dir, id);
   } finally {
     if (cmd !== "run") db.close();
   }
+}
+
+// status.json plus every ticket's files, so "12m so far" keeps counting.
+function writeAll(db: Database, p: ReturnType<typeof paths>) {
+  const s = writeStatus(db, p.status);
+  for (const t of s.tickets) writeTicketFiles(db, p.dir, t.id);
 }
 
 // One daemon for every factory under FACTORY_HOME; new ones are picked up on the next tick.
@@ -128,7 +155,7 @@ function runAll(interval: number, log: (s: string) => void) {
       const db = (open_[name] ??= open(p.db));
       try {
         setMeta(db, "heartbeat", new Date().toISOString());
-        writeStatus(db, p.status);
+        writeAll(db, p);
       } catch (e) {
         log(`factory ${name}: ${(e as Error).message}`);
       }
