@@ -46,7 +46,7 @@ It draws the page title, "Coming in M6", one line on what the page will do, and 
 | Tickets (list + filters) | real; Runs view (`r`) soon | M1 / Runs M2 |
 | Config | real (read-only Editor on `.factory/*.yaml`); schema check soon | M1 / check M2 |
 | Blueprint | built: `factory-blueprint` draws `blueprints.json` (stages in path order, 7-day run counts, gates, failure routes), which the daemon writes beside status.json | M2 |
-| Overwatch | coming soon (it needs the overwatch agent) | M2 |
+| Overwatch | built: `factory-overwatch` starts (or reopens) the overwatch agent with `factory overwatch` and peeks its terminal | M2 |
 | Metrics: Throughput, Cost, Quality | built: `factory-metrics` draws `metrics.json`, which the daemon writes beside status.json (7 or 30 days against the period before) | M2 |
 | Metrics: Learning, Benchmarks | coming soon | M4 |
 | Reviews | coming soon | M6 |
