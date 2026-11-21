@@ -15,6 +15,7 @@ import { budgetCap, forbiddenTouched } from "./away.ts";
 import { STOPS, guardSettings, hardStopLog, takeHardStop } from "./guard.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
 import { budgetUse, startHold } from "./budget.ts";
+import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -58,7 +59,7 @@ export const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = []) {
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = []) {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return [
     `Ticket #${t.id}: ${t.title}. You run its ${stage} stage.`,
@@ -66,10 +67,18 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
     prompt ?? "",
     verdict === "holdout" ? `Write hidden checks the builder never sees: keep them in ${folder}/holdout/, never in the worktree. Run them against the worktree, then record the result: factory verdict ${t.id} holdout pass, or factory verdict ${t.id} holdout fail <what fails, without the check's code>.` : "",
     verdict === "review" ? `Record your verdict before you finish: factory verdict ${t.id} review pass, or factory verdict ${t.id} review fail <each blocker>. Only a blocker fails; put suggestions in a pass's detail.` : "",
+    lessons.length ? `Lessons for the code this ticket touches (from earlier tickets and reviews):\n${lessons.map((l) => `- ${l}`).join("\n")}` : "",
     `Read ${folder}/STATUS.md and any INTENT.md, SLICES.md and HANDOFF.md there before you start.`,
     `If REVIEW.md or GATES.md is there, act on every note in it: a person or a reviewer sent this ticket back, or a person answered why it stopped.`,
     `When the stage's work is done, run: factory stage-done ${t.id}`,
   ].filter(Boolean).join("\n\n");
+}
+
+// The agent's harness, model and effort for one ticket: its snapshot's override
+// (learn.ts), else the agent file's value, else the defaults.
+export function agentSettings(t: { settings?: string | null }, name: string, agent: Record<string, any> | null, defaults: Record<string, any>) {
+  const pick = (f: string) => settingOf(t, `agents.${name}.${f}`, agent?.[f] ?? defaults[f]);
+  return { harness: pick("harness") as string, model: pick("model") as string | undefined, effort: pick("effort") as string | undefined };
 }
 
 // `settings` is the hard-stop guard's JSON; only Claude sessions take it (Codex has no hooks).
@@ -108,6 +117,8 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
     }
     setWork(db, o.id, { worktree, branch }, r.slug);
   }
+  // The ticket runs on the settings in force now, whatever is tuned while it runs.
+  snapshotSettings(db, o.id, readFactory(o.repo).learn?.tunable);
   db.query("UPDATE tickets SET state = 'running' WHERE id = ?").run(o.id);
   return startStage(db, { ...o, run, now, blueprint: b, stage: b.start });
 }
@@ -124,7 +135,11 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   // Hard stops factory.yaml lists (all four when it lists none) are enforced by a hook on the worker's tool calls;
   // the handoff hook joins it in the same settings file (Claude Code takes one --settings).
   const guard = guardSettings({ stops: readFactory(o.repo).hard_stops ?? [...STOPS], roots: [...repos.flatMap((r) => r.worktree ?? []), join(o.dir, "tickets", String(o.id))], log: hardStopLog(o.dir, o.id) });
-  const argv = withHandoffHook(argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id)), agent?.role, repos)), o.dir, o.id, guard);
+  const folder = join(o.dir, "tickets", String(o.id));
+  const intent = existsSync(join(folder, "INTENT.md")) ? readFileSync(join(folder, "INTENT.md"), "utf8") : "";
+  const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
+  const use = agentSettings(t, s.agent, agent, defaults);
+  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons)), o.dir, o.id, guard);
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
@@ -146,7 +161,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");

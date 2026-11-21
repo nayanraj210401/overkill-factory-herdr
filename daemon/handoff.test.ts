@@ -207,3 +207,11 @@ test("at the 80% ceiling the session is stopped without a handoff and the brief 
   expect(sh(["git", "-C", wt, "log", "-1", "--format=%s"]).out).toBe("init"); // nothing committed for it
   expect(existsSync(folder)).toBe(true);
 });
+
+test("the handoff threshold is the one the ticket started with: 80% in its snapshot means 62% doesn't flag it", () => {
+  const { dir, db, fill, tick } = setup();
+  db.query("UPDATE tickets SET settings = ? WHERE id = 412").run('{"budget.handoff_at_context":"80%"}');
+  fill(125_000); // 62.5%: over the file's 60%, under the ticket's 80%
+  tick("2026-11-21T10:32:00Z");
+  expect(existsSync(flagFile(dir, 412))).toBe(false);
+});

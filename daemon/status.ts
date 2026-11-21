@@ -8,6 +8,8 @@ import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
 import { budgetCap, digest } from "./away.ts";
 import { budgetUse, dayCap, startHold } from "./budget.ts";
 import { setupField } from "./setup.ts";
+import { activeOverrides, fileValue } from "./learn.ts";
+import { loadAgent, readFactory } from "./runner.ts";
 
 type Row = Record<string, any>;
 
@@ -31,6 +33,15 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
     terminal: r.terminal ?? null,
     session: r.sessions || null, // "session 3 of #412": the sessions started for it so far
   };
+}
+
+// Tuned settings, each beside the value the files give (null when it can't be read).
+function overridesOf(db: Database, repo: string | undefined) {
+  return activeOverrides(db).map((o) => {
+    let file: unknown = null;
+    try { file = repo ? fileValue(o.key, readFactory(repo), (n) => loadAgent(repo, n)) : null; } catch { /* a bad file shows no value */ }
+    return { key: o.key, value: o.value, file, reason: o.reason, at: o.at };
+  });
 }
 
 export function buildStatus(db: Database, now = new Date()) {
@@ -71,6 +82,7 @@ export function buildStatus(db: Database, now = new Date()) {
     away: digest(db, now.toISOString()),
     // No .factory/ yet: Home shows the setup checklist instead.
     ...(setup ? { setup } : {}),
+    overrides: overridesOf(db, lead?.path),
     to_review: 0,
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,

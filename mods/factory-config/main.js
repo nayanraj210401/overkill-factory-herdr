@@ -3,7 +3,8 @@ import { h_flex, v_flex, EditorState, Editor } from "gpui-base";
 import { theme, exec, readTextFile, watchFolder, nextCommand, checking, notify } from "herdr";
 import { configFiles, daemonView } from "./lib/model.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
-import { root } from "./lib/store.js";
+import { root, status, act } from "./lib/store.js";
+import { keyAction, clamp } from "./lib/keys.js";
 
 // The Config page: the daemon's service controls, the .factory/ files, the selected
 // one read-only, ⌘O to edit it in your own editor (docs/layouts/07-config.png).
@@ -17,6 +18,8 @@ export default class FactoryConfig extends View {
     this.checks = {};
     this.daemon = undefined; // undefined: not asked yet; null: the CLI didn't answer
     this.busy = null;
+    this.at = 0; // the selected override
+    this.handle = cx.focus_handle();
     if (!checking()) {
       this.refreshDaemon(cx);
       cx.timer.every(10000, (cx) => this.refreshDaemon(cx));
@@ -83,6 +86,36 @@ export default class FactoryConfig extends View {
         .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.busy || this.act(a, cx)).child(LABEL[a])));
   }
 
+  // Tuned settings (learn overrides): each next to the file's value; z undoes the selected one.
+  overrides() {
+    return status()?.overrides ?? [];
+  }
+
+  overridesCard(t, rows) {
+    const focused = this.handle.is_focused();
+    const show = (v) => (v == null ? "not set" : String(v));
+    return v_flex().id("overrides").flex_none().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus())
+      .on_key_down((e, cx) => {
+        const a = keyAction(e);
+        if (a?.kind === "move") this.at = clamp(this.at + a.delta, rows.length);
+        else if (a?.kind === "undo-override") act(a, rows[this.at]);
+        else return;
+        cx.stop_propagation();
+        cx.notify();
+      })
+      .child(h_flex().px(8).pb(4).gap(10).text_size(11).text_color(t.dim)
+        .child(div().flex_1().child("TUNED SETTINGS"))
+        .child(div().child(focused ? "j/k select · z undo" : "click, then z to undo")))
+      .children(rows.map((o, i) => h_flex().id(`o-${o.key}`).h(28).px(8).gap(12).items_center().rounded(6).cursor_pointer()
+        .bg(focused && i === this.at ? t.selected : t.surface).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => { this.at = i; this.handle.focus(); cx.notify(); })
+        .child(div().w(250).flex_none().truncate().font_semibold().text_color(t.foreground).child(o.key))
+        .child(div().w(150).flex_none().truncate().text_color(t.muted).child(`file: ${show(o.file)}`))
+        .child(div().w(150).flex_none().truncate().text_color(t.accent).child(`override: ${show(o.value)}`))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(o.reason ?? ""))));
+  }
+
   schemaLabel(t) {
     const errors = this.checks[this.selected?.path];
     if (!errors) return div().text_size(12).text_color(t.dim).child("Schema check: not run");
@@ -129,7 +162,10 @@ export default class FactoryConfig extends View {
         .when(Boolean(this.checks[f.path]), (el) => el.child(div().text_size(11)
           .text_color(this.checks[f.path].length ? t.blocked : t.done).child(this.checks[f.path].length ? `✗ ${this.checks[f.path].length}` : "✓")));
     };
-    return v_flex().size_full().gap(8).text_size(13).child(this.daemonBar(t)).child(h_flex().flex_1().w_full().gap(8)
+    const overrides = this.overrides();
+    this.at = clamp(this.at, overrides.length);
+    return v_flex().size_full().gap(8).text_size(13).child(this.daemonBar(t))
+      .when(overrides.length > 0, (el) => el.child(this.overridesCard(t, overrides))).child(h_flex().flex_1().w_full().gap(8)
       .child(v_flex().id("files").w(240).flex_none().h_full().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()
         .child(div().px(8).pb(6).text_size(11).text_color(t.dim).child(".FACTORY"))
         .children(this.files.map(row))

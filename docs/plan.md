@@ -347,7 +347,7 @@ When teammates run the factory too, the shared evidence format means more of the
 
 PRD 6.4 and 6.11. The factory tunes itself, but only inside limits you set.
 
-- **You pick the target.** `learn.target` in `factory.yaml`: cost per PR, time to PR, human interactions per PR, or review rounds per PR.
+- **You pick the target.** `learn.target` in `factory.yaml`: cost per PR, time to PR, human interactions per PR, or review rounds per PR (written `cost_per_pr`, `time_to_pr`, `interactions_per_pr`, `review_rounds_per_pr`).
 - **You pick what it may change.** `learn.tunable` lists the settings it may move, such as the model per stage, how deep verify goes, and how much context loads at start. Prompts, gates, blueprints, ready rules and hard stops are never tunable.
 - **A ticket's settings are fixed when it starts.** Nothing changes mid-run. Tuning happens between tickets: like a bandit experiment, the daemon tries a few values on similar tickets, compares them on the target, and shifts toward the winner.
 - **The quality floor holds.** A setting that lowers ready-rule pass rates or raises the revert rate loses, however cheap it is.
