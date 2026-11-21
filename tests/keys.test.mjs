@@ -10,6 +10,7 @@ test("j/k/arrows move, enter opens", () => {
   assert.deepEqual(k("enter"), { kind: "open" });
   assert.deepEqual(k("e"), { kind: "terminal" });
   assert.deepEqual(k("m"), { kind: "merge" });
+  assert.deepEqual(k("b"), { kind: "budget" });
 });
 
 test("unbuilt actions name their milestone", () => {

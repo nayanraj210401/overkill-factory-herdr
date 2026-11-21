@@ -23,11 +23,19 @@ for p in $pages; do
   herdr-app shot "$out/$p.png" >/dev/null
   errors
 done
-# The confirm dialog every ticket action opens (here without props: its defaults).
+# The dialog every ticket action opens: plain (no props), then with b's text box,
+# shown through a one-block layout since only a layout can hand a mod props.
 herdr-app do mod.open '{"name":"factory-ask"}' >/dev/null; sleep 0.7
 herdr-app shot "$out/ask.png" >/dev/null
 errors
 herdr-app do overlay.close '{}' >/dev/null; sleep 0.3
+node -e 'import("./lib/actions.js").then(({ budgetAsk }) => {
+  const props = budgetAsk({ id: 412, title: "Rate-limit login", state: "running", tokens: { input: 1.2e6, output: 64e3 }, budget: { input: 3e6, output: 2e5 } });
+  console.log(JSON.stringify({ id: "root", type: "row", children: [{ id: "ask", type: "block", content: { mod: "factory-ask", props } }] }));
+})' > "$home/layouts/factory-ask-test.json"
+herdr-app do layout.switch '{"name":"factory-ask-test"}' >/dev/null; sleep 1.3
+herdr-app shot "$out/ask-input.png" >/dev/null
+errors
 herdr-app do layout.switch '{"name":"main"}' >/dev/null; sleep 0.7
 [[ $(herdr-app status | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).layout)') == main ]]
 herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.7

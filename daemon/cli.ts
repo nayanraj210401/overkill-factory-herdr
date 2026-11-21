@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
 import { buildStatus, writeStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
+import { parseTokens } from "../lib/model.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
@@ -20,6 +21,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   init [--repo owner/name] [--path dir]  create the factory's database (path: the repo checkout, default .)
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
+  budget <id> <in>[/<out>]           set a ticket's token budget: 3M, or 3M/200k
   merge <id>                         squash-merge a ready ticket's PR (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket
@@ -147,6 +149,18 @@ export function main(argv: string[], log = console.log) {
       let r: any = null;
       change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
       log(`#${sub}: ${r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
+    } else if (cmd === "budget") {
+      const [text = ""] = rest;
+      const [input, output] = text.split("/").map(parseTokens);
+      if (!input || (text.includes("/") && !output)) throw new Error(`"${text}" isn't a budget; type input tokens, or in/out: 3M, 3M/200k`);
+      change(db, () => {
+        const t = db.query("SELECT state FROM tickets WHERE id = ?").get(Number(sub)) as { state: string } | null;
+        if (!t) throw new Error(`no ticket ${sub}`);
+        if (t.state === "merged" || t.state === "closed") throw new Error(`#${sub} is ${t.state}; its budget is final`);
+        db.query(`UPDATE tickets SET budget_in = ?${output ? ", budget_out = ?" : ""}, updated_at = ? WHERE id = ?`)
+          .run(...([input, ...(output ? [output] : []), now(), Number(sub)] as any[]));
+        db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(Number(sub), `set the budget to ${text}`, now());
+      });
     } else if (cmd === "merge") {
       const repoDir = getMeta(db, "repo_path");
       if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
