@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open } from "./db.ts";
+import { open, setRepo, setWork } from "./db.ts";
 import { buildStatus } from "./status.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
 import type { Run } from "./runner.ts";
@@ -27,7 +27,8 @@ test("interactions per PR count your steps before it opened; the revert rate cou
   const db = db0();
   const now = new Date();
   const at = (minAgo: number) => new Date(now.getTime() - minAgo * 60000).toISOString();
-  for (const id of [1, 2]) db.query("INSERT INTO tickets (id, title, state, pr_number, updated_at) VALUES (?, 'x', 'merged', ?, ?)").run(id, 40 + id, at(0));
+  setRepo(db, { slug: "acme/api", path: "/tmp", lead: true });
+  for (const id of [1, 2]) { db.query("INSERT INTO tickets (id, title, state, updated_at) VALUES (?, 'x', 'merged', ?)").run(id, at(0)); setWork(db, id, { pr_number: 40 + id }); }
   const decide = (ticket: number, who: string, what: string, m: number) => db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(ticket, who, what, at(m));
   decide(1, "you", "added issue #1", 50); decide(1, "you", "answered Q1", 40); decide(1, "you", "set the budget to 5M", 30);
   decide(1, "daemon", "opened PR #41", 20); decide(1, "you", "sent PR #41 back", 10); decide(1, "you", "merged PR #41", 5);

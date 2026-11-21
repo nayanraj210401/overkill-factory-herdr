@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { renameSync, writeFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { getMeta } from "./db.ts";
+import { getMeta, leadRepo } from "./db.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
 import { digest } from "./away.ts";
 
@@ -28,7 +28,7 @@ export function ticketOf(r: Row) {
 export function buildStatus(db: Database, now = new Date()) {
   // A ticket's terminal: its latest session still open (the window's `e` opens it).
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal
-    FROM tickets t ORDER BY t.id`).all() as Row[]).map(ticketOf);
+    FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map(ticketOf);
   const today = now.toISOString().slice(0, 10);
   const used = db.query("SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o, SUM(usd) AS usd FROM usage WHERE at >= ?").get(today) as any;
   // PRs opened today: what each cost, and how long from the ticket's first stage to the PR.
@@ -41,7 +41,7 @@ export function buildStatus(db: Database, now = new Date()) {
     version: 1,
     generated_at: now.toISOString(),
     source: "daemon",
-    factory: { name: getMeta(db, "name") ?? "factory", repo: getMeta(db, "repo") ?? "unknown", daemon: now.getTime() - beat < HEARTBEAT_MS },
+    factory: { name: getMeta(db, "name") ?? "factory", repo: leadRepo(db)?.slug ?? "unknown", daemon: now.getTime() - beat < HEARTBEAT_MS },
     plan: planMeters(db, now),
     today: {
       time_to_pr_min: Math.round(avg(prs.filter((p) => p.began).map((p) => (Date.parse(p.at) - Date.parse(p.began!)) / 60000))),

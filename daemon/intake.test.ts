@@ -31,7 +31,7 @@ test("an issue becomes a queued ticket with its number and title, read through g
   const { db, calls, add } = setup({ 412: { title: "Rate-limit login" }, 9: { title: "Old", state: "CLOSED" } });
   expect(add("#412")).toEqual({ id: 412, title: "Rate-limit login" });
   expect(calls[0]).toEqual(["gh", "issue", "view", "412", "--repo", "acme/api", "--json", "number,title,state"]);
-  expect(db.query("SELECT state, blueprint FROM tickets WHERE id = 412").get()).toEqual({ state: "queued", blueprint: "feature" });
+  expect(db.query("SELECT state, blueprint FROM ticket_lead WHERE id = 412").get()).toEqual({ state: "queued", blueprint: "feature" });
   expect(() => add("412")).toThrow("#412 is already a ticket");
   expect(() => add("#9")).toThrow("issue #9 is closed");
   expect(() => add("#77")).toThrow("gh issue view failed: GraphQL");
@@ -64,7 +64,7 @@ test("the queue adds this repo's Ready issues assigned to you as grooming ticket
   const queue = { github_project: "acme/Engineering", column: "Ready", assignee: "me" };
   expect(pollQueue(db, { queue, repo: "acme/api", run, now })).toEqual([412, 416]);
   expect(calls.map((c) => c.slice(0, 4))).toEqual([["gh", "project", "list", "--owner"], ["gh", "api", "user", "-q"], ["gh", "project", "item-list", "3"]]);
-  expect(db.query("SELECT id, state, title FROM tickets ORDER BY id").all()).toEqual([
+  expect(db.query("SELECT id, state, title FROM ticket_lead ORDER BY id").all()).toEqual([
     { id: 412, state: "grooming", title: "Issue 412" }, { id: 416, state: "grooming", title: "Issue 416" },
   ]);
   calls.length = 0;

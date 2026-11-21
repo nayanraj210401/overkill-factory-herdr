@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { cpSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setMeta } from "./db.ts";
+import { open, setMeta, setRepo } from "./db.ts";
 import { advance, checkReady, sh, startTicket, type Run } from "./runner.ts";
 import { startGroomed } from "./groom.ts";
 import { setAway } from "./away.ts";
@@ -18,11 +18,11 @@ function setup(away: string) {
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));
-  setMeta(db, "repo_path", repo);
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
   const run: Run = (a, c) => (a[0] === "hc" ? { code: 0, out: '{"address":"t1"}' } : sh(a, c));
   const add = (id: number, blueprint: string) =>
     db.query("INSERT INTO tickets (id, title, blueprint, state, groomed_at, updated_at) VALUES (?, 'x', ?, 'queued', ?, ?)").run(id, blueprint, `2026-11-21T10:0${id % 10}:00Z`, "2026-11-21T10:00:00Z");
-  return { db, dir, repo, run, add, ticket: (id: number) => db.query("SELECT * FROM tickets WHERE id = ?").get(id) as any };
+  return { db, dir, repo, run, add, ticket: (id: number) => db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as any };
 }
 
 test("away: only away.blueprints start, and the away budget caps the ready rule", () => {

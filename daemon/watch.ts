@@ -8,6 +8,7 @@ import type { Database } from "bun:sqlite";
 import { finishPr, readFactory, reviewBack, type Run } from "./runner.ts";
 import { commentsNote, pushbackLimit, storeComments, type GhComment } from "./comments.ts";
 import { reviewRoundsLeft } from "./away.ts";
+import { setWork } from "./db.ts";
 
 function ghJson(run: Run, argv: string[]) {
   const r = run(argv);
@@ -29,7 +30,7 @@ export function prComments(run: Run, slug: string, pr: number) {
 }
 
 export function watchPrs(db: Database, o: { dir: string; repo: string; slug: string; me: string | null; run: Run; now: string; log?: (s: string) => void }) {
-  const tickets = db.query("SELECT id, pr_number, pr_checked_at FROM tickets WHERE state = 'ready' AND pr_watched = 1 AND pr_number IS NOT NULL").all() as
+  const tickets = db.query("SELECT id, pr_number, pr_checked_at FROM ticket_lead WHERE state = 'ready' AND pr_watched = 1 AND pr_number IS NOT NULL").all() as
     { id: number; pr_number: number; pr_checked_at: string | null }[];
   const out: { id: number; event: string }[] = [];
   for (const t of tickets) {
@@ -43,7 +44,7 @@ export function watchPrs(db: Database, o: { dir: string; repo: string; slug: str
         // New is "not stored yet", not "after the last check": the pr stage moves the check
         // time when it updates the PR, and a comment made during the fix must still count.
         const fresh = pr.comments.filter((c) => c.body.trim() && c.author.toLowerCase() !== (o.me ?? "").toLowerCase());
-        db.query("UPDATE tickets SET pr_checked_at = ? WHERE id = ?").run(o.now, t.id);
+        setWork(db, t.id, { pr_checked_at: o.now });
         const limit = pushbackLimit((readFactory(o.repo) as any).review);
         const rows = storeComments(db, { ticket: t.id, pr: t.pr_number, comments: fresh, limit });
         if (!rows.length) return;

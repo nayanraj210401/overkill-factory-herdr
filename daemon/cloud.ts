@@ -85,7 +85,7 @@ const git = (run: Run, wt: string, args: string[], what: string) => {
 
 // `factory cloud <id>`
 export function toCloud(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.location === "cloud") throw new Error(`#${o.id} is in the cloud already`);
   if (t.state !== "running" || !t.worktree) throw new Error(`#${o.id} is ${t.state}; only a running ticket moves to the cloud`);
@@ -131,7 +131,7 @@ export function parseResult(md: string) {
 
 // `factory local <id>`
 export function toLocal(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.location !== "cloud") throw new Error(`#${o.id} isn't in the cloud`);
   git(o.run, t.worktree, ["fetch", "-q", "origin", t.branch], "git fetch");

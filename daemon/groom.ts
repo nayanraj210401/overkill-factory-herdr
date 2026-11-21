@@ -7,7 +7,7 @@ import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { enterStage } from "./ticket.ts";
-import { getMeta } from "./db.ts";
+import { getMeta, needLead } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { argvFor, loadAgent, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
 import { mayStart } from "./away.ts";
@@ -28,7 +28,7 @@ export function grooming(repo: string) {
 
 const isIssue = (id: number) => id < LOCAL_IDS;
 const ticket = (db: Database, id: number) => {
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(id) as Record<string, any> | null;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${id}`);
   return t;
 };
@@ -58,7 +58,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   mkdirSync(folder, { recursive: true });
   const agent = loadAgent(o.repo, g.agent);
   const argv = argvFor(agent, { harness: "claude", model: "sonnet" },
-    triageBrief(t as any, { slug: getMeta(db, "repo") ?? "unknown", repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null }));
+    triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null }));
   // Not a Herdr space: there's no worktree yet, and the triage agent only reads.
   const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f${o.id}-groom`, "--cwd", folder,
     "--label", `factory.ticket=${o.id}`, "--label", "factory.stage=groom", ...argv]);
@@ -98,7 +98,7 @@ function productOwner(db: Database, o: { repo: string; id: number; run: Run }) {
   const named = grooming(o.repo).product_owner;
   if (named) return named;
   if (!isIssue(o.id)) return null;
-  const r = o.run(["gh", "issue", "view", String(o.id), "--repo", getMeta(db, "repo") ?? "", "--json", "author", "-q", ".author.login"]);
+  const r = o.run(["gh", "issue", "view", String(o.id), "--repo", needLead(db).slug, "--json", "author", "-q", ".author.login"]);
   return r.code === 0 && r.out ? r.out.trim() : null;
 }
 
@@ -130,7 +130,7 @@ export function finishGrooming(db: Database, o: { dir: string; repo: string; id:
   db.query("UPDATE stages SET detail = ? WHERE ticket = ? AND ended_at IS NULL").run(`waiting on ${open.length} answer${open.length > 1 ? "s" : ""}`, o.id);
   note(o.dir, o.id, "Questions", open.map((q) => `- **Q${q.n}** (${q.kind}): ${q.text}`).join("\n"));
   if (isIssue(o.id) && grooming(o.repo).questions.includes("issue")) {
-    const r = o.run(["gh", "issue", "comment", String(o.id), "--repo", getMeta(db, "repo") ?? "", "--body", questionsComment(open, po)]);
+    const r = o.run(["gh", "issue", "comment", String(o.id), "--repo", needLead(db).slug, "--body", questionsComment(open, po)]);
     // A comment that didn't post leaves the questions in Herdr; say so rather than fail grooming.
     db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
       .run(o.id, r.code === 0 ? `asked ${open.length} question${open.length > 1 ? "s" : ""} on the issue` : "couldn't post the questions on the issue", r.code === 0 ? null : r.out.slice(0, 200), o.now);
@@ -171,7 +171,7 @@ export function answerQuestions(db: Database, o: { dir: string; repo: string; id
   // The other place is updated: an answer given in Herdr is posted on the issue.
   if (o.where === "herdr" && isIssue(o.id) && grooming(o.repo).questions.includes("issue")) {
     const lines = done.map((q) => `A${q.n}: ${given.get(q.n)}`);
-    o.run(["gh", "issue", "comment", String(o.id), "--repo", getMeta(db, "repo") ?? "", "--body", `${MARK}\nAnswered in Herdr:\n\n${lines.join("\n")}`]);
+    o.run(["gh", "issue", "comment", String(o.id), "--repo", needLead(db).slug, "--body", `${MARK}\nAnswered in Herdr:\n\n${lines.join("\n")}`]);
   }
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(o.id, o.by, `answered ${done.map((q) => `Q${q.n}`).join(", ")}`, o.now);
   const left = openQuestions(db, o.id);
@@ -186,7 +186,7 @@ export function answerQuestions(db: Database, o: { dir: string; repo: string; id
 function groomed(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
   db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
   db.query("UPDATE tickets SET state = 'queued', stage = NULL, detail = NULL, needs_kind = NULL, needs_text = NULL, groomed_at = ?, updated_at = ? WHERE id = ?").run(o.now, o.now, o.id);
-  const b = (db.query("SELECT blueprint FROM tickets WHERE id = ?").get(o.id) as { blueprint: string }).blueprint;
+  const b = (db.query("SELECT blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { blueprint: string }).blueprint;
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(o.id, `groomed: runs the ${b} blueprint`, o.now);
   const started = startGroomed(db, o);
   return { groomed: true, started: started.includes(o.id) };
@@ -219,7 +219,7 @@ export function readIssueAnswers(db: Database, o: { dir: string; repo: string; r
   const waiting = db.query("SELECT id FROM tickets WHERE state = 'grooming' AND needs_kind = 'question' AND id < ?").all(LOCAL_IDS) as { id: number }[];
   for (const { id } of waiting) {
     const since = (db.query("SELECT MIN(asked_at) AS at FROM questions WHERE ticket = ? AND answer IS NULL").get(id) as { at: string }).at;
-    const r = o.run(["gh", "issue", "view", String(id), "--repo", getMeta(db, "repo") ?? "", "--json", "comments"]);
+    const r = o.run(["gh", "issue", "view", String(id), "--repo", needLead(db).slug, "--json", "comments"]);
     if (r.code !== 0) { o.log?.(`factory: #${id}: gh issue view failed: ${r.out.slice(0, 200)}`); continue; }
     let comments: { author?: { login?: string }; body: string; createdAt: string }[] = [];
     try { comments = JSON.parse(r.out).comments ?? []; } catch { continue; }

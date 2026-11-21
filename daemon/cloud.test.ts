@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setMeta } from "./db.ts";
+import { open, setMeta, setRepo } from "./db.ts";
 import { pause, sh, startTicket, type Run } from "./runner.ts";
 import { parseResult, toCloud, toLocal } from "./cloud.ts";
 
@@ -17,7 +17,7 @@ function setup(yaml = 'name: t\nquality_floor: ["npm test"]\nready: [evidence, t
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));
-  setMeta(db, "repo_path", repo);
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
   const calls: string[][] = [];
   let n = 0;
   const run: Run = (argv, cwd) => (argv[0] === "hc" ? (calls.push(argv), { code: 0, out: `{"address":"t${++n}"}` }) : sh(argv, cwd));
@@ -25,7 +25,7 @@ function setup(yaml = 'name: t\nquality_floor: ["npm test"]\nready: [evidence, t
   startTicket(db, { dir, repo, id: 7, run });
   mkdirSync(join(dir, "tickets/7"), { recursive: true });
   writeFileSync(join(dir, "tickets/7/REVIEW.md"), "# REVIEW\n\n## Sent back by you\n\nUse 429.\n");
-  const ticket = () => db.query("SELECT * FROM tickets WHERE id = 7").get() as any;
+  const ticket = () => db.query("SELECT * FROM ticket_lead WHERE id = 7").get() as any;
   return { db, dir, repo, origin, run, calls, ticket };
 }
 

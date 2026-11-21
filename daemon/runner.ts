@@ -10,6 +10,7 @@ import { openPr, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from
 import { closeSpace, openAgent, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
+import { setWork } from "./db.ts";
 import { budgetCap, forbiddenTouched } from "./away.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
@@ -78,7 +79,7 @@ export function argvFor(agent: { harness?: string; model?: string } | null, defa
 export function startTicket(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (!["queued", "grooming"].includes(t.state) || t.needs_kind) throw new Error(`#${o.id} is ${t.state}${t.needs_kind ? " with open questions" : ""}; only a groomed or queued ticket starts`);
   const b = loadBlueprint(o.repo, t.blueprint);
@@ -93,12 +94,13 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
     const wt = run(["git", "-C", o.repo, "worktree", "add", ...(known ? [worktree, branch] : ["-b", branch, worktree])]);
     if (wt.code !== 0) throw new Error(`git worktree add failed: ${wt.out}`);
   }
-  db.query("UPDATE tickets SET state = 'running', worktree = ?, branch = ? WHERE id = ?").run(worktree, branch, o.id);
+  db.query("UPDATE tickets SET state = 'running' WHERE id = ?").run(o.id);
+  setWork(db, o.id, { worktree, branch });
   return startStage(db, { ...o, run, now, blueprint: b, stage: b.start });
 }
 
 export function startStage(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; blueprint: Blueprint; stage: string }) {
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
   const s = o.blueprint.stages[o.stage];
   if (!s) throw new Error(`blueprint ${o.blueprint.name} has no stage "${o.stage}"`);
   enterStage(db, o.id, title(o.stage), s.agent ? `${s.agent} agent` : s.check ? `check: ${s.check}` : null, plannedPath(o.blueprint, o.stage).map(title), o.now);
@@ -125,7 +127,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { repos?: string[]; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -141,7 +143,7 @@ const verdictOf = (repo: string, s: Stage | undefined): VerdictKind | undefined 
 // The ready rules as the pr stage sees them: factory.yaml's list, and the verdicts
 // the ticket's blueprint has stages for.
 export function checkReady(db: Database, o: { dir: string; repo: string; id: number; run: Run }) {
-  const t = db.query("SELECT worktree, blueprint FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null; blueprint: string } | null;
+  const t = db.query("SELECT worktree, blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { worktree: string | null; blueprint: string } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (!t.worktree) throw new Error(`#${o.id} has no worktree yet; factory start ${o.id}`);
   const b = loadBlueprint(o.repo, t.blueprint);
@@ -183,7 +185,7 @@ type BlueprintStage = Stage & { on_fail?: string; max_retries?: number; gate?: s
 export function advance(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string; failed?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (t?.state === "grooming") return finishGrooming(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
   if (!t || t.state !== "running") throw new Error(`#${o.id} isn't running`);
   const b = loadBlueprint(o.repo, t.blueprint);
@@ -214,7 +216,7 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
       // A verdict stage counts its own failed sessions since a person last restarted the
       // ticket: the verify check between review and implement resets the shared counter.
       const retries = verdictOf(o.repo, stage) ? verdictFailures(db, o.id, at)
-        : (db.query("SELECT retries FROM tickets WHERE id = ?").get(o.id) as any).retries + 1;
+        : (db.query("SELECT retries FROM ticket_lead WHERE id = ?").get(o.id) as any).retries + 1;
       if (!stage.on_fail || retries > (stage.max_retries ?? 3)) {
         db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?")
           .run(`${title(at)} failed ${retries} times: ${failed}`, now, o.id);
@@ -284,7 +286,7 @@ function verdictFailures(db: Database, id: number, stage: string) {
 export function tryPr(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
   const rules = checkReady(db, { dir: o.dir, repo: o.repo, id: o.id, run });
   if (!rulesPass(rules)) {
     const failing = rules.filter((r) => r.result === "fail");
@@ -294,7 +296,7 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
     return { waiting: true, stage: t.stage, failing: failing.length };
   }
   const number = openPr(db, { id: o.id, dir: o.dir, worktree: t.worktree, branch: t.branch, rules, run, existing: t.pr_number });
-  db.query("UPDATE tickets SET pr_number = ?, pr_watched = 1, pr_checked_at = ? WHERE id = ?").run(number, now, o.id);
+  setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now });
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
     .run(o.id, `${t.pr_number == null ? "opened" : "updated"} PR #${number}`, rules.map((r) => `${r.rule} ${r.result}`).join(", "), now);
   return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now }), pr: number };
@@ -306,7 +308,7 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
 export function mergeTicket(db: Database, o: { repo: string; id: number; run?: Run; now?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT state, pr_number FROM tickets WHERE id = ?").get(o.id) as { state: string; pr_number: number | null } | null;
+  const t = db.query("SELECT state, pr_number FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; pr_number: number | null } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready ticket's PR merges`);
   const pr = String(t.pr_number);
@@ -324,16 +326,17 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
 // ends and, as the plan says, the worktree goes; the branch and the .md files stay.
 // A worktree with uncommitted work is left for a person to look at.
 export function finishPr(db: Database, o: { repo: string; id: number; run: Run; now: string; state: "merged" | "closed"; why: string | null; who?: string }) {
-  const pr = (db.query("SELECT pr_number FROM tickets WHERE id = ?").get(o.id) as { pr_number: number }).pr_number;
+  const pr = (db.query("SELECT pr_number FROM ticket_lead WHERE id = ?").get(o.id) as { pr_number: number }).pr_number;
   db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
   db.query("DELETE FROM planned WHERE ticket = ?").run(o.id);
-  db.query("UPDATE tickets SET state = ?, detail = NULL, needs_kind = NULL, needs_text = NULL, pr_watched = 0, updated_at = ? WHERE id = ?").run(o.state, o.now, o.id);
+  db.query("UPDATE tickets SET state = ?, detail = NULL, needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(o.state, o.now, o.id);
+  setWork(db, o.id, { pr_watched: 0, merged_at: o.state === "merged" ? o.now : null });
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.who ?? "you", `${o.state} PR #${pr}`, o.why, o.now);
-  const w = db.query("SELECT worktree, space FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null; space: string | null };
+  const w = db.query("SELECT worktree, space FROM ticket_lead WHERE id = ?").get(o.id) as { worktree: string | null; space: string | null };
   if (w.worktree) {
     closeSpace(o.run, w.space);
     const rm = o.run(["git", "-C", o.repo, "worktree", "remove", w.worktree]);
-    if (rm.code === 0) db.query("UPDATE tickets SET worktree = NULL, space = NULL WHERE id = ?").run(o.id);
+    if (rm.code === 0) { db.query("UPDATE tickets SET space = NULL WHERE id = ?").run(o.id); setWork(db, o.id, { worktree: null }); }
   }
 }
 
@@ -380,7 +383,7 @@ function restart(db: Database, o: { dir: string; repo: string; id: number; run: 
 export function sendBack(db: Database, o: { dir: string; repo: string; id: number; note: string; run?: Run; now?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready PR goes back`);
   if (!o.note.trim()) throw new Error("say what to change: factory send-back <id> <note…>");
@@ -391,7 +394,7 @@ export function sendBack(db: Database, o: { dir: string; repo: string; id: numbe
 
 // The PR watcher: reviewers' comments on a ready PR send it back like `x` does, by the daemon.
 export function reviewBack(db: Database, o: { dir: string; repo: string; id: number; heading: string; text: string; run: Run; now: string; park?: string }) {
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
   const b = loadBlueprint(o.repo, t.blueprint);
   const undo = note(o.dir, o.id, "REVIEW.md", o.heading, o.text);
   // Out of unattended review rounds: the comments wait in REVIEW.md, and `u` runs the fix stage.
@@ -407,7 +410,7 @@ export function reviewBack(db: Database, o: { dir: string; repo: string; id: num
 export function answer(db: Database, o: { dir: string; repo: string; id: number; text: string; run?: Run; now?: string }): Record<string, any> {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state === "grooming" && t.needs_kind === "question")
     return { stage: "groom", ...answerQuestions(db, { dir: o.dir, repo: o.repo, id: o.id, text: o.text, by: "you", where: "herdr", run, now }) };
@@ -423,10 +426,10 @@ export function answer(db: Database, o: { dir: string; repo: string; id: number;
 export function pause(db: Database, o: { id: number; run?: Run; now?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT state, stage FROM tickets WHERE id = ?").get(o.id) as { state: string; stage: string | null } | null;
+  const t = db.query("SELECT state, stage FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; stage: string | null } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "running") throw new Error(`#${o.id} is ${t.state}; only a running ticket pauses`);
-  if ((db.query("SELECT location FROM tickets WHERE id = ?").get(o.id) as any).location === "cloud") throw new Error(`#${o.id} is in the cloud; bring it back first (⇧L)`);
+  if ((db.query("SELECT location FROM ticket_lead WHERE id = ?").get(o.id) as any).location === "cloud") throw new Error(`#${o.id} is in the cloud; bring it back first (⇧L)`);
   const open_ = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   db.query("UPDATE stages SET ended_at = ?, detail = 'paused' WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
@@ -442,7 +445,7 @@ export function pause(db: Database, o: { id: number; run?: Run; now?: string }) 
 export function resume(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "paused") throw new Error(`#${o.id} is ${t.state}; only a paused ticket resumes`);
   const b = loadBlueprint(o.repo, t.blueprint);
@@ -460,7 +463,7 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
 // too) against where its branch left the repo's current branch.
 export function ticketDiff(db: Database, o: { repo: string; id: number; run?: Run }) {
   const run = o.run ?? sh;
-  const t = db.query("SELECT worktree FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null } | null;
+  const t = db.query("SELECT worktree FROM ticket_lead WHERE id = ?").get(o.id) as { worktree: string | null } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (!t.worktree) throw new Error(`#${o.id} has no worktree: it hasn't started, or it merged and its worktree was removed`);
   const base = run(["git", "-C", o.repo, "symbolic-ref", "--short", "HEAD"]);

@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setMeta } from "./db.ts";
+import { open, setMeta, setRepo } from "./db.ts";
 import { advance, sh, startTicket, type Run } from "./runner.ts";
 import { watchSessions } from "./cli.ts";
 import { recordVerdict } from "./ready.ts";
@@ -17,7 +17,7 @@ function setup(blueprint = "feature", floor = '"true"') {
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));
-  setMeta(db, "repo_path", repo);
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
   let n = 0;
   const started: string[] = [];
   const run: Run = (argv, cwd) => {
@@ -28,7 +28,7 @@ function setup(blueprint = "feature", floor = '"true"') {
   db.query(`INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (7, 'Wire it', ?, '2026-11-21T10:00:00Z')`).run(blueprint);
   startTicket(db, { dir, repo, id: 7, run });
   const step = (failed?: string) => advance(db, { dir, repo, id: 7, run, failed });
-  const ticket = () => db.query("SELECT state, stage, retries, needs_text FROM tickets WHERE id = 7").get() as any;
+  const ticket = () => db.query("SELECT state, stage, retries, needs_text FROM ticket_lead WHERE id = 7").get() as any;
   const evidence = (name: string, result: "PASS" | "FAIL") =>
     db.query("INSERT INTO evidence (ticket, check_name, result, at) VALUES (7, ?, ?, '2026-11-21T10:00:00Z')").run(name, result);
   const verdict = (kind: "holdout" | "review", result: "PASS" | "FAIL", detail: string | null = null) =>
@@ -106,7 +106,7 @@ test("the daemon advances a ticket whose agent's terminal exited", () => {
   watchSessions(db, p, hc, (s) => logs.push(s));
   expect(gets).toBe(1);
   expect(logs[0]).toBe("factory: #7's agent in t1 finished; advanced");
-  expect((db.query("SELECT stage FROM tickets").get() as any).stage).toBe("plan");
+  expect((db.query("SELECT stage FROM ticket_lead").get() as any).stage).toBe("plan");
 });
 
 test("blockers a reviewer gave aren't written twice when the fix stage's agent fails to start", () => {

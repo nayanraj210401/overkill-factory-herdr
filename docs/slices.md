@@ -44,17 +44,17 @@ It draws the page title, "Coming in M6", one line on what the page will do, and 
 | Ticket (timeline, md tabs `1`–`4`, `e` terminal) | real, from fixtures; `e` opens a plain terminal | M1, live in M2 |
 | Ticket, cross-repo | coming soon | M2 |
 | Tickets (list + filters) | real; Runs view (`r`) soon | M1 / Runs M2 |
-| Config | real (read-only Editor on `.factory/*.yaml`); schema check soon | M1 / check M2 |
+| Config | real (read-only Editor on `.factory/*.yaml`); the check runs `factory validate` | M1 / check M2 |
 | Blueprint | built: `factory-blueprint` draws `blueprints.json` (stages in path order, 7-day run counts, gates, failure routes), which the daemon writes beside status.json | M2 |
 | Overwatch | built: `factory-overwatch` starts (or reopens) the overwatch agent with `factory overwatch` and peeks its terminal | M2 |
 | Metrics: Throughput, Cost, Quality | built: `factory-metrics` draws `metrics.json`, which the daemon writes beside status.json (7 or 30 days against the period before) | M2 |
 | Metrics: Learning, Benchmarks | coming soon | M4 |
 | Reviews | coming soon | M6 |
-| Actions `n m x u p b`, cloud `shift-c/l` | keys bound, toast "Coming in M2/M3" | M2–M3 |
+| Actions `n m x u p b e d`, cloud `shift-c/l` | built: each confirms in `factory-ask` and runs the `factory` CLI | M2–M3 |
 
 ## M1 slices (each ends with `herdr-app check` + one smoke screenshot)
 
-Progress 2026-11-21: S0–S4, S6 and S7 are built and pass `scripts/check.sh` and `scripts/smoke.sh`. Not built yet: S5 (Ticket page), S8 (Config) and S9 (`RECIPE.md`); the smoke script itself is done. Page keys are `cmd-1`…`cmd-7`, because Herdr documents no `g h` key chords.
+Progress 2026-11-21: S0–S9 are built and pass `scripts/check.sh` and `scripts/smoke.sh`. Page keys are `cmd-1`…`cmd-7`, because Herdr documents no `g h` key chords.
 
 | # | Slice | Done when |
 | --- | --- | --- |
@@ -108,6 +108,7 @@ S3–S8 depend only on S0–S2 and touch separate mod folders, so they can run i
   - **Cloud move is built** (`daemon/cloud.ts`):
     - `⇧C` / `factory cloud <id>|--all` stops the local agent and writes `.factory-run/<id>/CLOUD.md` (where the ticket stands, the stages left, the rules, and what to report) plus copies of the ticket's files. It commits the work in progress, pushes the branch, and runs `claude --cloud "Continue the work described in .factory-run/<id>/CLOUD.md …"` in a terminal. The ticket shows "in cloud", and the daemon stops watching it; nothing is tracked there, by choice.
     - `⇧L` / `factory local <id>` fetches and fast-forwards the branch. It imports `RESULT.md` (evidence lines, notes as HANDOFF.md, questions park the ticket) and PR.md, removes the pack from the branch, and resumes at the stage the cloud reached.
+  - **Multi-repo, plan option (a):** one factory per lead repo; other repos join only through cross-repo tickets. **The model is built:** migration 11 adds `repos` (the lead from `factory init`, others from `factory repo add owner/name --path dir`, which must be in factory.yaml's `repos:`) and `ticket_repos` (each ticket's worktree, branch and PR per repo, a lead row for every ticket so far). Not yet: the window showing repos, and cross-repo tickets.
 - **M4, learning + benchmarks:** Metrics Learning and Benchmarks tabs.
 - **M5, auto gates + maintainer:** revert rate on Home.
 - **M6, reviews:** Reviews page.

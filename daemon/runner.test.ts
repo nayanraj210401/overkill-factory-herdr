@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { cpSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open } from "./db.ts";
+import { open, setRepo } from "./db.ts";
 import { buildStatus } from "./status.ts";
 import { argvFor, plannedPath, loadBlueprint, sh, startTicket, type Run } from "./runner.ts";
 import { validateStatus } from "../lib/status.js";
@@ -24,7 +24,9 @@ function setup() {
   // Real git; hc is faked and answers like `hc run --bg --json`.
   const run: Run = (argv, cwd) => (argv[0] === "hc" ? (calls.push(argv), { code: 0, out: '{"address":"t9","state":"live"}' }) : sh(argv, cwd));
   db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (412, 'Rate-limit login', 'feature', '2026-11-21T10:00:00Z')").run();
-  return { dir, db, calls, run, repo: repo() };
+  const r = repo();
+  setRepo(db, { slug: "acme/api", path: r, lead: true });
+  return { dir, db, calls, run, repo: r };
 }
 
 test("the planned path follows each stage's first next", () => {
@@ -36,7 +38,7 @@ test("start: own worktree and branch, first stage, its agent in a herdr-core ter
   const { dir, db, calls, run, repo: r } = setup();
   const terminal = startTicket(db, { dir, repo: r, id: 412, run, now: "2026-11-21T10:00:00Z" });
   expect(terminal).toBe("t9");
-  const t = db.query("SELECT state, stage, worktree, branch FROM tickets WHERE id = 412").get() as any;
+  const t = db.query("SELECT state, stage, worktree, branch FROM ticket_lead WHERE id = 412").get() as any;
   expect(t).toMatchObject({ state: "running", stage: "spec", branch: "factory/412-rate-limit-login" });
   expect(existsSync(join(t.worktree, ".factory/factory.yaml"))).toBe(true);
   expect(sh(["git", "-C", t.worktree, "branch", "--show-current"]).out).toBe("factory/412-rate-limit-login");

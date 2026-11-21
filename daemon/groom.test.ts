@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setMeta } from "./db.ts";
+import { open, setMeta, setRepo } from "./db.ts";
 import { advance, answer, sh, type Run } from "./runner.ts";
 import { ask, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { recordUsage, transcriptDir } from "./usage.ts";
@@ -17,8 +17,7 @@ function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));
-  setMeta(db, "repo_path", repo);
-  setMeta(db, "repo", "acme/api");
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
   const hc: string[][] = [];
   const gh: string[][] = [];
   let comments: object[] = [];
@@ -33,7 +32,7 @@ function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   };
   const add = (id: number, title = "Rate-limit login") =>
     db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (?, ?, 'feature', ?)").run(id, title, now);
-  const ticket = (id = 412) => db.query("SELECT * FROM tickets WHERE id = ?").get(id) as any;
+  const ticket = (id = 412) => db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as any;
   const setComments = (c: object[]) => { comments = c; };
   return { db, dir, repo, run, hc, gh, add, ticket, setComments };
 }
