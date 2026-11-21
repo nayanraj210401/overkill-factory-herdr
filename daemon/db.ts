@@ -136,6 +136,21 @@ export const MIGRATIONS = [
      INSERT INTO lessons_fts (lessons_fts, rowid, text, area) VALUES ('delete', old.id, old.text, old.area);
      INSERT INTO lessons_fts (rowid, text, area) VALUES (new.id, new.text, new.area);
    END;`,
+  // Benchmarks (monitoring): one batch per suite run, and one row per task under a variant.
+  // They aren't tickets, so they keep their own tables; runs.json lists them as kind benchmark.
+  `CREATE TABLE bench_batches (
+     id INTEGER PRIMARY KEY, suite TEXT NOT NULL, target TEXT NOT NULL, size TEXT NOT NULL, repo TEXT NOT NULL,
+     variants TEXT NOT NULL, tasks INTEGER NOT NULL, max_usd REAL, max_tokens INTEGER,
+     started_at TEXT NOT NULL, ended_at TEXT, stopped TEXT
+   );
+   CREATE TABLE bench_runs (
+     id INTEGER PRIMARY KEY, batch INTEGER NOT NULL REFERENCES bench_batches(id), task INTEGER NOT NULL, title TEXT NOT NULL,
+     variant TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('done', 'failed', 'skipped')), detail TEXT,
+     harness TEXT, model TEXT, started_at TEXT NOT NULL, ended_at TEXT,
+     tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, usd REAL NOT NULL DEFAULT 0,
+     holdout_pass INTEGER, diff_lines INTEGER, pr_lines INTEGER, cwd TEXT, transcript TEXT
+   );
+   CREATE INDEX bench_runs_batch ON bench_runs(batch);`,
 ];
 
 export function open(path: string): Database {

@@ -2,6 +2,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, readTextFile, watchFolder, checking, props } from "herdr";
 import { validateMetrics, headlineTiles, minutes, bars } from "./lib/metrics.js";
+import { validateBenchmarks, variantRows, suiteNote, COLUMNS } from "./lib/benchmarks.js";
 import { root } from "./lib/store.js";
 
 const TABS = ["Throughput", "Cost", "Quality", "Benchmarks"];
@@ -12,6 +13,8 @@ export default class FactoryMetrics extends View {
   init(_props, cx) {
     this.doc = null;
     this.error = null;
+    this.bench = null;
+    this.benchError = null;
     this.tab = TABS.includes(props()?.tab) ? props().tab : "Throughput"; // a prop only smoke.sh passes
     this.days = "7";
     cx.spawn(async (cx) => {
@@ -25,6 +28,17 @@ export default class FactoryMetrics extends View {
             const errors = validateMetrics(doc);
             [this.doc, this.error] = errors.length ? [null, `metrics.json: ${errors[0]}`] : [doc, null];
           } catch (e) { [this.doc, this.error] = [null, `metrics.json: ${e.message}`]; }
+        }
+        // The Benchmarks tab's file: absent until a suite has run.
+        const btext = await readTextFile(`${dir}/benchmarks.json`);
+        [this.bench, this.benchError] = [null, null];
+        if (btext != null) {
+          try {
+            const b = JSON.parse(btext);
+            const errors = validateBenchmarks(b);
+            if (errors.length) this.benchError = `benchmarks.json: ${errors[0]}`;
+            else this.bench = b;
+          } catch (e) { this.benchError = `benchmarks.json: ${e.message}`; }
         }
         cx.notify();
         if (checking()) return;
@@ -94,7 +108,22 @@ export default class FactoryMetrics extends View {
         .child(div().w(110).text_color(q.reverted ? t.blocked : t.muted).child(`${q.reverted} reverted`))
         .child(div().w(140).text_color(t.muted).child(`${q.retries_per_ticket} retries / ticket`))))
       : div().text_color(t.muted).child("No merged PRs in range.")));
-    return page.child(this.card(t, "Benchmarks", "coming later in M2", div().text_color(t.muted)
-      .child("Replays of past tickets under a changed model, harness or prompt, scored on hidden tests, cost and time (plan: Benchmarks).")));
+    return page.children(this.benchmarks(t));
+  }
+
+  // One card per suite: its latest report, a row per variant, the winner marked as a recommendation.
+  benchmarks(t) {
+    const suites = this.bench?.suites ?? [];
+    if (!suites.length) return [this.card(t, "Benchmarks", null, div().text_color(t.muted)
+      .child(this.benchError ?? "No benchmark has run yet. `factory bench <name>` replays your past merged PRs under each variant of a suite in .factory/benchmarks/."))];
+    const widths = [0, 170, 130, 70, 80, 110];
+    const cell = (i, text, color, bold) => (i === 0 ? div().flex_1().min_w(0).truncate() : div().w(widths[i]).flex_none())
+      .text_color(color).when(bold, (el) => el.font_semibold()).child(text);
+    return suites.map((s) => this.card(t, s.name, `${s.target} · latest run ${s.ended_at.slice(0, 10)}`, v_flex().gap(8)
+      .child(div().text_size(12).text_color(t.dim).child(suiteNote(s)))
+      .child(h_flex().gap(8).pb(4).border_b(1).border_color(t.border).text_size(12).text_color(t.dim).children(COLUMNS.map((c, i) => cell(i, c, t.dim, false))))
+      .children(variantRows(s).map((r) => h_flex().gap(8).items_center()
+        .children(r.cells.map((c, i) => cell(i, i === 0 && r.best ? `${c}  ✓ recommended` : c, r.best ? t.accent : i === 0 ? t.foreground : t.muted, r.best && i === 0)))))
+      .child(div().text_color(s.winner ? t.foreground : t.dim).child(s.recommendation ?? "No recommendation: a comparison needs two variants with scored runs."))));
   }
 }

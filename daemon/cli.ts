@@ -34,6 +34,7 @@ import { overwatch } from "./overwatch.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
 import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
+import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { migrateFlowStack } from "./migrate.ts";
 import { skipStep, setupSteps, skippedSteps, showSteps, writeSetup } from "./setup.ts";
@@ -85,6 +86,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   setup write [--budget 3M/150k] [--budget-day 40M/2M] [--merge human|auto] [--max-running n] [--queue owner/project]
                                      write .factory/ on branch factory/setup (a temporary worktree; your checkout is untouched)
   migrate flow-stack [--dry-run]     copy decisions, past tasks and lessons count from ~/.flow-stack and .flow/; prints proposals
+  bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
   validate [dir] [--json]            check .factory/ files (default ./.factory)
   status                             write status.json and print a summary
   run [--interval seconds] [--all]   the daemon: keep status.json fresh (--all: every factory)
@@ -128,7 +130,7 @@ function flag(args: string[], name: string) {
   return value;
 }
 
-export function main(argv: string[], log = console.log) {
+export function main(argv: string[], log = console.log): void | Promise<void> {
   const args = [...argv];
   const name = flag(args, "name") ?? process.env.FACTORY_NAME ?? basename(process.cwd());
   const repo = flag(args, "repo") ?? "unknown";
@@ -163,6 +165,7 @@ export function main(argv: string[], log = console.log) {
     return;
   }
   if (cmd === "run" && all) return runAll(interval, log);
+  if (cmd === "bench") return bench(p, args.filter((a) => !a.startsWith("--"))[1], args.includes("--dry-run"), log);
   // Only init makes a factory: a typo'd --name (or the window pointed at sample data)
   // must not leave a stray database for `run --all` to serve.
   if (cmd !== "init" && !existsSync(p.db)) throw new Error(`no factory "${name}" in ${dirname(p.dir)}; run factory init first`);
@@ -473,6 +476,24 @@ export function main(argv: string[], log = console.log) {
   }
 }
 
+// `factory bench <name>`: the suite's tasks and variants (--dry-run), or the replay itself. It
+// waits on agents, so it sits outside main's flow and owns its database handle.
+async function bench(p: ReturnType<typeof paths>, name: string | undefined, dryRun: boolean, log: (s: string) => void) {
+  if (!name) throw new Error("factory bench <name> [--dry-run]; the suites are in .factory/benchmarks/");
+  if (!existsSync(p.db)) throw new Error(`no factory in ${p.dir}; run factory init first`);
+  const db = open(p.db);
+  try {
+    const lead = needLead(db);
+    if (dryRun) return void describePlan(planSuite(lead.path, lead.slug, name, sh)).forEach((l) => log(l));
+    const r = await runSuite(db, { dir: p.dir, repo: lead.path, slug: lead.slug, name, run: sh, agent: hcAgent(sh), log });
+    setMeta(db, `bench_at:${name}`, new Date().toISOString()); // the schedule counts from the last run
+    log(`benchmark ${name}: ${r.runs} runs, $${r.spent_usd.toFixed(2)}${r.stopped ? ", stopped at its cap" : ""}; report in ${join(p.dir, "BENCHMARK.md")}`);
+    writeRuns(db, p.runs);
+  } finally {
+    db.close();
+  }
+}
+
 // Each trigger on its own clock (daemon/triggers.ts). The stamp is written outside the
 // change: a failing gh waits its turn like a working one.
 export function runTriggers(db: Database, o: { dir: string; repo: string; slug: string; run: typeof sh; now: string; log: (s: string) => void }) {
@@ -514,6 +535,28 @@ export function runTriggers(db: Database, o: { dir: string; repo: string; slug: 
   }
 }
 
+// A suite's `schedule:` is a clock of its own, like a trigger's `every`. A run takes hours,
+// so it starts as its own `factory bench` process instead of holding up the daemon's tick.
+// The stamp is written first: a suite that fails waits for its next turn like one that works.
+// A suite the daemon sees for the first time is stamped, not run: it costs real money, so
+// the first run is one interval away (or `factory bench`, which stamps too).
+export function runScheduledBenchmarks(db: Database, o: { repo: string; name: string; now: string; log: (s: string) => void; launch: (argv: string[]) => void }) {
+  for (const s of scheduledSuites(o.repo)) {
+    const key = `bench_at:${s.name}`;
+    const last = getMeta(db, key);
+    if (last && !isDue(last, Date.parse(o.now), s.ms)) continue;
+    setMeta(db, key, o.now);
+    if (!last) continue;
+    o.launch(["bun", import.meta.path, "bench", s.name, "--name", o.name]);
+    o.log(`factory: benchmark ${s.name} started`);
+  }
+}
+
+// Detached, so a restart of the daemon doesn't kill a night's run. Never from a test.
+const spawnDetached = (argv: string[]) => {
+  if (process.env.FACTORY_TEST_SANDBOX) throw new Error("a test tried to start a real benchmark process");
+  Bun.spawn(argv, { stdio: ["ignore", "ignore", "ignore"], env: process.env }).unref();
+};
 // An agent whose terminal exited without calling stage-done has still finished its turn.
 export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = sh, log = console.log) {
   const lead = leadRepo(db);
@@ -598,6 +641,7 @@ function writeAll(db: Database, p: ReturnType<typeof paths>) {
   if (lead) writeBlueprints(db, lead.path, p.blueprints);
   writeMetrics(db, p.metrics);
   writeRuns(db, p.runs);
+  writeBenchmarks(db, p.dir);
   for (const t of s.tickets) writeTicketFiles(db, p.dir, t.id);
 }
 
@@ -627,6 +671,8 @@ function runAll(interval: number, log: (s: string) => void) {
         setMeta(db, "heartbeat", new Date().toISOString());
         recordUsage(db, log);
         watchSessions(db, p, sh, log);
+        const lead = leadRepo(db);
+        if (lead) runScheduledBenchmarks(db, { repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
         writeAll(db, p);
       } catch (e) {
         log(`factory ${name}: ${(e as Error).message}`);
@@ -639,10 +685,10 @@ function runAll(interval: number, log: (s: string) => void) {
 }
 
 if (import.meta.main) {
+  const fail = (e: unknown) => { console.error(`factory: ${(e as Error).message}`); process.exit(1); };
   try {
-    main(process.argv.slice(2));
+    Promise.resolve(main(process.argv.slice(2))).catch(fail);
   } catch (e) {
-    console.error(`factory: ${(e as Error).message}`);
-    process.exit(1);
+    fail(e);
   }
 }

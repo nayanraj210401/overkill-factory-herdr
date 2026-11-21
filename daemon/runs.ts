@@ -1,6 +1,7 @@
 // runs.json, beside status.json: every agent session the factory started, newest
-// first, for the Tickets page's Runs view. Maintenance and benchmark runs aren't
-// recorded as sessions yet; the file's contract already has room for them.
+// first, for the Tickets page's Runs view. A benchmark run (bench_runs) joins them as
+// kind benchmark, with no ticket and a negative id so it never matches a session's.
+// Maintenance runs aren't recorded yet; the file's contract already has room for them.
 import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,7 +52,14 @@ export function buildRuns(db: Database, now = new Date()) {
       transcript: transcriptOf(r, harness, next?.started_at, files),
     };
   });
-  return { generated_at: now.toISOString(), runs };
+  const bench = (db.query(`SELECT r.*, b.suite, b.target FROM bench_runs r JOIN bench_batches b ON b.id = r.batch WHERE r.status != 'skipped' ORDER BY r.started_at DESC, r.id DESC LIMIT ?`).all(RUNS_CAP) as any[]).map((r) => ({
+    id: -r.id, ticket: null, title: `${r.suite} · #${r.task} · ${r.variant}`, kind: "benchmark", stage: r.target, harness: r.harness ?? "unknown", model: r.model,
+    started_at: r.started_at, ended_at: r.ended_at,
+    duration_s: r.ended_at ? Math.round((Date.parse(r.ended_at) - Date.parse(r.started_at)) / 1000) : null,
+    tokens_in: r.tokens_in, tokens_out: r.tokens_out, usd: +r.usd.toFixed(4), transcript: r.transcript,
+  }));
+  const all = [...runs, ...bench].sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : b.id - a.id)).slice(0, RUNS_CAP);
+  return { generated_at: now.toISOString(), runs: all };
 }
 
 export function writeRuns(db: Database, path: string, now = new Date()) {

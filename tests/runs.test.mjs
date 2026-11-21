@@ -20,7 +20,7 @@ test("a run with a bad kind or a missing field is refused", () => {
 });
 
 test("the kind chips count only the kinds that are there, and a kind filters the list", () => {
-  assert.deepEqual(kindCounts(fixture.runs).map((k) => [k.id, k.n]), [["stage", 7], ["grooming", 1], ["cloud", 1]]);
+  assert.deepEqual(kindCounts(fixture.runs).map((k) => [k.id, k.n]), [["stage", 7], ["grooming", 1], ["cloud", 1], ["benchmark", 1]]);
   assert.equal(filterRuns(fixture.runs, null).length, fixture.runs.length);
   assert.deepEqual(filterRuns(fixture.runs, "cloud").map((r) => r.id), [7]);
 });
