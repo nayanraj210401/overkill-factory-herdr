@@ -7,6 +7,7 @@ import { MIGRATIONS, leadRepo, listRepos, open, repoOf, setRepo, setWork } from 
 import { main, paths } from "./cli.ts";
 import { buildStatus } from "./status.ts";
 import { writeTicketFiles } from "./ticket.ts";
+import { validateStatus } from "../lib/status.js";
 
 test("migration 11 moves a one-repo factory's repo and each ticket's work to the new tables", () => {
   const path = join(mkdtempSync(join(tmpdir(), "mig-")), "factory.db");
@@ -85,4 +86,21 @@ test("a ticket's files read its PR from the lead repo's row", () => {
   setWork(db, 9, { pr_number: 77, pr_watched: 1 });
   writeTicketFiles(db, dir, 9);
   expect(readFileSync(join(dir, "tickets/9/STATUS.md"), "utf8")).toContain("Ship it is ready: PR #77");
+});
+
+test("status.json lists the factory's repos and each ticket's, lead first; one not started works in the lead", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "st-")), "factory.db"));
+  setRepo(db, { slug: "acme/api", path: "/src/api", lead: true });
+  setRepo(db, { slug: "acme/web", path: "/src/web", lead: false });
+  db.exec(`INSERT INTO tickets (id, title, state, updated_at) VALUES (1, 'both', 'ready', '2026-11-21T09:00:00Z'), (2, 'not started', 'queued', '2026-11-21T09:00:00Z')`);
+  setWork(db, 1, { worktree: "/wt/api", pr_number: 5, pr_watched: 1 });
+  db.query("INSERT INTO ticket_repos (ticket, repo, worktree, pr_number) VALUES (1, 'acme/web', '/wt/web', 6)").run();
+  const s = buildStatus(db);
+  expect(validateStatus(s)).toEqual([]);
+  expect(s.factory).toMatchObject({ repo: "acme/api", repos: ["acme/api", "acme/web"] });
+  expect(s.tickets.map((t: any) => t.repos)).toEqual([
+    [{ slug: "acme/api", lead: true, pr: { number: 5, watched: true, checked_at: null }, worktree: "/wt/api" },
+     { slug: "acme/web", lead: false, pr: { number: 6, watched: false, checked_at: null }, worktree: "/wt/web" }],
+    [{ slug: "acme/api", lead: true, pr: null, worktree: null }],
+  ]);
 });

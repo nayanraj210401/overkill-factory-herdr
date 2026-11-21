@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, setShared } from "herdr";
-import { needsYou, ago, compact } from "./lib/model.js";
+import { needsYou, ago, compact, repoBadge } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, act } from "./lib/store.js";
@@ -32,7 +32,8 @@ export default class FactoryHome extends View {
     cx.notify();
   }
 
-  card(t, { ticket, kind }, now, on) {
+  card(t, s, { ticket, kind }, now, on) {
+    const badge = repoBadge(s, ticket);
     const color = kind === "merge" ? t.done : t.blocked;
     const tag = kind === "question" ? "grooming · waiting on you" : kind === "parked" ? "parked"
       : ticket.pr?.watched && ticket.pr.checked_at ? `watching · checked ${ago(ticket.pr.checked_at, now)}` : "ready to merge";
@@ -42,6 +43,7 @@ export default class FactoryHome extends View {
       .child(v_flex().flex_1().px(14).py(10).gap(3)
         .child(h_flex().gap(8)
           .child(div().flex_1().font_semibold().text_color(t.foreground).child(`#${ticket.id} ${ticket.title}`))
+          .when(!!badge, (el) => el.child(div().text_size(11.5).text_color(t.dim).child(badge)))
           .child(div().text_size(12).text_color(color).child(tag)))
         .child(div().text_color(t.muted).child(ticket.needs?.text ?? ticket.detail ?? "")));
   }
@@ -74,13 +76,14 @@ export default class FactoryHome extends View {
             .child(div().flex_1().text_color(t.foreground).truncate().child(e.what))))
           .when(!s.away.events.length, (el) => el.child(div().text_color(t.dim).child("Nothing happened.")))))
       .child(section("Needs you"))
-      .children(needs.map((n, i) => this.card(t, n, now, focused && i === this.at)))
+      .children(needs.map((n, i) => this.card(t, s, n, now, focused && i === this.at)))
       .child(section("Running"))
       .children(running.map((x, i) => h_flex().id(`r-${x.id}`).h(30).px(4).gap(10).items_center().rounded(6).cursor_pointer()
         .when(focused && needs.length + i === this.at, (el) => el.bg(t.selected))
         .hover((st) => st.bg(t.hover)).on_click(() => open(x.id))
         .child(div().size(7).rounded_full().bg(t.working))
         .child(div().flex_1().text_color(t.foreground).truncate().child(`#${x.id} ${x.title}`))
+        .when(!!repoBadge(s, x), (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child(repoBadge(s, x))))
         .child(div().w(200).text_color(x.where === "cloud" ? t.accent : t.muted).truncate()
           .child(x.where === "cloud" ? `${x.stage} · in cloud` : [x.stage, x.detail].filter(Boolean).join(" · ")))
         .child(div().w(70).text_color(t.muted).child(`${compact(x.tokens.input)} in`))

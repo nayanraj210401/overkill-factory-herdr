@@ -5,7 +5,11 @@
   "factory": {
     "name": "acme-api",
     "repo": "acme/api",
-    "daemon": true
+    "daemon": true,
+    "repos": [
+      "acme/api",
+      "acme/web"
+    ]
   },
   "plan": {
     "window_5h": 0.42,
@@ -158,7 +162,21 @@
       "where": "cloud",
       "pr": null,
       "blocked_by": null,
-      "needs": null
+      "needs": null,
+      "repos": [
+        {
+          "slug": "acme/api",
+          "lead": true,
+          "pr": null,
+          "worktree": null
+        },
+        {
+          "slug": "acme/web",
+          "lead": false,
+          "pr": null,
+          "worktree": null
+        }
+      ]
     },
     {
       "id": 409,
@@ -166,7 +184,7 @@
       "state": "ready",
       "blueprint": "chore",
       "stage": "merge",
-      "detail": "Review round 1: 2 fixed, 1 pushed back · 6 of 6 ready rules",
+      "detail": "Review round 1: 2 fixed, 1 pushed back \u00b7 6 of 6 ready rules",
       "updated_at": "2026-11-21T09:58:00Z",
       "tokens": {
         "input": 900000,

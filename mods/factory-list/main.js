@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, setShared } from "herdr";
-import { FILTERS, filterTickets, countBy, groupOf, subtitle } from "./lib/model.js";
+import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subtitle } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, act } from "./lib/store.js";
@@ -15,6 +15,7 @@ export default class FactoryList extends View {
   init(_props, cx) {
     this.filter = "all";
     this.query = "";
+    this.repo = null; // a slug, or null for every repo
     this.input = InputState.new({ placeholder: "Search tickets…" });
     this.input.on("change", (_e, cx) => { this.query = this.input.value(); this.at = 0; cx.notify(); });
     this.input.on("focus", () => { this.typing = true; });
@@ -43,8 +44,10 @@ export default class FactoryList extends View {
     const t = theme();
     const s = status();
     if (!s) return div().size_full().bg(t.background);
-    const counts = countBy(s.tickets);
-    const rows = filterTickets(s.tickets, this.filter, this.query);
+    const repos = factoryRepos(s);
+    if (!repos.includes(this.repo)) this.repo = null;
+    const counts = countBy(s.tickets, this.repo, s.factory.repo);
+    const rows = filterTickets(s.tickets, this.filter, this.query, this.repo, s.factory.repo);
     const now = Date.now();
     const chip = (f) => {
       const on = f.id === this.filter;
@@ -52,6 +55,14 @@ export default class FactoryList extends View {
         .border_color(on ? t.accent : t.border).bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)
         .on_click((_e, cx) => { this.filter = f.id; this.at = 0; cx.notify(); })
         .child(`${f.title} · ${counts[f.id]}`);
+    };
+    // With more than one repo: which repo's tickets (a cross-repo ticket is in each of its repos).
+    const repoChip = (slug) => {
+      const on = slug === this.repo;
+      return div().id(`repo-${slug ?? "all"}`).px(8).py(2).rounded(10).cursor_pointer().text_size(11.5)
+        .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted).hover((st) => st.text_color(t.foreground))
+        .on_click((_e, cx) => { this.repo = slug; this.at = 0; cx.notify(); })
+        .child(slug ?? "All repos");
     };
     const cell = (w, text, color) => div().w(w).flex_none().truncate().text_color(color).child(text);
     const focused = this.handle.is_focused();
@@ -67,6 +78,9 @@ export default class FactoryList extends View {
         .child(div().id("new").px(10).py(4).rounded(6).bg(t.accent).text_color(t.background).text_size(12).cursor_pointer()
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).hover((st) => st.opacity(0.88))
           .on_click(() => act({ kind: "new" })).child("New ticket  n")))
+      .when(repos.length > 1, (el) => el.child(h_flex().gap(4).items_center()
+        .child(div().pr(4).text_size(11.5).text_color(t.dim).child("Repo"))
+        .children([null, ...repos].map(repoChip))))
       .child(h_flex().px(8).pb(4).gap(8).border_b(1).border_color(t.border).text_size(11.5).text_color(t.dim)
         .child(div().flex_1().child("Ticket"))
         .children(COLS.map(([name, w]) => div().w(w).flex_none().child(name))))
@@ -80,7 +94,8 @@ export default class FactoryList extends View {
             .on_click(() => open(x.id))
             .child(h_flex().flex_1().gap(8).items_center()
               .child(div().size(7).flex_none().rounded_full().bg(done ? t.done : t[DOT[g]]).opacity(done ? 0.5 : 1))
-              .child(div().truncate().text_color(done ? t.muted : t.foreground).child(`#${x.id} ${x.title}`)))
+              .child(div().truncate().text_color(done ? t.muted : t.foreground).child(`#${x.id} ${x.title}`))
+              .when(!!repoBadge(s, x), (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child(repoBadge(s, x)))))
             .child(cell(230, subtitle(x, now), g === "needs" ? t.blocked : x.where === "cloud" ? t.accent : t.muted))
             .child(cell(100, x.blueprint, t.muted))
             .child(cell(90, x.tokens.input ? `${(x.tokens.input / 1e6).toFixed(1)}M` : "–", t.muted))
