@@ -12,6 +12,7 @@ import { LOCAL_IDS } from "./intake.ts";
 import { capsOf, readTriggers, runningByTrigger, withinCaps } from "./triggers.ts";
 import { argvFor, loadAgent, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
 import { mayStart } from "./away.ts";
+import { openAgent } from "./herdr.ts";
 import { estimateBudget, startHold } from "./budget.ts";
 import { compact } from "../lib/model.js";
 
@@ -64,15 +65,24 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const agent = loadAgent(o.repo, g.agent);
   const argv = argvFor(agent, { harness: "claude", model: "sonnet" },
     triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));
-  // Not a Herdr space: there's no worktree yet, and the triage agent only reads.
-  const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f${o.id}-groom`, "--cwd", folder,
-    "--label", `factory.ticket=${o.id}`, "--label", "factory.stage=groom", ...argv]);
-  if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
-  const terminal = (() => { try { return JSON.parse(hc.out).address ?? `f${o.id}-groom`; } catch { return `f${o.id}-groom`; } })();
+  // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
+  // later), so you can watch the triage agent and answer it. No window: a background terminal.
+  const made = openAgent(o.run, { folder, space: t.space ?? null, name: "groom", argv });
+  let terminal: string;
+  if (made) {
+    terminal = made.terminal;
+    o.run(["hc", "label", terminal, `factory.ticket=${o.id}`, "factory.stage=groom"]);
+    db.query("UPDATE tickets SET space = ? WHERE id = ?").run(made.space, o.id);
+  } else {
+    const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f${o.id}-groom`, "--cwd", folder,
+      "--label", `factory.ticket=${o.id}`, "--label", "factory.stage=groom", ...argv]);
+    if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
+    terminal = (() => { try { return JSON.parse(hc.out).address ?? `f${o.id}-groom`; } catch { return `f${o.id}-groom`; } })();
+  }
   db.query("UPDATE tickets SET state = 'grooming', needs_kind = NULL, needs_text = NULL, groomed_at = NULL, updated_at = ? WHERE id = ?").run(o.now, o.id);
   enterStage(db, o.id, "Groom", `${g.agent} agent`, [], o.now);
-  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, 'groom', ?, ?, ?, ?, 0, ?)")
-    .run(o.id, g.agent, terminal, JSON.stringify(argv), o.now, folder);
+  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, 'groom', ?, ?, ?, ?, ?, ?)")
+    .run(o.id, g.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, folder);
   return terminal;
 }
 

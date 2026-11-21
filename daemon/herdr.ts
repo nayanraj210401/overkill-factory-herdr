@@ -40,7 +40,8 @@ export function openAgent(run: Run, o: { folder: string; space: string | null; n
     try { const m = JSON.parse(r.out); return r.code === 0 && m.terminal ? (m as Made) : null; } catch { return null; }
   };
   // A space the person closed is gone; the ticket then gets a new one.
-  return (o.space && tryDo("tab.new", { space: o.space, name: o.name, argv: o.argv, focus: false }))
+  // The tab opens in this agent's folder: a ticket's space starts in its ticket folder (grooming).
+  return (o.space && tryDo("tab.new", { space: o.space, folder: o.folder, name: o.name, argv: o.argv, focus: false }))
     || tryDo("space.new", { folder: o.folder, argv: o.argv, focus: false });
 }
 

@@ -18,7 +18,7 @@ export function parseSource(text: string): Source {
   return { goal: t.replace(/\s+/g, " ") };
 }
 
-export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string }) {
+export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string; groom?: boolean }) {
   const src = parseSource(o.text);
   let id: number;
   let title: string;
@@ -40,7 +40,8 @@ export function newTicket(db: Database, o: { text: string; repo: string; bluepri
     title = issue.title;
   }
   if (db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`#${id} is already a ticket`);
-  db.query("INSERT INTO tickets (id, title, blueprint, trigger_name, updated_at) VALUES (?, ?, ?, ?, ?)").run(id, title, o.blueprint, o.trigger ?? "manual", o.now);
+  // Groomed first (plan: grooming is the one stop), unless the caller starts it right away.
+  db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, title, o.groom ? "grooming" : "queued", o.blueprint, o.trigger ?? "manual", o.now);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, `added ${"goal" in src ? "a goal" : `issue #${id}`}`, o.now);
   return { id, title };
 }

@@ -148,14 +148,16 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons)), o.dir, o.id, guard);
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
+  // The ticket's first worktree stage: the other repos' shell tabs join its space with it.
+  const first = !db.query("SELECT 1 FROM sessions WHERE ticket = ? AND stage != 'groom' AND in_space = 1").get(o.id);
   const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
   let terminal: string;
   if (made) {
     terminal = made.terminal;
     o.run(["hc", "label", terminal, ...labels]);
     db.query("UPDATE tickets SET space = ? WHERE id = ?").run(made.space, o.id);
-    // A new space: each other repo's worktree gets a shell tab in it.
-    if (made.space !== t.space) for (const r of repos.slice(1)) if (r.worktree) openTab(o.run, { space: made.space, folder: r.worktree, name: r.repo.slice(r.repo.indexOf("/") + 1) });
+    // A new space, or the first stage in grooming's: each other repo's worktree gets a shell tab in it.
+    if (made.space !== t.space || first) for (const r of repos.slice(1)) if (r.worktree) openTab(o.run, { space: made.space, folder: r.worktree, name: r.repo.slice(r.repo.indexOf("/") + 1) });
   } else {
     const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", name, "--cwd", t.worktree,
       ...labels.flatMap((l) => ["--label", l]), ...argv]);

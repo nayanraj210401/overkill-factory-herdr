@@ -43,7 +43,7 @@ test("an agent opens as a tab in the ticket's space, else a new space, else noth
   expect(openAgent(run(true), { ...o, space: null })).toBeNull(); // the preload's home has no app
   fakeApp();
   expect(openAgent(run(true), o)).toEqual(made);
-  expect(calls.at(-1)).toEqual(["herdr-app", "do", "tab.new", '{"space":"sp0","name":"plan","argv":["claude","go"],"focus":false}']);
+  expect(calls.at(-1)).toEqual(["herdr-app", "do", "tab.new", '{"space":"sp0","folder":"/wt","name":"plan","argv":["claude","go"],"focus":false}']);
   expect(openAgent(run(false), o)).toEqual(made); // the person closed sp0
   expect(calls.at(-1)).toEqual(["herdr-app", "do", "space.new", '{"folder":"/wt","argv":["claude","go"],"focus":false}']);
 });

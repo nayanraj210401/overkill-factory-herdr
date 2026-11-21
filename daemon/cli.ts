@@ -37,7 +37,7 @@ import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { migrateFlowStack } from "./migrate.ts";
-import { skipStep, setupSteps, skippedSteps, showSteps, writeSetup } from "./setup.ts";
+import { claudeConfig, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -83,6 +83,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   decide <ticket> <who> <what> [why] log a decision
   setup [--json]                     the first-run checklist: each step ok, missing or skipped, with its fix command
   setup skip|unskip <step>           set a step aside (it stays on the list; rerun setup any time)
+  setup trust                        mark the factory's folders trusted in Claude Code, so its agents never stop at that prompt
   setup write [--budget 3M/150k] [--budget-day 40M/2M] [--merge human|auto] [--max-running n] [--queue owner/project]
                                      write .factory/ on branch factory/setup (a temporary worktree; your checkout is untouched)
   migrate flow-stack [--dry-run]     copy decisions, past tasks and lessons count from ~/.flow-stack and .flow/; prints proposals
@@ -178,12 +179,16 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (sub === "skip" || sub === "unskip") {
         change(db, () => skipStep(db, rest[0] ?? "", sub === "skip"));
         log(`${rest[0]}: ${sub === "skip" ? "skipped" : "back on the list"}`);
+      } else if (sub === "trust") {
+        const added = trust();
+        log(added.length ? `Claude Code now trusts ${added.join(" and ")} (in ${claudeConfig()}), so the factory's agents don't stop at "do you trust this folder?"` : "Claude Code trusts the factory's folders already");
+        return;
       } else if (sub === "write") {
         const r = writeSetup({ repo: lead.path, name: getMeta(db, "name") ?? name, slug: lead.slug,
           basics: { budget: budgetFlag ?? undefined, budgetDay: budgetDayFlag ?? undefined, merge: mergeFlag ?? undefined, maxRunning: maxRunningFlag === null ? undefined : Number(maxRunningFlag), queue: queueFlag ?? undefined } });
         log(`${r.committed ? `committed ${r.sha} on` : "already up to date on"} ${r.branch}: ${r.files.join(", ")}\nyour checkout (${r.from}) is untouched; review the branch, then merge it: git merge ${r.branch}`);
         return;
-      } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | write [--budget …]]");
+      } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | trust | write [--budget …]]");
       else {
         const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db) });
         log(json ? JSON.stringify({ steps }) : showSteps(steps));
@@ -267,10 +272,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       // A held start still adds the ticket; it waits in the queue.
       const held = start ? startHold(db, lead.path, new Date()) : null;
       change(db, () => {
-        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now() });
+        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start });
         if (start && !held) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
       });
-      log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " queued"}`);
+      log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " added; the triage agent grooms it, and it starts once nothing is left to ask"}`);
       writeStatus(db, p.status);
       writeTicketFiles(db, p.dir, r.id);
       return;
