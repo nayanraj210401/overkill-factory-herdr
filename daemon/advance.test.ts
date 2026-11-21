@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { open, setMeta } from "./db.ts";
 import { advance, sh, startTicket, type Run } from "./runner.ts";
 import { watchSessions } from "./cli.ts";
+import { recordVerdict } from "./ready.ts";
+import { readFileSync } from "node:fs";
 
 function setup(blueprint = "feature", floor = '"true"') {
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
@@ -29,17 +31,22 @@ function setup(blueprint = "feature", floor = '"true"') {
   const ticket = () => db.query("SELECT state, stage, retries, needs_text FROM tickets WHERE id = 7").get() as any;
   const evidence = (name: string, result: "PASS" | "FAIL") =>
     db.query("INSERT INTO evidence (ticket, check_name, result, at) VALUES (7, ?, ?, '2026-11-21T10:00:00Z')").run(name, result);
-  return { db, dir, repo, run, step, ticket, evidence, started };
+  const verdict = (kind: "holdout" | "review", result: "PASS" | "FAIL", detail: string | null = null) =>
+    recordVerdict(db, { id: 7, kind, result, detail, now: new Date().toISOString() });
+  return { db, dir, repo, run, step, ticket, evidence, verdict, started };
 }
 
 test("a feature ticket walks its agents, passes the evidence check, and waits at pr", () => {
-  const { step, ticket, evidence, started, db } = setup();
+  const { step, ticket, evidence, verdict, started, db } = setup();
   expect(step()).toMatchObject({ stage: "plan", terminal: "t2" });
   expect(step()).toMatchObject({ stage: "implement", terminal: "t3" });
   evidence("C1", "PASS");
-  expect(step()).toMatchObject({ stage: "review", terminal: "t4" }); // verify ran in between and passed
+  expect(step()).toMatchObject({ stage: "holdout", terminal: "t4" }); // verify ran in between and passed
+  verdict("holdout", "PASS");
+  expect(step()).toMatchObject({ stage: "review", terminal: "t5" });
+  verdict("review", "PASS");
   expect(step()).toMatchObject({ stage: "pr", waiting: true });
-  expect(started).toEqual(["spec", "plan", "implement", "review"]);
+  expect(started).toEqual(["spec", "plan", "implement", "holdout", "review"]);
   expect(ticket()).toMatchObject({ state: "running", stage: "pr" });
   expect((db.query("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL").get() as any).n).toBe(0);
   expect((db.query("SELECT result, detail FROM evidence WHERE check_name = 'evidence'").get() as any)).toEqual({ result: "PASS", detail: "1 checks pass" });
@@ -55,6 +62,30 @@ test("a failing check goes back to on_fail, then parks after max_retries", () =>
   expect(ticket().retries).toBe(3);
   expect(step()).toMatchObject({ parked: true, stage: "verify" });
   expect(ticket()).toMatchObject({ state: "parked", needs_text: "Verify failed 4 times: evidence check failed" });
+});
+
+test("a reviewer's blockers go to REVIEW.md and back to implement; a reviewer with no verdict fails too", () => {
+  const { step, ticket, evidence, verdict, dir } = setup();
+  step(); step(); evidence("C1", "PASS"); step(); // plan, implement, verify → holdout
+  verdict("holdout", "PASS");
+  expect(step()).toMatchObject({ stage: "review" });
+  verdict("review", "FAIL", "the limit key is the raw email");
+  expect(step()).toMatchObject({ stage: "implement" });
+  expect(ticket().retries).toBe(1);
+  const review = readFileSync(join(dir, "tickets/7/REVIEW.md"), "utf8");
+  expect(review).toContain("Blocked in review");
+  expect(review).toContain("- the limit key is the raw email\n");
+  step(); verdict("holdout", "PASS"); // implement → verify (passes, resetting the check's counter) → holdout
+  expect(step()).toMatchObject({ stage: "review" });
+  expect(step()).toMatchObject({ stage: "implement" }); // ended without a verdict
+  expect(ticket().retries).toBe(2); // review's own count survives verify's reset
+  step(); verdict("holdout", "PASS"); step();
+  verdict("review", "FAIL", "still raw");
+  expect(step()).toMatchObject({ stage: "implement" });
+  step(); verdict("holdout", "PASS"); step();
+  verdict("review", "FAIL", "still raw");
+  expect(step()).toMatchObject({ parked: true, stage: "review" });
+  expect(ticket().needs_text).toBe("Review failed 4 times: review: still raw");
 });
 
 test("the tests check runs quality_floor in the worktree and records each command", () => {

@@ -3,8 +3,8 @@
 // `factory run`, the daemon. Every change is checked against the status.json
 // contract inside its transaction, so a bad write never lands.
 import { homedir } from "node:os";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { readyRules } from "./ready.ts";
+import { existsSync, readdirSync } from "node:fs";
+import { recordVerdict } from "./ready.ts";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
@@ -17,7 +17,7 @@ import { validateDir } from "./validate.ts";
 import { newTicket } from "./intake.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
-import { advance, answer, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, answer, checkReady, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -38,6 +38,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
   stage <id> <Name> [detail…] [--next A,B]  enter a stage (the current one ends)
   evidence <id> <check> pass|fail [detail…] record a check result
+  verdict <id> holdout|review pass|fail [detail…] [--by voter]  a checker's or reviewer's verdict
   decide <ticket> <who> <what> [why] log a decision
   validate [dir] [--json]            check .factory/ files (default ./.factory)
   status                             write status.json and print a summary
@@ -90,6 +91,7 @@ export function main(argv: string[], log = console.log) {
   const next = flag(args, "next");
   const repoPath = flag(args, "path");
   const failReason = flag(args, "fail");
+  const by = flag(args, "by");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -147,6 +149,14 @@ export function main(argv: string[], log = console.log) {
         if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(Number(sub))) throw new Error(`no ticket ${sub}`);
         db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now());
       });
+    } else if (cmd === "verdict") {
+      const [kind, result, ...detail] = rest;
+      const r = result?.toUpperCase();
+      if (!Number.isInteger(Number(sub)) || (kind !== "holdout" && kind !== "review") || (r !== "PASS" && r !== "FAIL"))
+        throw new Error("usage: factory verdict <id> holdout|review pass|fail [detail…] [--by voter]");
+      let voter = "";
+      change(db, () => { voter = recordVerdict(db, { id: Number(sub), kind, result: r, detail: detail.join(" ") || null, by, now: now() }); });
+      log(`#${sub}: ${kind} ${r} from ${voter}`);
     } else if (cmd === "new") {
       const text = [sub, ...rest].filter(Boolean).join(" ");
       const repoDir = getMeta(db, "repo_path");
@@ -216,11 +226,9 @@ export function main(argv: string[], log = console.log) {
       change(db, () => { r = mergeTicket(db, { repo: repoDir, id: Number(sub) }); });
       log(`#${sub}: merged PR #${r.pr}`);
     } else if (cmd === "ready") {
-      const t = db.query("SELECT worktree FROM tickets WHERE id = ?").get(Number(sub)) as any;
-      if (!t?.worktree) throw new Error(`#${sub} has no worktree yet; factory start ${sub}`);
-      const repoDir = getMeta(db, "repo_path")!;
-      const text = readFileSync(join(repoDir, ".factory/factory.yaml"), "utf8");
-      const rules = readyRules(db, { id: Number(sub), dir: p.dir, worktree: t.worktree, rules: (Bun.YAML.parse(text) as any).ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], run: sh });
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const rules = checkReady(db, { dir: p.dir, repo: repoDir, id: Number(sub), run: sh });
       for (const r of rules) log(`${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`);
       return;
     } else if (cmd === "sessions") {

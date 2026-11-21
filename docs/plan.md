@@ -524,7 +524,8 @@ stages:
   spec:      { agent: spec-writer, output: INTENT.md, next: [plan, implement] }
   plan:      { agent: planner, output: SLICES.md, next: [implement] }
   implement: { agent: builder, per: slice, next: [verify] }
-  verify:    { check: evidence, next: [review], on_fail: implement, max_retries: 3 }
+  verify:    { check: evidence, next: [holdout], on_fail: implement, max_retries: 3 }
+  holdout:   { agent: checker, next: [review], on_fail: implement }   # hidden tests
   review:    { agent: reviewer, next: [pr], on_fail: implement }
   pr:        { requires: ready, output: PR.md, template: pr-readable, next: [merge] }
   merge:     { gate: human, next: [end] }   # auto on a chore blueprint, if you choose
