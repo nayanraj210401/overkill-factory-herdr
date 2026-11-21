@@ -6,3 +6,4 @@ mods/*/*.d.ts
 mods/factory-soon/previews/
 smoke-out/
 .serena/
+dist/

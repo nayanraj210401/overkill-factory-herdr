@@ -5,6 +5,7 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs && bun test daemon/",
     "factory": "bun daemon/cli.ts",
+    "build": "bun build --compile daemon/cli.ts --outfile dist/factory",
     "check": "scripts/check.sh"
   }
 }
