@@ -18,6 +18,7 @@ import { login, newTicket, pollQueue } from "./intake.ts";
 import { watchPrs } from "./watch.ts";
 import { judge } from "./comments.ts";
 import { setAway } from "./away.ts";
+import { startHold } from "./budget.ts";
 import { toCloud, toLocal } from "./cloud.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
@@ -211,11 +212,13 @@ export function main(argv: string[], log = console.log) {
       const lead = needLead(db);
       let r: any = null;
       let terminal: string | null = null;
+      // A held start still adds the ticket; it waits in the queue.
+      const held = start ? startHold(db, lead.path, new Date()) : null;
       change(db, () => {
         r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now() });
-        if (start) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
+        if (start && !held) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
       });
-      log(`#${r.id} ${r.title}${start ? ` started${terminal ? `: agent in ${terminal}` : ""}` : " queued"}`);
+      log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " queued"}`);
       writeStatus(db, p.status);
       writeTicketFiles(db, p.dir, r.id);
       return;

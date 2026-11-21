@@ -5,7 +5,8 @@ import { renameSync, writeFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
 import { getMeta, leadRepo, listRepos, mergeOrder } from "./db.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
-import { digest } from "./away.ts";
+import { budgetCap, digest } from "./away.ts";
+import { budgetUse, dayCap, startHold } from "./budget.ts";
 
 type Row = Record<string, any>;
 
@@ -13,13 +14,14 @@ const HEARTBEAT_MS = 15_000;
 
 const prOf = (r: Row) => (r.pr_number == null ? null : { number: r.pr_number, watched: !!r.pr_watched, checked_at: r.pr_checked_at });
 
-export function ticketOf(r: Row, repos?: Row[]) {
+export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: number } | null) {
   return {
     id: r.id, title: r.title, state: r.state, blueprint: r.blueprint,
     stage: r.stage, detail: r.detail, updated_at: r.updated_at,
     tokens: { input: r.tokens_in, output: r.tokens_out },
     budget: { input: r.budget_in, output: r.budget_out },
     usd: r.usd, where: r.location,
+    warning: r.state === "running" && budgetUse(r as any, cap).frac >= 0.8 ? `${Math.round(budgetUse(r as any, cap).frac * 100)}% of its token budget used` : null,
     pr: prOf(r),
     ...(repos ? { repos: repos.map((x) => ({ slug: x.repo, lead: !!x.lead, pr: prOf(x), worktree: x.worktree ?? null, branch: x.branch ?? null,
       merged_at: x.merged_at ?? null, merge: mergeOrder(repos as any).indexOf(x) + 1 })) } : {}),
@@ -38,7 +40,9 @@ export function buildStatus(db: Database, now = new Date()) {
   const reposOf = (id: number) => work.get(id) ?? (lead ? [{ repo: lead.slug, lead: 1 }] : undefined);
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal,
     (SELECT COUNT(*) FROM sessions s WHERE s.ticket = t.id AND s.agent != 'cloud') AS sessions
-    FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ticketOf(r, reposOf(r.id)));
+    FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null));
+  const hold = lead ? startHold(db, lead.path, now) : null;
+  const perDay = lead ? dayCap(lead.path) : null;
   const today = now.toISOString().slice(0, 10);
   const used = db.query("SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o, SUM(usd) AS usd FROM usage WHERE at >= ?").get(today) as any;
   // PRs opened today: what each cost, and how long from the ticket's first stage to the PR.
@@ -52,7 +56,7 @@ export function buildStatus(db: Database, now = new Date()) {
     generated_at: now.toISOString(),
     source: "daemon",
     factory: { name: getMeta(db, "name") ?? "factory", repo: lead?.slug ?? "unknown", ...(lead ? { repos: listRepos(db).map((r) => r.slug) } : {}), daemon: now.getTime() - beat < HEARTBEAT_MS },
-    plan: planMeters(db, now),
+    plan: { ...planMeters(db, now), hold },
     today: {
       time_to_pr_min: Math.round(avg(prs.filter((p) => p.began).map((p) => (Date.parse(p.at) - Date.parse(p.began!)) / 60000))),
       cost_per_pr_usd: +avg(prs.map((p) => p.usd ?? 0)).toFixed(2),
@@ -60,7 +64,7 @@ export function buildStatus(db: Database, now = new Date()) {
       revert_rate: revertRate(db, now),
       usd: +(used.usd ?? 0).toFixed(4),
       tokens: { input: used.i ?? 0, output: used.o ?? 0 },
-      budget: { input: Number(getMeta(db, "budget_day_in") ?? 40e6), output: Number(getMeta(db, "budget_day_out") ?? 2e6) },
+      budget: { input: perDay?.input ?? Number(getMeta(db, "budget_day_in") ?? 40e6), output: perDay?.output ?? Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
     away: digest(db, now.toISOString()),
     to_review: 0,

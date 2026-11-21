@@ -18,6 +18,7 @@ export default class FactoryStatus extends View {
       `5h window ${Math.round(s.plan.window_5h * 100)}%`,
       `week ${Math.round(s.plan.week * 100)}%`,
       `${s.rules_failing} rules failing`,
+      ...(s.plan.hold ? [`nothing new starts: ${s.plan.hold}`] : []),
     ];
     return bar.child(div().size(6).rounded_full().bg(s.rules_failing ? t.blocked : t.done)).child(parts.join(" · "));
   }
