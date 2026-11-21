@@ -14,11 +14,13 @@ import { parseTokens } from "../lib/model.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
+import { newTicket } from "./intake.ts";
 import { advance, answer, mergeTicket, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database (path: the repo checkout, default .)
+  new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
   budget <id> <in>[/<out>]           set a ticket's token budget: 3M, or 3M/200k
@@ -86,7 +88,8 @@ export function main(argv: string[], log = console.log) {
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
-  const [cmd, sub, ...rest] = args.filter((a) => a !== "--all" && a !== "--json");
+  const start = args.includes("--start");
+  const [cmd, sub, ...rest] = args.filter((a) => a !== "--all" && a !== "--json" && a !== "--start");
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json });
@@ -139,6 +142,20 @@ export function main(argv: string[], log = console.log) {
         if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(Number(sub))) throw new Error(`no ticket ${sub}`);
         db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now());
       });
+    } else if (cmd === "new") {
+      const text = [sub, ...rest].filter(Boolean).join(" ");
+      const repoDir = getMeta(db, "repo_path");
+      if (start && !repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      let r: any = null;
+      let terminal: string | null = null;
+      change(db, () => {
+        r = newTicket(db, { text, repo: getMeta(db, "repo") ?? "unknown", blueprint, run: sh, now: now() });
+        if (start) terminal = startTicket(db, { dir: p.dir, repo: repoDir!, id: r.id });
+      });
+      log(`#${r.id} ${r.title}${start ? ` started${terminal ? `: agent in ${terminal}` : ""}` : " queued"}`);
+      writeStatus(db, p.status);
+      writeTicketFiles(db, p.dir, r.id);
+      return;
     } else if (cmd === "start") {
       const repoDir = getMeta(db, "repo_path");
       if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");

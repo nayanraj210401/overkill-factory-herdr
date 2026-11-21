@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeAsk, budgetAsk, sendBackAsk, answerAsk, cliCommand } from "../lib/actions.js";
+import { newAsk, mergeAsk, budgetAsk, sendBackAsk, answerAsk, cliCommand } from "../lib/actions.js";
 
 const ticket = (o) => ({ id: 409, title: "Bump dependencies", state: "ready", pr: { number: 511, watched: true },
   tokens: { input: 1_200_000, output: 64_000 }, budget: { input: 3_000_000, output: 200_000 }, ...o });
@@ -39,4 +39,9 @@ test("x asks for a note on a ready PR; u asks a parked ticket's question", () =>
   assert.deepEqual([u.title, u.detail, u.args], ["Answer #409", "Verify failed 3 times", ["answer", "409"]]);
   assert.deepEqual(answerAsk(ticket()), { error: "#409 isn't waiting for an answer" });
   assert.deepEqual(answerAsk(ticket({ state: "grooming", needs: { kind: "question", text: "?" } })), { error: "Answer #409's questions on its issue for now" });
+});
+
+test("n asks for an issue or goal and starts it", () => {
+  const a = newAsk();
+  assert.deepEqual([a.args, a.input.value, a.confirm], [["new", "--start"], "", "Create and start"]);
 });
