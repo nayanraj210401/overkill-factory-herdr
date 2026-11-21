@@ -44,7 +44,7 @@ test("row subtitles read like the mockup", () => {
   const by = Object.fromEntries(status.tickets.map((t) => [t.id, subtitle(t, now)]));
   assert.equal(by[421], "grooming · 2 questions");
   assert.equal(by[425], "parked · retries used up");
-  assert.equal(by[412], "implement · 1.2M/3M in");
+  assert.equal(by[412], "implement · 2.5M/3M in");
   assert.equal(by[418], "verify · in cloud");
   assert.equal(by[409], "watching · checked 2m ago");
   assert.equal(subtitle(status.tickets[4], Date.parse("2026-11-21T09:58:20Z")), "watching · checked just now");
@@ -76,9 +76,25 @@ test("STATUS.md parses into a stage timeline", async () => {
   const { summary, stages } = parseStatusMd(text);
   assert.match(summary, /^Rate-limit login is in implement/);
   assert.deepEqual(stages.map((s) => s.state), ["done", "done", "done", "now", "next", "next", "next"]);
-  assert.deepEqual(stages[3], { state: "now", name: "Implement", time: "12m", detail: "slice 2 of 3 · builder" });
+  assert.deepEqual(stages[3], { state: "now", name: "Implement", time: "12m", detail: "slice 2 of 3 · handoff at 60%" });
   assert.deepEqual(stages[4], { state: "next", name: "Verify", time: null, detail: "" });
   assert.deepEqual(parseStatusMd(null), { summary: "", stages: [] });
+});
+
+test("budget warning, session and handoff show on the surfaces", async () => {
+  const { warnMark, stageDetail, holdText, localRunning, parseStatusMd } = await import("../lib/model.js");
+  const by = Object.fromEntries(status.tickets.map((t) => [t.id, t]));
+  assert.equal(warnMark(by[412]), "83%");
+  assert.equal(warnMark(by[418]), null);
+  assert.equal(warnMark({ warning: "close to its budget" }), "!");
+  const text = readFileSync(new URL("../fixtures/acme-api/tickets/412/STATUS.md", import.meta.url), "utf8");
+  const now = parseStatusMd(text).stages.find((s) => s.state === "now");
+  assert.deepEqual(stageDetail(now, by[412]), { text: "slice 2 of 3 · handoff at 60% · session 2", warn: true });
+  assert.deepEqual(stageDetail({ state: "now", detail: "" }, { session: 1 }), { text: "", warn: false });
+  assert.deepEqual(stageDetail({ state: "done", detail: "3 slices" }, { session: 2 }), { text: "3 slices", warn: false });
+  assert.equal(holdText(status), null);
+  assert.equal(holdText({ plan: { hold: "daily budget reached (3M/3M in)" } }), "Nothing new starts: daily budget reached (3M/3M in)");
+  assert.deepEqual(localRunning(status.tickets).map((t) => t.id), [412]); // 418 runs in the cloud
 });
 
 test("the Daemon bar offers what each state allows", async () => {

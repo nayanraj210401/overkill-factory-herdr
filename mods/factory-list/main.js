@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, setShared, readTextFile, watchFolder, checking, props, exec, notify } from "herdr";
-import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subtitle, compact } from "./lib/model.js";
+import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subtitle, warnMark, compact } from "./lib/model.js";
 import { validateRuns, kindCounts, filterRuns, duration, runWhat, startedAt, runModel } from "./lib/runs.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
@@ -181,6 +181,7 @@ export default class FactoryList extends View {
             .child(h_flex().flex_1().gap(8).items_center()
               .child(div().size(7).flex_none().rounded_full().bg(done ? t.done : t[DOT[g]]).opacity(done ? 0.5 : 1))
               .child(div().truncate().text_color(done ? t.muted : t.foreground).child(`#${x.id} ${x.title}`))
+              .when(!!warnMark(x), (el) => el.child(div().flex_none().px(6).rounded(8).text_size(11).border(1).border_color(t.blocked).text_color(t.blocked).child(warnMark(x))))
               .when(!!repoBadge(s, x), (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child(repoBadge(s, x)))))
             .child(cell(230, subtitle(x, now), g === "needs" ? t.blocked : x.where === "cloud" ? t.accent : t.muted))
             .child(cell(100, x.blueprint, t.muted))

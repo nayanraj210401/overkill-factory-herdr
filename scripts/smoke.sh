@@ -44,6 +44,12 @@ for tab in Cost Quality; do
   errors
   herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
 done
+# Home with a start hold (the sample data has none), a long reason to catch unwrapped text.
+echo '{"id":"root","type":"row","children":[{"id":"h","type":"block","content":{"mod":"factory-home","props":{"hold":"daily budget reached (3M/3M in)"}}}]}' > "$home/layouts/factory-hold-test.json"
+herdr-app do layout.switch '{"name":"factory-hold-test"}' >/dev/null; sleep 1.3
+herdr-app shot "$out/home-hold.png" >/dev/null
+errors
+herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
 # The Tickets page's Runs view (r), which check never reaches (it renders the tickets).
 echo '{"id":"root","type":"row","children":[{"id":"r","type":"block","content":{"mod":"factory-list","props":{"view":"runs"}}}]}' > "$home/layouts/factory-runs-test.json"
 herdr-app do layout.switch '{"name":"factory-runs-test"}' >/dev/null; sleep 1.3

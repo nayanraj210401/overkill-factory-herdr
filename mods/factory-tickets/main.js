@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, setShared, shared } from "herdr";
-import { GROUPS, groupTickets, repoBadge, subtitle } from "./lib/model.js";
+import { GROUPS, groupTickets, repoBadge, subtitle, warnMark } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { status } from "./lib/store.js";
 
@@ -21,6 +21,7 @@ export default class FactoryTickets extends View {
       .child(h_flex().gap(8).items_center().text_size(13).text_color(t.foreground)
         .child(div().size(7).rounded_full().bg(t[COLOR[group]]))
         .child(div().flex_1().truncate().child(`#${ticket.id} ${ticket.title}`))
+        .when(!!warnMark(ticket), (el) => el.child(div().flex_none().px(5).rounded(7).text_size(10.5).border(1).border_color(t.blocked).text_color(t.blocked).child(warnMark(ticket))))
         .when(!!badge, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(badge))))
       .child(div().pl(15).text_size(11.5).text_color(t.muted).truncate().child(subtitle(ticket, now)));
   }
