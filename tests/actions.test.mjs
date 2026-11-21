@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeAsk, cliCommand } from "../lib/actions.js";
+import { mergeAsk, budgetAsk, cliCommand } from "../lib/actions.js";
 
-const ticket = (o) => ({ id: 409, title: "Bump dependencies", state: "ready", pr: { number: 511, watched: true }, ...o });
+const ticket = (o) => ({ id: 409, title: "Bump dependencies", state: "ready", pr: { number: 511, watched: true },
+  tokens: { input: 1_200_000, output: 64_000 }, budget: { input: 3_000_000, output: 200_000 }, ...o });
 
 test("m asks before merging a ready ticket's PR, and runs factory merge", () => {
   const a = mergeAsk(ticket());
@@ -19,4 +20,12 @@ test("m refuses a ticket with nothing to merge, without a dialog", () => {
 test("the CLI runs against the folder the window shows", () => {
   assert.deepEqual(cliCommand(["/bin/bun", "/x/cli.ts"], "/Users/me/.factory/acme-api", ["merge", "409"]),
     { command: "env", args: ["FACTORY_HOME=/Users/me/.factory", "/bin/bun", "/x/cli.ts", "merge", "409", "--name", "acme-api"] });
+});
+
+test("b asks for the new budget, starting from the current one", () => {
+  const a = budgetAsk(ticket());
+  assert.equal(a.input.value, "3M/200k");
+  assert.equal(a.detail, "Bump dependencies has used 1.2M in, 64k out.");
+  assert.deepEqual(a.args, ["budget", "409"]);
+  assert.deepEqual(budgetAsk(ticket({ state: "merged" })), { error: "#409 is merged; its budget is final" });
 });

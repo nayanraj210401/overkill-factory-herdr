@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { groupTickets, needsYou, subtitle, compact } from "../lib/model.js";
+import { groupTickets, needsYou, subtitle, compact, parseTokens } from "../lib/model.js";
 
 const status = JSON.parse(readFileSync(new URL("../fixtures/acme-api/status.json", import.meta.url)));
 const now = Date.parse("2026-11-21T10:00:00Z");
@@ -90,4 +90,12 @@ test("the Daemon bar offers what each state allows", async () => {
   assert.equal(up.text, "Running · pid 42 · starts at login");
   assert.deepEqual(up.actions, ["restart", "uninstall", "logs"]);
   assert.equal(daemonView({ installed: true, state: "spawn scheduled", pid: null }).tone, "blocked");
+});
+
+test("parseTokens reads what compact writes, and what people type", () => {
+  for (const n of [3_000_000, 1_200_000, 64_000, 512]) assert.equal(parseTokens(compact(n)), n);
+  assert.equal(parseTokens(" 1.5m "), 1_500_000);
+  assert.equal(parseTokens("250000"), 250_000);
+  assert.equal(parseTokens("3 M"), 3_000_000);
+  for (const bad of ["", "lots", "-3M", "3G", "1e6"]) assert.equal(parseTokens(bad), null);
 });

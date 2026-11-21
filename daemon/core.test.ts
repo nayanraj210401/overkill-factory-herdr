@@ -53,3 +53,16 @@ test("only init creates a factory; other commands refuse a missing one", () => {
   expect(existsSync(paths("typo").dir)).toBe(false);
   run("ticket", "add", "7", "Still", "fine");
 });
+
+test("b sets a ticket's budget from what you type, and refuses nonsense or a finished ticket", () => {
+  const { run, status } = factory();
+  run("ticket", "add", "412", "Rate-limit", "login");
+  run("budget", "412", "3M/200k");
+  expect(status().tickets[0].budget).toEqual({ input: 3_000_000, output: 200_000 });
+  run("budget", "412", "1.5m");
+  expect(status().tickets[0].budget).toEqual({ input: 1_500_000, output: 200_000 });
+  expect(() => run("budget", "412", "lots")).toThrow(`"lots" isn't a budget`);
+  expect(() => run("budget", "412", "3M/")).toThrow("isn't a budget");
+  run("ticket", "set", "412", "state=merged");
+  expect(() => run("budget", "412", "5M")).toThrow("#412 is merged");
+});
