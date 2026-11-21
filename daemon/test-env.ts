@@ -8,3 +8,4 @@ import { join } from "node:path";
 process.env.HERDR_APP_HOME = mkdtempSync(join(tmpdir(), "no-herdr-"));
 process.env.FACTORY_WORKTREES = mkdtempSync(join(tmpdir(), "worktrees-"));
 process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "claude-"));
+process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), "codex-"));

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open } from "./db.ts";
 import { buildStatus } from "./status.ts";
-import { parseTranscript, recordUsage, transcriptDir, usd } from "./usage.ts";
+import { codexHome, parseCodex, parseTranscript, recordUsage, transcriptDir, usd } from "./usage.ts";
 
 const msg = (id: string, at: string, u: object, model = "claude-opus-5-5", type = "assistant") =>
   JSON.stringify({ type, timestamp: at, message: { id, model, usage: u } });
@@ -66,4 +66,38 @@ test("the daemon records each ticket's usage by stage session, once, and today's
   expect(today).toMatchObject({ time_to_pr_min: 60, tokens: { input: 101600, output: 3600 } });
   expect(today.cost_per_pr_usd).toBe(+t().usd.toFixed(2));
   expect(buildStatus(db, new Date("2026-11-22T12:00:00Z")).today).toMatchObject({ usd: 0, cost_per_pr_usd: 0, time_to_pr_min: 0 });
+});
+
+test("Codex sessions count for the ticket whose folder they ran in, one entry per change in the running total", () => {
+  const ev = (at: string, t: object | null) => JSON.stringify({ timestamp: at, type: "event_msg", payload: { type: "token_count", info: t && { total_token_usage: t } } });
+  const total = (input: number, cached: number, output: number) => ({ input_tokens: input, cached_input_tokens: cached, output_tokens: output, total_tokens: input + output });
+  const text = (cwd: string) => [
+    JSON.stringify({ timestamp: "2026-11-21T10:00:00Z", type: "session_meta", payload: { id: "s1", cwd } }),
+    JSON.stringify({ timestamp: "2026-11-21T10:00:01Z", type: "turn_context", payload: { cwd, model: "gpt-5.3-codex" } }),
+    ev("2026-11-21T10:00:02Z", null),
+    ev("2026-11-21T10:00:03Z", total(1000, 400, 50)),
+    ev("2026-11-21T10:00:04Z", total(1000, 400, 50)), // repeated: no new entry
+    ev("2026-11-21T10:01:00Z", total(2500, 1400, 80)),
+  ].join("\n");
+  expect(parseCodex(text("/w")).uses).toEqual([
+    { id: "codex:s1:1", at: "2026-11-21T10:00:03Z", model: "gpt-5.3-codex", input: 600, w5m: 0, w1h: 0, read: 400, output: 50 },
+    { id: "codex:s1:2", at: "2026-11-21T10:01:00Z", model: "gpt-5.3-codex", input: 500, w5m: 0, w1h: 0, read: 1000, output: 30 },
+  ]);
+
+  const db = open(join(mkdtempSync(join(tmpdir(), "usage-")), "factory.db"));
+  const wt = mkdtempSync(join(tmpdir(), "wt-"));
+  db.query("INSERT INTO tickets (id, title, worktree, updated_at) VALUES (5, 'x', ?, '2026-11-21T09:00:00Z')").run(wt);
+  db.query(`INSERT INTO sessions (ticket, stage, argv, started_at, cwd) VALUES (5, 'implement', '["codex","go"]', '2026-11-21T09:59:00Z', ?)`).run(wt);
+  const day = join(codexHome(), "sessions/2026/11/21");
+  mkdirSync(day, { recursive: true });
+  writeFileSync(join(day, "rollout-a.jsonl"), text(wt));
+  writeFileSync(join(day, "rollout-b.jsonl"), text("/somewhere/else").replace(/"s1"/, '"s2"'));
+  mkdirSync(join(codexHome(), "sessions/2026/10/01"), { recursive: true });
+  writeFileSync(join(codexHome(), "sessions/2026/10/01/rollout-old.jsonl"), text(wt).replace(/"s1"/, '"s0"')); // before the factory used Codex
+  const logs: string[] = [];
+  recordUsage(db, (s) => logs.push(s));
+  expect(db.query("SELECT tokens_in, tokens_out, usd FROM tickets WHERE id = 5").get()).toEqual({ tokens_in: 1100, tokens_out: 80, usd: 0 });
+  expect(logs).toEqual(["factory: no price for gpt-5.3-codex; its usage counts as $0"]);
+  recordUsage(db, (s) => logs.push(s));
+  expect(logs).toHaveLength(1);
 });
