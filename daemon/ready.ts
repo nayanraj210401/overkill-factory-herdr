@@ -52,7 +52,7 @@ export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fai
 
 // All rules pass: push the ticket's branch and open the PR from PR.md, as a draft
 // with the rule results appended. Agents can't push; only the daemon does (plan: Hard stops).
-export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run }) {
+export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null }) {
   const t = db.query("SELECT title FROM tickets WHERE id = ?").get(o.id) as { title: string };
   const md = readFileSync(join(o.dir, "tickets", String(o.id), "PR.md"), "utf8").trim();
   const table = o.rules.map((r) => `- ${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`).join("\n");
@@ -62,6 +62,12 @@ export function openPr(db: Database, o: { id: number; dir: string; worktree: str
   writeFileSync(bodyFile, body);
   const push = o.run(["git", "-C", o.worktree, "push", "-u", "origin", o.branch]);
   if (push.code !== 0) throw new Error(`git push failed: ${push.out}`);
+  // Sent back and fixed: the PR it already has gets the new commits and a fresh body.
+  if (o.existing != null) {
+    const edit = o.run(["gh", "pr", "edit", String(o.existing), "--body-file", bodyFile], o.worktree);
+    if (edit.code !== 0) throw new Error(`gh pr edit failed: ${edit.out}`);
+    return o.existing;
+  }
   const pr = o.run(["gh", "pr", "create", "--draft", "--head", o.branch, "--title", t.title, "--body-file", bodyFile], o.worktree);
   if (pr.code !== 0) throw new Error(`gh pr create failed: ${pr.out}`);
   const number = Number(pr.out.match(/\/pull\/(\d+)/)?.[1]);

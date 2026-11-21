@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta } from "./db.ts";
-import { advance, mergeTicket, sh, startTicket, tryPr, type Run } from "./runner.ts";
+import { advance, answer, fixStage, loadBlueprint, mergeTicket, restartStage, sendBack, sh, startTicket, tryPr, type Run } from "./runner.ts";
 import { readyRules, templateProblems } from "./ready.ts";
 
 const GOOD_PR = "Rate-limits login per user; nothing else changes.\n\n**What changed:** middleware.\n**Why:** brute force.\n**How it was verified:** 14 tests.\n**Risk:** low.\n";
@@ -91,4 +91,44 @@ test("a failed gh merge leaves the ticket ready, with gh's reason", () => {
     : argv[2] === "ready" ? { code: 1, out: "! Pull request #42 is already \"ready for review\"" } : run(argv, cwd);
   expect(() => mergeTicket(db, { repo, id: 7, run: failing })).toThrow("gh pr merge failed: Pull request is not mergeable");
   expect(ticket().state).toBe("ready");
+});
+
+test("a note restarts an agent stage: review's fixes go to implement, a check hands over to its on_fail", () => {
+  const fixtures = join(import.meta.dir, "../fixtures/acme-api");
+  const feature = loadBlueprint(fixtures, "feature");
+  expect(fixStage(feature)).toBe("implement");
+  expect(fixStage(loadBlueprint(fixtures, "chore"))).toBe("implement");
+  expect(restartStage(feature, "review")).toBe("review");
+  expect(restartStage(feature, "verify")).toBe("implement");
+  expect(restartStage(feature, "merge")).toBe("spec");
+  expect(restartStage(feature, null)).toBe("spec");
+});
+
+test("x sends a ready PR back with a note, and the fixed work updates that PR instead of opening another", () => {
+  const { db, dir, repo, run, gh, prFile, ticket } = setup();
+  advance(db, { dir, repo, id: 7, run });
+  writeFileSync(prFile, GOOD_PR);
+  tryPr(db, { dir, repo, id: 7, run });
+  expect(() => sendBack(db, { dir, repo, id: 7, note: "  ", run })).toThrow("say what to change");
+  expect(sendBack(db, { dir, repo, id: 7, note: "Return 429 with Retry-After, not 403.", run })).toEqual({ stage: "implement", terminal: "t1" });
+  expect(ticket()).toMatchObject({ state: "running", stage: "implement", pr_number: 42 });
+  const review = readFileSync(join(dir, "tickets/7/REVIEW.md"), "utf8");
+  expect(review).toStartWith("# REVIEW\n\n## Sent back by you");
+  expect(review).toContain("PR #42\n\nReturn 429 with Retry-After, not 403.\n");
+  gh.length = 0;
+  expect(advance(db, { dir, repo, id: 7, run })).toMatchObject({ pr: 42, ready: true, stage: "merge" }); // implement → verify → pr
+  expect(gh.map((a) => a.slice(0, 4))).toEqual([["gh", "pr", "edit", "42"]]);
+  expect((db.query("SELECT what FROM decisions ORDER BY id DESC").get() as any).what).toBe("updated PR #42");
+  expect(() => sendBack(db, { dir, repo, id: 8, note: "x", run })).toThrow("no ticket 8");
+});
+
+test("u answers a parked ticket into GATES.md and reruns where it stopped", () => {
+  const { db, dir, repo, run, ticket } = setup();
+  expect(() => answer(db, { dir, repo, id: 7, text: "yes", run })).toThrow("#7 is running; only a parked ticket");
+  db.query("UPDATE tickets SET state = 'parked', stage = 'verify', retries = 3, needs_kind = 'parked', needs_text = 'Verify failed 3 times: tests check failed' WHERE id = 7").run();
+  expect(answer(db, { dir, repo, id: 7, text: "The flaky test is known; skip it with .skip.", run })).toEqual({ stage: "implement", terminal: "t1" });
+  expect(ticket()).toMatchObject({ state: "running", stage: "implement", retries: 0, needs_kind: null, needs_text: null });
+  expect(readFileSync(join(dir, "tickets/7/GATES.md"), "utf8")).toContain("Verify failed 3 times: tests check failed\n\n**Your answer:** The flaky test is known; skip it with .skip.\n");
+  db.query("UPDATE tickets SET state = 'grooming', needs_kind = 'question', needs_text = 'Which plan?' WHERE id = 7").run();
+  expect(() => answer(db, { dir, repo, id: 7, text: "pro", run })).toThrow("answered on the issue until intake (D6)");
 });

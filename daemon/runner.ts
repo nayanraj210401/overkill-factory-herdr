@@ -1,7 +1,7 @@
 // The graph runner's first half: a ticket gets its own worktree, enters its
 // blueprint's first stage, and that stage's agent starts in a herdr-core terminal.
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
@@ -54,6 +54,7 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
     `Ticket #${t.id}: ${t.title}. You run its ${stage} stage.`,
     prompt ?? "",
     `Read ${folder}/STATUS.md and any INTENT.md, SLICES.md and HANDOFF.md there before you start.`,
+    `If REVIEW.md or GATES.md is there, act on every note in it from a person: they sent this ticket back or answered why it stopped.`,
     `When the stage's work is done, run: factory stage-done ${t.id}`,
   ].filter(Boolean).join("\n\n");
 }
@@ -208,10 +209,10 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
     db.query("UPDATE tickets SET detail = ? WHERE id = ?").run(detail, o.id);
     return { waiting: true, stage: t.stage, failing: failing.length };
   }
-  const number = openPr(db, { id: o.id, dir: o.dir, worktree: t.worktree, branch: t.branch, rules, run });
+  const number = openPr(db, { id: o.id, dir: o.dir, worktree: t.worktree, branch: t.branch, rules, run, existing: t.pr_number });
   db.query("UPDATE tickets SET pr_number = ?, pr_watched = 1, pr_checked_at = ? WHERE id = ?").run(number, now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
-    .run(o.id, `opened PR #${number}`, rules.map((r) => `${r.rule} ${r.result}`).join(", "), now);
+    .run(o.id, `${t.pr_number == null ? "opened" : "updated"} PR #${number}`, rules.map((r) => `${r.rule} ${r.result}`).join(", "), now);
   return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now }), pr: number };
 }
 
@@ -234,4 +235,63 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
   db.query("UPDATE tickets SET state = 'merged', detail = NULL, pr_watched = 0, updated_at = ? WHERE id = ?").run(now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, 'squash', ?)").run(o.id, `merged PR #${pr}`, now);
   return { pr: t.pr_number };
+}
+
+// Where a person's note restarts work: an agent stage. A check or gate can't act on a
+// note, so a check hands over to its on_fail stage, and anything else to the start.
+export function restartStage(b: Blueprint, at: string | null) {
+  const s = at ? (b.stages[at] as BlueprintStage | undefined) : undefined;
+  if (s?.agent) return at!;
+  if (s?.check && s.on_fail && b.stages[s.on_fail]?.agent) return s.on_fail;
+  return b.start;
+}
+
+// The stage that fixes what review found: the on_fail of the last stage before the pr
+// stage that has one (implement in the shipped blueprints), else the start.
+export function fixStage(b: Blueprint) {
+  const path = [b.start, ...plannedPath(b, b.start)];
+  const pr = path.findIndex((n) => (b.stages[n] as BlueprintStage).requires === "ready");
+  const before = path.slice(0, pr < 0 ? path.length : pr).reverse().find((n) => (b.stages[n] as BlueprintStage).on_fail);
+  return restartStage(b, before ? (b.stages[before] as BlueprintStage).on_fail! : b.start);
+}
+
+function note(dir: string, id: number, file: string, heading: string, text: string) {
+  const folder = join(dir, "tickets", String(id));
+  mkdirSync(folder, { recursive: true });
+  const path = join(folder, file);
+  appendFileSync(path, `${existsSync(path) ? "\n" : `# ${file.replace(".md", "")}\n\n`}## ${heading}\n\n${text.trim()}\n`);
+}
+
+function restart(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; stage: string; b: Blueprint; who: string; why: string }) {
+  db.query("UPDATE tickets SET state = 'running', needs_kind = NULL, needs_text = NULL, retries = 0, updated_at = ? WHERE id = ?").run(o.now, o.id);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, ?, ?)").run(o.id, o.who, o.why, o.now);
+  return { stage: o.stage, terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run: o.run, now: o.now, blueprint: o.b, stage: o.stage }) };
+}
+
+// `x`: a ready PR goes back with a note. The open PR stays; the pr stage updates it.
+export function sendBack(db: Database, o: { dir: string; repo: string; id: number; note: string; run?: Run; now?: string }) {
+  const run = o.run ?? sh;
+  const now = o.now ?? new Date().toISOString();
+  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  if (!t) throw new Error(`no ticket ${o.id}`);
+  if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready PR goes back`);
+  if (!o.note.trim()) throw new Error("say what to change: factory send-back <id> <note…>");
+  const b = loadBlueprint(o.repo, t.blueprint);
+  note(o.dir, o.id, "REVIEW.md", `Sent back by you · ${now.slice(0, 16).replace("T", " ")} · PR #${t.pr_number}`, o.note);
+  return restart(db, { ...o, run, now, b, stage: fixStage(b), who: `sent PR #${t.pr_number} back`, why: o.note.trim() });
+}
+
+// `u`: answer a parked ticket and run the stage it stopped at again.
+export function answer(db: Database, o: { dir: string; repo: string; id: number; text: string; run?: Run; now?: string }) {
+  const run = o.run ?? sh;
+  const now = o.now ?? new Date().toISOString();
+  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any> | null;
+  if (!t) throw new Error(`no ticket ${o.id}`);
+  if (t.state === "grooming" && t.needs_kind) throw new Error(`#${o.id}'s grooming questions are answered on the issue until intake (D6) is built`);
+  if (t.state !== "parked") throw new Error(`#${o.id} is ${t.state}; only a parked ticket waits for an answer`);
+  if (!o.text.trim()) throw new Error("type an answer: factory answer <id> <text…>");
+  if (!t.worktree) throw new Error(`#${o.id} has no worktree; factory start ${o.id}`);
+  const b = loadBlueprint(o.repo, t.blueprint);
+  note(o.dir, o.id, "GATES.md", `Parked · ${now.slice(0, 16).replace("T", " ")}`, `${t.needs_text ?? "Stopped."}\n\n**Your answer:** ${o.text.trim()}`);
+  return restart(db, { ...o, run, now, b, stage: restartStage(b, t.stage), who: "answered and restarted", why: o.text.trim() });
 }
