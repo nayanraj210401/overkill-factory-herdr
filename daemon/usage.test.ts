@@ -1,0 +1,69 @@
+import { test, expect } from "bun:test";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { open } from "./db.ts";
+import { buildStatus } from "./status.ts";
+import { parseTranscript, recordUsage, transcriptDir, usd } from "./usage.ts";
+
+const msg = (id: string, at: string, u: object, model = "claude-opus-5-5", type = "assistant") =>
+  JSON.stringify({ type, timestamp: at, message: { id, model, usage: u } });
+const U = (input: number, w1h: number, read: number, output: number) =>
+  ({ input_tokens: input, cache_creation_input_tokens: w1h, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: w1h }, cache_read_input_tokens: read, output_tokens: output });
+
+test("a transcript gives one entry per message (the last copy), skipping what isn't usage", () => {
+  const text = [
+    msg("m1", "2026-11-21T10:00:00Z", U(2, 100, 0, 10)),
+    msg("m1", "2026-11-21T10:00:01Z", U(2, 100, 0, 338)), // the same message's next block: final count
+    JSON.stringify({ type: "user", message: { content: "hi" } }),
+    msg("m2", "2026-11-21T10:01:00Z", { input_tokens: 5, cache_creation_input_tokens: 40, cache_read_input_tokens: 7, output_tokens: 3 }),
+    msg("m3", "2026-11-21T10:02:00Z", U(1, 0, 0, 1), "<synthetic>"),
+    '{"type":"assistant","message":{"id":"m4","usage":{"inp', // a line still being written
+  ].join("\n");
+  expect(parseTranscript(text)).toEqual([
+    { id: "m1", at: "2026-11-21T10:00:01Z", model: "claude-opus-5-5", input: 2, w5m: 0, w1h: 100, read: 0, output: 338 },
+    { id: "m2", at: "2026-11-21T10:01:00Z", model: "claude-opus-5-5", input: 5, w5m: 40, w1h: 0, read: 7, output: 3 }, // old shape: 5-minute writes
+  ]);
+});
+
+test("dollars: input, 5m and 1h writes (1.25x, 2x), cache reads, output, per model", () => {
+  const u = (model: string, o: Partial<{ input: number; w5m: number; w1h: number; read: number; output: number }>) =>
+    usd({ id: "x", at: "", model, input: 0, w5m: 0, w1h: 0, read: 0, output: 0, ...o });
+  expect(u("claude-opus-5-5", { input: 1e6, output: 1e6 })).toBe(24);
+  expect(u("claude-opus-5-5", { w5m: 1e6, w1h: 1e6, read: 1e6 })).toBeCloseTo(5 + 8 + 0.2);
+  expect(u("claude-sonnet-5-5", { read: 1e6, output: 1e6 })).toBeCloseTo(10.1);
+  expect(u("claude-fable-5-2", { w5m: 1e6, w1h: 1e6 })).toBe(26); // $10 and $16, as listed
+  expect(u("some-new-model", { input: 1e6 })).toBe(0);
+});
+
+test("the daemon records each ticket's usage by stage session, once, and today's numbers follow", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "usage-")), "factory.db"));
+  const wt = "/work/trees/acme/factory-7-wire-it";
+  db.query("INSERT INTO tickets (id, title, updated_at, worktree, state) VALUES (7, 'Wire it', '2026-11-21T09:00:00Z', ?, 'running')").run(wt);
+  for (const [stage, at] of [["spec", "2026-11-21T09:00:00Z"], ["plan", "2026-11-21T09:30:00Z"]])
+    db.query("INSERT INTO sessions (ticket, stage, argv, started_at) VALUES (7, ?, '[]', ?)").run(stage, at);
+  db.query("INSERT INTO stages (ticket, name, started_at) VALUES (7, 'Spec', '2026-11-21T09:00:00Z')").run();
+  const dir = transcriptDir(wt);
+  expect(dir).toEndWith("/projects/-work-trees-acme-factory-7-wire-it");
+  mkdirSync(join(dir, "s2/subagents"), { recursive: true });
+  writeFileSync(join(dir, "s1.jsonl"), msg("a", "2026-11-21T09:10:00Z", U(1000, 1e5, 5e5, 2000)) + "\n");
+  writeFileSync(join(dir, "s2.jsonl"), msg("b", "2026-11-21T09:40:00Z", U(500, 0, 0, 1000)) + "\n");
+  writeFileSync(join(dir, "s2/subagents/agent-1.jsonl"), msg("c", "2026-11-21T09:41:00Z", U(100, 0, 0, 100), "claude-haiku-5-5") + "\n");
+  const t = () => db.query("SELECT tokens_in, tokens_out, usd FROM tickets").get() as any;
+  recordUsage(db);
+  recordUsage(db); // nothing changed: no double count
+  expect(t()).toMatchObject({ tokens_in: 1000 + 1e5 + 500 + 100, tokens_out: 3100 });
+  expect(t().usd).toBeCloseTo((1000 * 4 + 1e5 * 8 + 5e5 * 0.2 + 2000 * 20 + 500 * 4 + 1000 * 20 + 100 * 0.1 + 100 * 0.5) / 1e6);
+  expect(db.query("SELECT stage, tokens_in, tokens_out FROM sessions ORDER BY id").all()).toEqual([
+    { stage: "spec", tokens_in: 101000, tokens_out: 2000 },
+    { stage: "plan", tokens_in: 600, tokens_out: 1100 }, // its sub-agent counts with it
+  ]);
+  appendFileSync(join(dir, "s2.jsonl"), msg("b", "2026-11-21T09:40:02Z", U(500, 0, 0, 1500)) + "\n"); // b's final copy
+  recordUsage(db);
+  expect(t().tokens_out).toBe(3600);
+  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (7, 'daemon', 'opened PR #42', '2026-11-21T10:00:00Z')").run();
+  const today = buildStatus(db, new Date("2026-11-21T12:00:00Z")).today;
+  expect(today).toMatchObject({ time_to_pr_min: 60, tokens: { input: 101600, output: 3600 } });
+  expect(today.cost_per_pr_usd).toBe(+t().usd.toFixed(2));
+  expect(buildStatus(db, new Date("2026-11-22T12:00:00Z")).today).toMatchObject({ usd: 0, cost_per_pr_usd: 0, time_to_pr_min: 0 });
+});

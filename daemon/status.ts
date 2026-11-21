@@ -28,19 +28,26 @@ export function buildStatus(db: Database, now = new Date()) {
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal
     FROM tickets t ORDER BY t.id`).all() as Row[]).map(ticketOf);
   const today = now.toISOString().slice(0, 10);
-  const touched = tickets.filter((t) => t.updated_at.startsWith(today));
+  const used = db.query("SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o, SUM(usd) AS usd FROM usage WHERE at >= ?").get(today) as any;
+  // PRs opened today: what each cost, and how long from the ticket's first stage to the PR.
+  const prs = db.query(`SELECT d.at, (SELECT SUM(usd) FROM usage u WHERE u.ticket = d.ticket) AS usd,
+      (SELECT MIN(started_at) FROM stages s WHERE s.ticket = d.ticket) AS began
+    FROM decisions d WHERE d.who = 'daemon' AND d.what LIKE 'opened PR #%' AND d.at >= ?`).all(today) as { at: string; usd: number | null; began: string | null }[];
+  const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
   const beat = Date.parse(getMeta(db, "heartbeat") ?? "") || 0;
   return {
     version: 1,
     generated_at: now.toISOString(),
     source: "daemon",
     factory: { name: getMeta(db, "name") ?? "factory", repo: getMeta(db, "repo") ?? "unknown", daemon: now.getTime() - beat < HEARTBEAT_MS },
-    // Plan windows and per-PR numbers arrive with session recording (D4) and PRs (D5).
+    // Plan windows need the plan's limits, which nothing records yet.
     plan: { window_5h: 0, week: 0 },
     today: {
-      time_to_pr_min: 0, cost_per_pr_usd: 0, interactions_per_pr: 0, revert_rate: 0,
-      usd: touched.reduce((n, t) => n + t.usd, 0),
-      tokens: { input: touched.reduce((n, t) => n + t.tokens.input, 0), output: touched.reduce((n, t) => n + t.tokens.output, 0) },
+      time_to_pr_min: Math.round(avg(prs.filter((p) => p.began).map((p) => (Date.parse(p.at) - Date.parse(p.began!)) / 60000))),
+      cost_per_pr_usd: +avg(prs.map((p) => p.usd ?? 0)).toFixed(2),
+      interactions_per_pr: 0, revert_rate: 0,
+      usd: +(used.usd ?? 0).toFixed(4),
+      tokens: { input: used.i ?? 0, output: used.o ?? 0 },
       budget: { input: Number(getMeta(db, "budget_day_in") ?? 40e6), output: Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
     to_review: 0,
