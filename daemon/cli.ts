@@ -18,6 +18,7 @@ import { newTicket, pollQueue } from "./intake.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { findReverts, setPlan } from "./metrics.ts";
+import { writeBlueprints } from "./blueprints.ts";
 import { ask, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
@@ -38,6 +39,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket, with their tokens
+  blueprints                         write blueprints.json (stages, runs in 7 days) for the Blueprint page
   plan <5h tokens> <week tokens>     your plan's limits, for the 5h and week meters: plan 20M 400M
   usage                              read agents' Claude Code transcripts now (the daemon does every tick)
   queue                              add the Project's Ready issues as grooming tickets now (the daemon: every 3 minutes)
@@ -70,7 +72,7 @@ const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory"
 
 export function paths(name: string, home = factoryHome()) {
   const dir = join(home, name);
-  return { dir, db: join(dir, "factory.db"), status: join(dir, "status.json") };
+  return { dir, db: join(dir, "factory.db"), status: join(dir, "status.json"), blueprints: join(dir, "blueprints.json") };
 }
 
 // Runs a change, then refuses it (rolling back) if status.json would break the contract.
@@ -255,6 +257,12 @@ export function main(argv: string[], log = console.log) {
       for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
       return;
+    } else if (cmd === "blueprints") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const doc = writeBlueprints(db, repoDir, p.blueprints);
+      log(`${doc.blueprints.map((b) => b.name).join(", ") || "no blueprints"} → ${p.blueprints}`);
+      return;
     } else if (cmd === "plan") {
       const [h5, wk] = [parseTokens(sub ?? ""), parseTokens(rest[0] ?? "")];
       if (!h5 || !wk) throw new Error("usage: factory plan <5h tokens> <week tokens>, like factory plan 20M 400M");
@@ -375,6 +383,8 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
 // status.json plus every ticket's files, so "12m so far" keeps counting.
 function writeAll(db: Database, p: ReturnType<typeof paths>) {
   const s = writeStatus(db, p.status);
+  const repoDir = getMeta(db, "repo_path");
+  if (repoDir) writeBlueprints(db, repoDir, p.blueprints);
   for (const t of s.tickets) writeTicketFiles(db, p.dir, t.id);
 }
 
