@@ -11,6 +11,7 @@ import { buildStatus, writeStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
+import { validateDir } from "./validate.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name]           create the factory's database
@@ -19,6 +20,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   stage <id> <Name> [detail…] [--next A,B]  enter a stage (the current one ends)
   evidence <id> <check> pass|fail [detail…] record a check result
   decide <ticket> <who> <what> [why] log a decision
+  validate [dir] [--json]            check .factory/ files (default ./.factory)
   status                             write status.json and print a summary
   run [--interval seconds] [--all]   the daemon: keep status.json fresh (--all: every factory)
   service install|uninstall|restart|status [--json]  keep \`factory run --all\` alive with launchd
@@ -74,6 +76,14 @@ export function main(argv: string[], log = console.log) {
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json });
+  if (cmd === "validate") {
+    const results = validateDir(sub ?? ".factory");
+    if (json) return log(JSON.stringify(results));
+    for (const r of results) log(r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `✓ ${r.path}`);
+    const bad = results.filter((r) => r.errors.length).length;
+    if (bad) throw new Error(`${bad} of ${results.length} files have problems`);
+    return;
+  }
   if (cmd === "run" && all) return runAll(interval, log);
   const db = open(p.db);
   try {
