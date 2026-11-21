@@ -132,16 +132,30 @@ export function resolveVariant(repo: string, suite: Suite, set: Record<string, u
 
 export type Agent = (o: { argv: string[]; cwd: string; name: string }) => Promise<{ code: number; out?: string }>;
 
-// The agent's command, run unattended: Claude prints and exits, Codex execs. The hard-stop
-// guard still watches a Claude run's tool calls (its notes go to the benchmark's own log).
-export function benchArgv(step: Step, task: Task, o: { cwd: string; log: string }) {
+// The agent's command, run unattended: Claude prints and exits, Codex execs. Claude runs
+// with acceptEdits and an allowlist: file tools, read-only git, and the repo's own test
+// commands (quality_floor). Any other command is denied, since -p can't ask. The hard-stop
+// guard still watches its tool calls (its notes go to the benchmark's own log). Codex's
+// --full-auto is its workspace-write sandbox.
+export function benchAllow(commands: string[]) {
+  const bash = new Set(["git status", "git diff", "git log", "git show", "ls", "cat"].map((c) => `Bash(${c}:*)`));
+  for (const c of commands) {
+    bash.add(`Bash(${c})`);
+    const head = c.trim().split(/\s+/).slice(0, 2).join(" ");
+    if (!/[|&;<>$`'"]/.test(head)) bash.add(`Bash(${head}:*)`);
+  }
+  return ["Read", "Glob", "Grep", "Edit", "MultiEdit", "Write", ...bash];
+}
+
+export function benchArgv(step: Step, task: Task, o: { cwd: string; log: string; commands?: string[] }) {
   const text = [
     `Benchmark task: ${task.title}`, task.body, step.prompt,
-    `You run the ${step.stage} stage on this task in the current directory, a checkout of the repo before the change was made. Implement it, run the tests that exist, and leave your work in this directory. There are hidden tests you can't see. Don't push, and don't use the factory CLI.`,
+    `You run the ${step.stage} stage on this task in the current directory, a checkout of the repo before the change was made. Implement it, run the tests that exist (${(o.commands ?? []).join("; ") || "the repo's test command"}), and leave your work in this directory. There are hidden tests you can't see. Don't push, and don't use the factory CLI. Commands other than file edits, read-only git and those tests are denied.`,
   ].filter(Boolean).join("\n\n");
-  const settings = guardSettings({ stops: [...STOPS], roots: [o.cwd], log: o.log });
+  const guard = guardSettings({ stops: [...STOPS], roots: [o.cwd], log: o.log });
+  const settings = JSON.stringify({ ...(guard ? JSON.parse(guard) : {}), permissions: { allow: benchAllow(o.commands ?? []) } });
   const argv = argvFor({ harness: step.harness, model: step.model }, { harness: "claude" }, text, step.harness === "claude" ? settings : null);
-  if (step.harness === "claude") return [argv[0], "-p", "--permission-mode", "bypassPermissions", ...argv.slice(1)];
+  if (step.harness === "claude") return [argv[0], "-p", "--permission-mode", "acceptEdits", ...argv.slice(1)];
   if (step.harness === "codex") return [argv[0], "exec", "--full-auto", ...argv.slice(1)];
   return argv;
 }
@@ -216,7 +230,7 @@ export async function replay(o: { repo: string; suite: Suite; task: Task; varian
     const failed: string[] = [];
     for (const step of steps) {
       const log = join(o.dir, "benchmarks", `${suite.name}-${task.pr}-${variant.name}-hard-stops.jsonl`);
-      const r = await o.agent({ argv: benchArgv(step, task, { cwd: wt, log }), cwd: wt, name: `bench-${task.pr}-${variant.name}-${step.stage}` });
+      const r = await o.agent({ argv: benchArgv(step, task, { cwd: wt, log, commands: o.commands }), cwd: wt, name: `bench-${task.pr}-${variant.name}-${step.stage}` });
       if (r.code !== 0) failed.push(`${step.stage} agent exited ${r.code}${r.out ? `: ${r.out}` : ""}`);
     }
     row.diff_lines = diffLines(run, wt, task.base);
