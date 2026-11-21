@@ -99,8 +99,8 @@ test("status.json lists the factory's repos and each ticket's, lead first; one n
   expect(validateStatus(s)).toEqual([]);
   expect(s.factory).toMatchObject({ repo: "acme/api", repos: ["acme/api", "acme/web"] });
   expect(s.tickets.map((t: any) => t.repos)).toEqual([
-    [{ slug: "acme/api", lead: true, pr: { number: 5, watched: true, checked_at: null }, worktree: "/wt/api" },
-     { slug: "acme/web", lead: false, pr: { number: 6, watched: false, checked_at: null }, worktree: "/wt/web" }],
-    [{ slug: "acme/api", lead: true, pr: null, worktree: null }],
+    [{ slug: "acme/api", lead: true, pr: { number: 5, watched: true, checked_at: null }, worktree: "/wt/api", branch: null, merged_at: null, merge: 2 },
+     { slug: "acme/web", lead: false, pr: { number: 6, watched: false, checked_at: null }, worktree: "/wt/web", branch: null, merged_at: null, merge: 1 }],
+    [{ slug: "acme/api", lead: true, pr: null, worktree: null, branch: null, merged_at: null, merge: 1 }],
   ]);
 });

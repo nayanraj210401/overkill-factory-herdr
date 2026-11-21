@@ -124,14 +124,26 @@ test("repos: the contract takes the factory's repos (lead first) and each ticket
 test("repos: a badge only when the factory has more than one; the filter finds a cross-repo ticket in each repo", async () => {
   const { repoBadge, filterTickets, countBy } = await import("../lib/model.js");
   const one = { ...status, factory: { ...status.factory, repos: ["acme/api"] } };
-  const t418 = status.tickets.find((t) => t.id === 418);
-  const t412 = status.tickets.find((t) => t.id === 412);
-  assert.equal(repoBadge(one, t418), null);
-  assert.equal(repoBadge(status, t418), "api + web");
-  assert.equal(repoBadge(status, t412), "api"); // no repos: the factory's lead repo
+  const tx = status.tickets.find((t) => t.id === 412);
+  const t1 = status.tickets.find((t) => t.id === 418);
+  assert.equal(repoBadge(one, tx), null);
+  assert.equal(repoBadge(status, tx), "api + web");
+  assert.equal(repoBadge(status, t1), "api"); // no repos: the factory's lead repo
   const lead = status.factory.repo;
-  assert.deepEqual(filterTickets(status.tickets, "all", "", "acme/web", lead).map((t) => t.id), [418]);
+  assert.deepEqual(filterTickets(status.tickets, "all", "", "acme/web", lead).map((t) => t.id), [412]);
   assert.equal(filterTickets(status.tickets, "all", "", "acme/api", lead).length, status.tickets.length);
-  assert.deepEqual(filterTickets(status.tickets, "all", "acme/web", null, lead).map((t) => t.id), [418]); // search matches repos too
+  assert.deepEqual(filterTickets(status.tickets, "all", "acme/web", null, lead).map((t) => t.id), [412]); // search matches repos too
   assert.equal(countBy(status.tickets, "acme/web", lead).running, 1);
+});
+
+test("a cross-repo ticket's cards: lead first, each with its branch, PR and place in the merge order", async () => {
+  const { crossRepoCards } = await import("../lib/model.js");
+  const tx = status.tickets.find((t) => t.id === 412);
+  assert.deepEqual(crossRepoCards(tx).map((c) => [c.slug, c.role, c.pr, c.order]), [
+    ["acme/api", "lead", "no PR yet", "merges 2nd, after acme/web"],
+    ["acme/web", "linked", "no PR yet", "merges 1st"],
+  ]);
+  const opened = { ...tx, repos: [{ ...tx.repos[0], pr: { number: 212, watched: true } }, { ...tx.repos[1], pr: { number: 88, watched: true }, merged_at: "2026-11-21T10:00:00Z" }] };
+  assert.deepEqual(crossRepoCards(opened).map((c) => c.order), ["merges 2nd, after #88", "merged"]);
+  assert.equal(crossRepoCards(status.tickets.find((t) => t.id === 418)), null);
 });
