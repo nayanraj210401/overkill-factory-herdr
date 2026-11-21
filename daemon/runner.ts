@@ -426,6 +426,7 @@ export function pause(db: Database, o: { id: number; run?: Run; now?: string }) 
   const t = db.query("SELECT state, stage FROM tickets WHERE id = ?").get(o.id) as { state: string; stage: string | null } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "running") throw new Error(`#${o.id} is ${t.state}; only a running ticket pauses`);
+  if ((db.query("SELECT location FROM tickets WHERE id = ?").get(o.id) as any).location === "cloud") throw new Error(`#${o.id} is in the cloud; bring it back first (⇧L)`);
   const open_ = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   db.query("UPDATE stages SET ended_at = ?, detail = 'paused' WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);

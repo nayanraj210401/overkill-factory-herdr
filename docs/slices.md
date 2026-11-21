@@ -103,7 +103,11 @@ S3–S8 depend only on S0–S2 and touch separate mod folders, so they can run i
     - `never`: path globs that park a ticket touching them at its stage's end.
     - Pushbacks are refused, since the agreement benchmark doesn't exist yet.
     - Home shows a digest of what others decided while you were away, for a day after you're back (`status.json` `away`).
-    Not yet: the cloud move (`⇧C`/`⇧L`), and turning digest corrections into lessons.
+    - `min_agreement`: the agreement benchmark's bar, off unless set. The benchmark isn't built, so setting it refuses pushbacks while away and cloud moves.
+    Not yet: turning digest corrections into lessons.
+  - **Cloud move is built** (`daemon/cloud.ts`):
+    - `⇧C` / `factory cloud <id>|--all` stops the local agent and writes `.factory-run/<id>/CLOUD.md` (where the ticket stands, the stages left, the rules, and what to report) plus copies of the ticket's files. It commits the work in progress, pushes the branch, and runs `claude --cloud "Continue the work described in .factory-run/<id>/CLOUD.md …"` in a terminal. The ticket shows "in cloud", and the daemon stops watching it; nothing is tracked there, by choice.
+    - `⇧L` / `factory local <id>` fetches and fast-forwards the branch. It imports `RESULT.md` (evidence lines, notes as HANDOFF.md, questions park the ticket) and PR.md, removes the pack from the branch, and resumes at the stage the cloud reached.
 - **M4, learning + benchmarks:** Metrics Learning and Benchmarks tabs.
 - **M5, auto gates + maintainer:** revert rate on Home.
 - **M6, reviews:** Reviews page.
