@@ -12,6 +12,7 @@ import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
 import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
 import { budgetCap, forbiddenTouched } from "./away.ts";
+import { guardSettings, hardStopLog, takeHardStop } from "./guard.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -69,10 +70,11 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
   ].filter(Boolean).join("\n\n");
 }
 
-export function argvFor(agent: { harness?: string; model?: string } | null, defaults: { harness: string; model?: string }, text: string) {
+// `settings` is the hard-stop guard's JSON; only Claude sessions take it (Codex has no hooks).
+export function argvFor(agent: { harness?: string; model?: string } | null, defaults: { harness: string; model?: string }, text: string, settings?: string | null) {
   const harness = agent?.harness ?? defaults.harness;
   const model = agent?.model ?? defaults.model;
-  if (harness === "claude") return ["claude", ...(model ? ["--model", model] : []), text];
+  if (harness === "claude") return ["claude", ...(model ? ["--model", model] : []), ...(settings ? ["--settings", settings] : []), text];
   if (harness === "codex") return ["codex", ...(model ? ["--model", model] : []), text];
   return [harness, text]; // any other program gets the brief as its last argument
 }
@@ -115,7 +117,9 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const agent = loadAgent(o.repo, s.agent);
   const defaults = { harness: "claude", model: "sonnet" };
   const repos = ticketRepos(db, o.id);
-  const argv = argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id)), agent?.role, repos));
+  // Hard stops factory.yaml lists are enforced by a hook on the worker's tool calls.
+  const settings = guardSettings({ stops: readFactory(o.repo).hard_stops ?? [], roots: [...repos.flatMap((r) => r.worktree ?? []), join(o.dir, "tickets", String(o.id))], log: hardStopLog(o.dir, o.id) });
+  const argv = argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id)), agent?.role, repos), settings);
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
@@ -137,7 +141,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -223,7 +227,10 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   const gate = o.failed ? null : commentGate(db, o.id, now);
   // While you're away, a ticket that touched a path away.never names stops for you.
   const touched = t.worktree ? forbiddenTouched(db, { repo: o.repo, worktree: t.worktree, run }) : [];
-  const stop = gate && "park" in gate ? gate.park : touched.length ? `Touched ${touched.slice(0, 3).join(", ")}${touched.length > 3 ? "…" : ""}, which never runs while you're away` : null;
+  // A worker the guard stopped (daemon/guard.ts) parks the ticket, whatever else it did.
+  const hit = takeHardStop(hardStopLog(o.dir, o.id));
+  if (hit) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'guard', 'hard stop hit', ?, ?)").run(o.id, hit, now);
+  const stop = hit ? `Hard stop hit: ${hit}` : gate && "park" in gate ? gate.park : touched.length ? `Touched ${touched.slice(0, 3).join(", ")}${touched.length > 3 ? "…" : ""}, which never runs while you're away` : null;
   if (stop) {
     db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(stop, now, o.id);
     db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);

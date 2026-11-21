@@ -27,7 +27,8 @@ import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { overwatch } from "./overwatch.ts";
 import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
-import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { hardStopLog, hasHardStop } from "./guard.ts";
+import { advance, answer,checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -453,7 +454,10 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     if (s.in_space && state === "agent" && !s.agent_seen) db.query("UPDATE sessions SET agent_seen = 1 WHERE id = ?").run(s.id);
     // An agent quicker than a tick is never seen: a shell idle a minute after the start means it's over.
     const idle = Date.now() - Date.parse(s.started_at) > 60_000;
-    const gone = state === "exited" || (s.in_space === 1 && state === "shell" && (s.agent_seen === 1 || idle));
+    // A hard stop the guard noted ends the session now: kill it, and advance parks the ticket.
+    const stopped = hasHardStop(hardStopLog(p.dir, s.ticket));
+    if (stopped && state !== "exited") run(["hc", "kill", s.terminal]);
+    const gone = stopped || state === "exited" || (s.in_space === 1 && state === "shell" && (s.agent_seen === 1 || idle));
     if (!gone) continue;
     try {
       change(db, () => advance(db, { dir: p.dir, repo: repoDir, id: s.ticket, run }));
