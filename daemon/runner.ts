@@ -14,6 +14,7 @@ import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
 import { budgetCap, forbiddenTouched } from "./away.ts";
 import { STOPS, guardSettings, hardStopLog, takeHardStop } from "./guard.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
+import { budgetUse, startHold } from "./budget.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -86,6 +87,8 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (!["queued", "grooming"].includes(t.state) || t.needs_kind) throw new Error(`#${o.id} is ${t.state}${t.needs_kind ? " with open questions" : ""}; only a groomed or queued ticket starts`);
+  const hold = startHold(db, o.repo, new Date(now));
+  if (hold) throw new Error(`#${o.id} waits: ${hold}`);
   const b = loadBlueprint(o.repo, t.blueprint);
   const branch = `factory/${o.id}-${slug(t.title)}`;
   // Every repo the ticket works in gets a worktree on the same branch; a repo factory.yaml
@@ -143,7 +146,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -232,7 +235,10 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   // A worker the guard stopped (daemon/guard.ts) parks the ticket, whatever else it did.
   const hit = takeHardStop(hardStopLog(o.dir, o.id));
   if (hit) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'guard', 'hard stop hit', ?, ?)").run(o.id, hit, now);
-  const stop = hit ? `Hard stop hit: ${hit}` : gate && "park" in gate ? gate.park : touched.length ? `Touched ${touched.slice(0, 3).join(", ")}${touched.length > 3 ? "…" : ""}, which never runs while you're away` : null;
+  // A ticket at its budget stops here, at the stage boundary, not mid-edit.
+  const use = budgetUse(t as any, budgetCap(db, o.repo));
+  const stop = hit ? `Hard stop hit: ${hit}` : use.frac >= 1 ? `Budget used up (${use.text}). Raise the budget or drop the ticket`
+    : gate && "park" in gate ? gate.park : touched.length ? `Touched ${touched.slice(0, 3).join(", ")}${touched.length > 3 ? "…" : ""}, which never runs while you're away` : null;
   if (stop) {
     db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(stop, now, o.id);
     db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);

@@ -1,0 +1,81 @@
+// Budget caps (plan: Budgets). Three things stop new work: the day's token cap
+// (budget.per_day), the 5-hour plan window passing plan.pause_at, and a ticket
+// reaching its own budget. Running tickets finish their stage; only starts are held.
+import type { Database } from "bun:sqlite";
+import { getMeta } from "./db.ts";
+import { compact, parseTokens } from "../lib/model.js";
+import { readFactory } from "./runner.ts";
+import { planMeters } from "./metrics.ts";
+
+type Tokens = { input: number; output: number };
+const HOUR = 3_600_000;
+
+const tokens = (v: unknown) => (typeof v === "number" ? v : parseTokens(String(v ?? "")));
+
+// "40M", "2M" under input and output; a missing or unreadable half is no cap.
+const capOf = (v: any): Tokens | null => {
+  const input = tokens(v?.input);
+  const output = tokens(v?.output);
+  return input || output ? { input: input || Infinity, output: output || Infinity } : null;
+};
+
+const section = (repo: string, key: "budget" | "plan"): any => (readFactory(repo) as any)[key] ?? {};
+
+export const dayCap = (repo: string) => capOf(section(repo, "budget").per_day);
+
+export const headroom = (repo: string) => Number(section(repo, "budget").headroom) || 1.5;
+
+// plan.pause_at as a fraction: "85%", or 0.85.
+export function pauseAt(repo: string) {
+  const v = section(repo, "plan").pause_at;
+  if (v == null) return null;
+  const n = parseFloat(String(v));
+  if (!(n > 0)) return null;
+  return String(v).includes("%") || n > 1 ? n / 100 : n;
+}
+
+export function tokensToday(db: Database, now: Date): Tokens {
+  const r = db.query("SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o FROM usage WHERE at >= ?")
+    .get(now.toISOString().slice(0, 10)) as { i: number | null; o: number | null };
+  return { input: r.i ?? 0, output: r.o ?? 0 };
+}
+
+// Why nothing new starts right now, in words for the status bar; null when starting is fine.
+export function startHold(db: Database, repo: string, now: Date): string | null {
+  const cap = dayCap(repo);
+  if (cap) {
+    const used = tokensToday(db, now);
+    if (used.input >= cap.input) return `daily budget reached (${compact(used.input)}/${compact(cap.input)} in)`;
+    if (used.output >= cap.output) return `daily budget reached (${compact(used.output)}/${compact(cap.output)} out)`;
+  }
+  const at = pauseAt(repo);
+  // No plan limits set means no window data: the guard is off.
+  if (at != null && Number(getMeta(db, "plan_5h") ?? 0) > 0) {
+    const w = planMeters(db, now).window_5h;
+    if (w >= at) {
+      const first = (db.query("SELECT MIN(at) AS at FROM usage WHERE at >= ?").get(new Date(now.getTime() - 5 * HOUR).toISOString()) as { at: string | null }).at;
+      const reset = first ? new Date(Date.parse(first) + 5 * HOUR) : null;
+      const hhmm = reset ? `${String(reset.getHours()).padStart(2, "0")}:${String(reset.getMinutes()).padStart(2, "0")}` : null;
+      return `5-hour window at ${Math.round(w * 100)}%${hhmm ? `, resets ${hhmm}` : ""}`;
+    }
+  }
+  return null;
+}
+
+// How far a ticket is through its budget: the larger of input and output.
+export function budgetUse(t: { tokens_in: number; tokens_out: number; budget_in: number; budget_out: number }, cap?: Tokens | null) {
+  const bin = Math.min(t.budget_in, cap?.input ?? Infinity);
+  const bout = Math.min(t.budget_out, cap?.output ?? Infinity);
+  const frac = Math.max(bin > 0 ? t.tokens_in / bin : 0, bout > 0 ? t.tokens_out / bout : 0);
+  return { frac, text: `${compact(t.tokens_in)}/${compact(bin)} in, ${compact(t.tokens_out)}/${compact(bout)} out` };
+}
+
+// Grooming's estimate: what past merged tickets on this blueprint used, on average,
+// times headroom. No history falls back to budget.per_ticket; none of that, no change.
+export function estimateBudget(db: Database, repo: string, blueprint: string): Tokens | null {
+  const r = db.query("SELECT COUNT(*) AS n, AVG(tokens_in) AS i, AVG(tokens_out) AS o FROM tickets WHERE state = 'merged' AND blueprint = ? AND tokens_in > 0")
+    .get(blueprint) as { n: number; i: number | null; o: number | null };
+  if (r.n) { const h = headroom(repo); return { input: Math.round(r.i! * h), output: Math.round((r.o ?? 0) * h) }; }
+  const own = capOf(section(repo, "budget").per_ticket);
+  return own && Number.isFinite(own.input) && Number.isFinite(own.output) ? own : null;
+}

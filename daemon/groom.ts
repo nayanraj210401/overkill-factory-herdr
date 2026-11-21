@@ -11,6 +11,8 @@ import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { argvFor, loadAgent, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
 import { mayStart } from "./away.ts";
+import { estimateBudget, startHold } from "./budget.ts";
+import { compact } from "../lib/model.js";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
 
@@ -208,6 +210,13 @@ function groomed(db: Database, o: { dir: string; repo: string; id: number; run: 
   db.query("UPDATE tickets SET state = 'queued', stage = NULL, detail = NULL, needs_kind = NULL, needs_text = NULL, groomed_at = ?, updated_at = ? WHERE id = ?").run(o.now, o.now, o.id);
   const b = (db.query("SELECT blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { blueprint: string }).blueprint;
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(o.id, `groomed: runs the ${b} blueprint`, o.now);
+  // Grooming sets the budget, unless you already set one yourself while it was groomed.
+  const mine = db.query("SELECT 1 FROM decisions WHERE ticket = ? AND who = 'you' AND what LIKE 'set the budget to %'").get(o.id);
+  const est = mine ? null : estimateBudget(db, o.repo, b);
+  if (est) {
+    db.query("UPDATE tickets SET budget_in = ?, budget_out = ? WHERE id = ?").run(est.input, est.output, o.id);
+    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(o.id, `set the budget to ${compact(est.input)}/${compact(est.output)}`, o.now);
+  }
   const started = startGroomed(db, o);
   return { groomed: true, started: started.includes(o.id) };
 }
@@ -226,6 +235,7 @@ function each(db: Database, ids: number[], start: (id: number) => unknown, log?:
 // Groomed tickets start oldest first while fewer than max_running tickets run.
 export function startGroomed(db: Database, o: { dir: string; repo: string; run: Run; now: string; log?: (s: string) => void }) {
   const max = readFactory(o.repo).max_running ?? 3;
+  if (startHold(db, o.repo, new Date(o.now))) return []; // the groomed ones wait; status.json says why
   const running = (db.query("SELECT COUNT(*) AS n FROM tickets WHERE state = 'running'").get() as { n: number }).n;
   // While you're away, only the blueprints away.blueprints names start.
   const waiting = (db.query("SELECT id, blueprint FROM tickets WHERE state = 'queued' AND groomed_at IS NOT NULL ORDER BY groomed_at, id").all() as { id: number; blueprint: string }[])
