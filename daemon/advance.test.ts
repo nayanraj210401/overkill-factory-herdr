@@ -102,7 +102,7 @@ test("the daemon advances a ticket whose agent's terminal exited", () => {
   const logs: string[] = [];
   const p = { dir, db: join(dir, "factory.db"), status: join(dir, "status.json") };
   let gets = 0;
-  const hc: Run = (argv) => argv[1] === "get" ? (gets++, { code: 0, out: '{"exit_code":0}' }) : argv[1] === "run" ? { code: 0, out: '{"address":"t9"}' } : sh(argv);
+  const hc: Run = (argv) => argv[1] === "get" ? (gets++, { code: 0, out: '{"exit_code":0}' }) : argv[1] === "run" ? { code: 0, out: '{"address":"t9"}' } : argv[0] === "gh" ? { code: 0, out: "{\"state\":\"OPEN\",\"body\":\"\",\"assignees\":[]}" } : sh(argv);
   watchSessions(db, p, hc, (s) => logs.push(s));
   expect(gets).toBe(1);
   expect(logs[0]).toBe("factory: #7's agent in t1 finished; advanced");

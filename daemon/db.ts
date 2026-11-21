@@ -119,6 +119,8 @@ export const MIGRATIONS = [
   `ALTER TABLE ticket_repos ADD COLUMN merge_pos INTEGER;`,
   // Triggers: the trigger a ticket came from, so its concurrency can count its running tickets.
   `ALTER TABLE tickets ADD COLUMN trigger_name TEXT;`,
+  // Ticket lifecycle: a hash of the issue body seen at pickup, to notice a scope change.
+  `ALTER TABLE tickets ADD COLUMN issue_hash TEXT;`,
 ];
 
 export function open(path: string): Database {

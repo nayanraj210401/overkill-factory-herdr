@@ -125,7 +125,7 @@ function productOwner(db: Database, o: { repo: string; id: number; run: Run }) {
   return r.code === 0 && r.out ? r.out.trim() : null;
 }
 
-const needsText = (open: Question[], po: string | null) => {
+export const needsText = (open: Question[], po: string | null) => {
   const q = open[0];
   const who = q.kind === "product" ? ` (product: waiting on ${po ? `@${po}` : "the product owner"})` : "";
   return `${open.length} question${open.length > 1 ? "s" : ""} · Q${q.n}: ${q.text}${who}`;
