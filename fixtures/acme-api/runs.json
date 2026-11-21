@@ -148,7 +148,7 @@
   {
    "id": -3,
    "ticket": null,
-   "title": "implement-model · #377 · sonnet-builder",
+   "title": "implement-model · #377 · opus-builder",
    "kind": "benchmark",
    "stage": "implement stage",
    "harness": "claude",

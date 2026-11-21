@@ -19,14 +19,14 @@ test("a suite with a missing number, no variants or a winner that isn't a varian
 
 test("the table has a row per variant, and only the winner's is marked", () => {
   const rows = variantRows(fixture.suites[0]);
-  assert.deepEqual(rows.map((r) => [r.cells[0], r.best]), [["baseline", false], ["sonnet-builder", true]]);
-  assert.deepEqual(rows[1].cells, ["sonnet-builder", "73% (11/15)", "468k / 25k", "$0.61", "9.2m", "104 vs 88"]);
+  assert.deepEqual(rows.map((r) => [r.cells[0], r.best]), [["baseline", false], ["opus-builder", true]]);
+  assert.deepEqual(rows[1].cells, ["opus-builder", "73% (11/15)", "468k / 25k", "$0.61", "9.2m", "104 vs 88"]);
 });
 
 test("BENCHMARK.md carries the table and the recommendation; a stop at the cap is said", () => {
   const md = benchmarkMarkdown(fixture);
-  assert.match(md, /\| \*\*sonnet-builder\*\* \(recommended\) \| 73% \(11\/15\)/);
-  assert.match(md, /Recommendation: sonnet-builder passed 73%/);
+  assert.match(md, /\| \*\*opus-builder\*\* \(recommended\) \| 73% \(11\/15\)/);
+  assert.match(md, /Recommendation: opus-builder passed 73%/);
   assert.match(suiteNote({ ...fixture.suites[0], stopped: "cap" }), /stopped at its spending cap/);
   assert.match(benchmarkMarkdown({ suites: [] }), /No benchmark has run yet/);
 });
