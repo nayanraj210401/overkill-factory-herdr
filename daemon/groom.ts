@@ -7,7 +7,7 @@ import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { enterStage } from "./ticket.ts";
-import { getMeta, needLead } from "./db.ts";
+import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { argvFor, loadAgent, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
 import { mayStart } from "./away.ts";
@@ -35,12 +35,14 @@ const ticket = (db: Database, id: number) => {
 const openQuestions = (db: Database, id: number) =>
   db.query("SELECT n, kind, text, asked_at, answer FROM questions WHERE ticket = ? AND answer IS NULL ORDER BY n").all(id) as Question[];
 
-export function triageBrief(t: { id: number; title: string }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null }) {
+export function triageBrief(t: { id: number; title: string }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null; others?: Repo[] }) {
+  const others = o.others ?? [];
   return [
     `Ticket #${t.id}: ${t.title}. You groom it: decide how it should be built and what must be asked before anyone starts. Change no files in the repo.`,
     isIssue(t.id) ? `Read the issue first: gh issue view ${t.id} --repo ${o.slug} --comments` : "It has no issue: the line above is the whole request.",
     `The code is in ${o.repo}.`,
     o.prompt ?? "",
+    others.length ? `It may need changes in more than this repo. The factory's other repos: ${others.map((r) => `${r.slug} (${r.path})`).join(", ")}. If it does, record every repo it touches, this one first: factory repos ${t.id} ${o.slug} <owner/name>…` : "",
     `Pick the blueprint it runs, one of ${o.blueprints.join(", ")} (each is in ${o.repo}/.factory/blueprints/): factory pick ${t.id} <blueprint>`,
     `Ask only what the issue and the code can't settle, one command per question. What to build, for whom, what users see, wording, pricing or scope: factory question ${t.id} product <question>. How to build it: factory question ${t.id} engineering <question>. Never guess a product question.`,
     `Write what you found, in a few lines, to ${o.folder}/GROOMING.md.`,
@@ -58,7 +60,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   mkdirSync(folder, { recursive: true });
   const agent = loadAgent(o.repo, g.agent);
   const argv = argvFor(agent, { harness: "claude", model: "sonnet" },
-    triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null }));
+    triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));
   // Not a Herdr space: there's no worktree yet, and the triage agent only reads.
   const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f${o.id}-groom`, "--cwd", folder,
     "--label", `factory.ticket=${o.id}`, "--label", "factory.stage=groom", ...argv]);
@@ -81,6 +83,24 @@ export function pick(db: Database, o: { repo: string; id: number; blueprint: str
   const s = db.query("SELECT agent FROM sessions WHERE ticket = ? AND ended_at IS NULL").get(o.id) as { agent: string } | null;
   db.query("UPDATE tickets SET blueprint = ?, updated_at = ? WHERE id = ?").run(o.blueprint, o.now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(o.id, s?.agent ?? "you", `picked the ${o.blueprint} blueprint`, o.now);
+}
+
+// `factory repos <id> owner/name…`: the repos a cross-repo ticket works in, grooming's
+// choice and yours to change until it starts. The lead is always one of them.
+export function chooseRepos(db: Database, o: { repo: string; id: number; slugs: string[]; now: string }) {
+  const t = ticket(db, o.id);
+  if (t.worktree || !["queued", "grooming"].includes(t.state)) throw new Error(`#${o.id} has started; its repos are set`);
+  const lead = needLead(db);
+  const listed = readFactory(o.repo).repos;
+  const slugs = [...new Set([lead.slug, ...o.slugs])];
+  for (const s of slugs) repoOf(db, s, listed);
+  db.query("DELETE FROM ticket_repos WHERE ticket = ? AND lead = 0").run(o.id);
+  db.query("INSERT INTO ticket_repos (ticket, repo, lead) VALUES (?, ?, 1) ON CONFLICT DO NOTHING").run(o.id, lead.slug);
+  for (const s of slugs.slice(1)) db.query("INSERT INTO ticket_repos (ticket, repo) VALUES (?, ?)").run(o.id, s);
+  const s = db.query("SELECT agent FROM sessions WHERE ticket = ? AND ended_at IS NULL").get(o.id) as { agent: string } | null;
+  db.query("UPDATE tickets SET updated_at = ? WHERE id = ?").run(o.now, o.id);
+  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(o.id, s?.agent ?? "you", `works in ${slugs.join(", ")}`, o.now);
+  return slugs;
 }
 
 // `factory question <id> product|engineering <text…>`: asked while grooming.

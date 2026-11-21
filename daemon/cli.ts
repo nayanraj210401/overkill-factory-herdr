@@ -26,7 +26,7 @@ import { validateMetrics } from "../lib/metrics.js";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { overwatch } from "./overwatch.ts";
-import { ask, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
+import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
@@ -36,6 +36,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
+  repos <id> owner/name…             the repos a ticket that hasn't started works in (the lead is always one)
   question <id> product|engineering <text…>  a grooming question (product ones go to the PO on the issue)
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
@@ -215,6 +216,12 @@ export function main(argv: string[], log = console.log) {
       writeStatus(db, p.status);
       writeTicketFiles(db, p.dir, r.id);
       return;
+    } else if (cmd === "repos") {
+      const id = Number(sub);
+      if (!Number.isInteger(id) || !rest.length) throw new Error("usage: factory repos <id> owner/name…");
+      let slugs: string[] = [];
+      change(db, () => { slugs = chooseRepos(db, { repo: needLead(db).path, id, slugs: rest, now: now() }); });
+      log(`#${id} works in ${slugs.join(", ")}`);
     } else if (cmd === "groom" || cmd === "pick" || cmd === "question") {
       const repoDir = needLead(db).path;
       const id = Number(sub);

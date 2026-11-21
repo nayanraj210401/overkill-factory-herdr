@@ -174,13 +174,26 @@ export function setRepo(db: Database, r: Repo) {
     .run(r.slug, r.path, r.lead ? 1 : 0);
 }
 
-// A ticket's work in its lead repo: its worktree, branch and PR. The row is made on
-// the first write, in the factory's lead repo.
+// A ticket's work in one repo: its worktree, branch and PR. Without `repo`, the lead
+// repo's, whose row is made on the first write, in the factory's lead repo.
 export type Work = { worktree: string | null; branch: string | null; pr_number: number | null; pr_watched: number; pr_checked_at: string | null; merged_at: string | null };
-export function setWork(db: Database, ticket: number, w: Partial<Work>) {
+export function setWork(db: Database, ticket: number, w: Partial<Work>, repo?: string) {
   const keys = Object.keys(w) as (keyof Work)[];
   if (!keys.length) return;
   const has = db.query("SELECT 1 FROM ticket_repos WHERE ticket = ? AND lead = 1").get(ticket);
   if (!has) db.query("INSERT INTO ticket_repos (ticket, repo, lead) VALUES (?, ?, 1)").run(ticket, needLead(db).slug);
-  db.query(`UPDATE ticket_repos SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE ticket = ? AND lead = 1`).run(...(keys.map((k) => w[k]) as any[]), ticket);
+  const where = repo ? "repo = ?" : "lead = 1";
+  const r = db.query(`UPDATE ticket_repos SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE ticket = ? AND ${where}`)
+    .run(...(keys.map((k) => w[k]) as any[]), ticket, ...(repo ? [repo] : []));
+  if (r.changes === 0) throw new Error(`#${ticket} doesn't work in ${repo}`);
+}
+
+// Every repo a ticket works in, lead first, with its checkout. One with no rows yet
+// works in the factory's lead repo.
+export type TicketRepo = Work & { repo: string; lead: number; path: string };
+export function ticketRepos(db: Database, ticket: number): TicketRepo[] {
+  const rows = db.query("SELECT tr.*, r.path FROM ticket_repos tr JOIN repos r ON r.slug = tr.repo WHERE tr.ticket = ? ORDER BY tr.lead DESC, tr.repo").all(ticket) as TicketRepo[];
+  if (rows.length) return rows;
+  const lead = needLead(db);
+  return [{ repo: lead.slug, lead: 1, path: lead.path, worktree: null, branch: null, pr_number: null, pr_watched: 0, pr_checked_at: null, merged_at: null }];
 }

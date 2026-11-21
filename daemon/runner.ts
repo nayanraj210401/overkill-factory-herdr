@@ -7,10 +7,10 @@ import { dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { openPr, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
-import { closeSpace, openAgent, worktreePath } from "./herdr.ts";
+import { closeSpace, openAgent, openTab, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
-import { setWork } from "./db.ts";
+import { repoOf, setWork, ticketRepos } from "./db.ts";
 import { budgetCap, forbiddenTouched } from "./away.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
@@ -55,10 +55,11 @@ export const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string) {
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = []) {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return [
     `Ticket #${t.id}: ${t.title}. You run its ${stage} stage.`,
+    repos.length > 1 ? `It spans ${repos.length} repos, each checked out on the same branch: ${repos.map((r, i) => `${r.repo} in ${r.worktree}${i ? "" : " (here)"}`).join(", ")}. Change each one the work needs, and commit in each.` : "",
     prompt ?? "",
     verdict === "holdout" ? `Write hidden checks the builder never sees: keep them in ${folder}/holdout/, never in the worktree. Run them against the worktree, then record the result: factory verdict ${t.id} holdout pass, or factory verdict ${t.id} holdout fail <what fails, without the check's code>.` : "",
     verdict === "review" ? `Record your verdict before you finish: factory verdict ${t.id} review pass, or factory verdict ${t.id} review fail <each blocker>. Only a blocker fails; put suggestions in a pass's detail.` : "",
@@ -84,18 +85,24 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
   if (!["queued", "grooming"].includes(t.state) || t.needs_kind) throw new Error(`#${o.id} is ${t.state}${t.needs_kind ? " with open questions" : ""}; only a groomed or queued ticket starts`);
   const b = loadBlueprint(o.repo, t.blueprint);
   const branch = `factory/${o.id}-${slug(t.title)}`;
-  const worktree = worktreePath(o.repo, branch);
-  mkdirSync(dirname(worktree), { recursive: true });
-  // Idempotent: a start that failed after this step (its rows rolled back) left the
-  // branch and checkout behind; reuse them, as Herdr's New worktree does a branch.
-  const here = existsSync(worktree) && run(["git", "-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"]).out === branch;
-  if (!here) {
-    const known = run(["git", "-C", o.repo, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).code === 0;
-    const wt = run(["git", "-C", o.repo, "worktree", "add", ...(known ? [worktree, branch] : ["-b", branch, worktree])]);
-    if (wt.code !== 0) throw new Error(`git worktree add failed: ${wt.out}`);
+  // Every repo the ticket works in gets a worktree on the same branch; a repo factory.yaml
+  // stopped listing refuses the start.
+  const listed = readFactory(o.repo).repos;
+  const repos = ticketRepos(db, o.id).map((r) => ({ slug: r.repo, path: repoOf(db, r.repo, listed).path }));
+  for (const r of repos) {
+    const worktree = worktreePath(r.path, branch);
+    mkdirSync(dirname(worktree), { recursive: true });
+    // Idempotent: a start that failed after this step (its rows rolled back) left the
+    // branch and checkout behind; reuse them, as Herdr's New worktree does a branch.
+    const here = existsSync(worktree) && run(["git", "-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"]).out === branch;
+    if (!here) {
+      const known = run(["git", "-C", r.path, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).code === 0;
+      const wt = run(["git", "-C", r.path, "worktree", "add", ...(known ? [worktree, branch] : ["-b", branch, worktree])]);
+      if (wt.code !== 0) throw new Error(`git worktree add failed in ${r.slug}: ${wt.out}`);
+    }
+    setWork(db, o.id, { worktree, branch }, r.slug);
   }
   db.query("UPDATE tickets SET state = 'running' WHERE id = ?").run(o.id);
-  setWork(db, o.id, { worktree, branch });
   return startStage(db, { ...o, run, now, blueprint: b, stage: b.start });
 }
 
@@ -107,7 +114,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   if (!s.agent) return null; // check and gate stages are the daemon's own (D4b)
   const agent = loadAgent(o.repo, s.agent);
   const defaults = { harness: "claude", model: "sonnet" };
-  const argv = argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id)), agent?.role));
+  const repos = ticketRepos(db, o.id);
+  const argv = argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id)), agent?.role, repos));
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
@@ -116,6 +124,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
     terminal = made.terminal;
     o.run(["hc", "label", terminal, ...labels]);
     db.query("UPDATE tickets SET space = ? WHERE id = ?").run(made.space, o.id);
+    // A new space: each other repo's worktree gets a shell tab in it.
+    if (made.space !== t.space) for (const r of repos.slice(1)) if (r.worktree) openTab(o.run, { space: made.space, folder: r.worktree, name: r.repo.slice(r.repo.indexOf("/") + 1) });
   } else {
     const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", name, "--cwd", t.worktree,
       ...labels.flatMap((l) => ["--label", l]), ...argv]);
@@ -332,12 +342,15 @@ export function finishPr(db: Database, o: { repo: string; id: number; run: Run; 
   db.query("UPDATE tickets SET state = ?, detail = NULL, needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(o.state, o.now, o.id);
   setWork(db, o.id, { pr_watched: 0, merged_at: o.state === "merged" ? o.now : null });
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.who ?? "you", `${o.state} PR #${pr}`, o.why, o.now);
-  const w = db.query("SELECT worktree, space FROM ticket_lead WHERE id = ?").get(o.id) as { worktree: string | null; space: string | null };
-  if (w.worktree) {
-    closeSpace(o.run, w.space);
-    const rm = o.run(["git", "-C", o.repo, "worktree", "remove", w.worktree]);
-    if (rm.code === 0) { db.query("UPDATE tickets SET space = NULL WHERE id = ?").run(o.id); setWork(db, o.id, { worktree: null }); }
+  // Every repo's worktree goes; one with uncommitted work stays (and so does the space's id).
+  const repos = ticketRepos(db, o.id).filter((r) => r.worktree);
+  if (repos.length) closeSpace(o.run, (db.query("SELECT space FROM tickets WHERE id = ?").get(o.id) as { space: string | null }).space);
+  let left = 0;
+  for (const r of repos) {
+    if (o.run(["git", "-C", r.path, "worktree", "remove", r.worktree!]).code === 0) setWork(db, o.id, { worktree: null }, r.repo);
+    else left++;
   }
+  if (repos.length && !left) db.query("UPDATE tickets SET space = NULL WHERE id = ?").run(o.id);
 }
 
 // Where a person's note restarts work: an agent stage. A check or gate can't act on a

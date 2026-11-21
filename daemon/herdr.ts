@@ -39,6 +39,11 @@ export function openAgent(run: Run, o: { folder: string; space: string | null; n
     || tryDo("space.new", { folder: o.folder, argv: o.argv, focus: false });
 }
 
+// A shell tab in the ticket's space, in another repo's worktree (cross-repo tickets).
+export function openTab(run: Run, o: { space: string; folder: string; name: string }) {
+  if (existsSync(join(appHome(), "herdr-app.sock"))) run(["herdr-app", "do", "tab.new", JSON.stringify({ space: o.space, folder: o.folder, name: o.name, focus: false })]);
+}
+
 // A terminal is done when its program exited, or, for an agent run in a tab's shell
 // (which stays open), when the agent was seen in front and the shell is back.
 export function sessionState(info: { exit_code?: number | null; pid?: number; foreground?: { pid: number } | null }) {
