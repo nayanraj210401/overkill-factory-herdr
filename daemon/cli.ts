@@ -3,11 +3,13 @@
 // `factory run`, the daemon. Every change is checked against the status.json
 // contract inside its transaction, so a bad write never lands.
 import { homedir } from "node:os";
+import { existsSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
 import { buildStatus, writeStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
+import { service } from "./service.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name]           create the factory's database
@@ -15,7 +17,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
   decide <ticket> <who> <what> [why] log a decision
   status                             write status.json and print a summary
-  run [--interval seconds]           the daemon: keep status.json fresh
+  run [--interval seconds] [--all]   the daemon: keep status.json fresh (--all: every factory)
+  service install|uninstall|status   keep \`factory run --all\` alive with launchd
 data: $FACTORY_HOME (default ~/.factory)/<name>/`;
 
 // field name → column, and how to read the value.
@@ -31,7 +34,9 @@ const FIELDS: Record<string, [string, (v: string) => unknown]> = {
 function nullable(v: string) { return v === "" || v === "null" ? null : v; }
 function nullableNumber(v: string) { return v === "" || v === "null" ? null : Number(v); }
 
-export function paths(name: string, home = process.env.FACTORY_HOME ?? join(homedir(), ".factory")) {
+const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory");
+
+export function paths(name: string, home = factoryHome()) {
   const dir = join(home, name);
   return { dir, db: join(dir, "factory.db"), status: join(dir, "status.json") };
 }
@@ -59,9 +64,12 @@ export function main(argv: string[], log = console.log) {
   const blueprint = flag(args, "blueprint") ?? "feature";
   const interval = Number(flag(args, "interval") ?? 5);
   const p = paths(name);
-  const [cmd, sub, ...rest] = args;
+  const all = args.includes("--all");
+  const [cmd, sub, ...rest] = args.filter((a) => a !== "--all");
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
+  if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log });
+  if (cmd === "run" && all) return runAll(interval, log);
   const db = open(p.db);
   try {
     if (cmd === "init") {
@@ -103,6 +111,31 @@ export function main(argv: string[], log = console.log) {
   } finally {
     if (cmd !== "run") db.close();
   }
+}
+
+// One daemon for every factory under FACTORY_HOME; new ones are picked up on the next tick.
+export function factories(home = factoryHome()) {
+  if (!existsSync(home)) return [];
+  return readdirSync(home).filter((n) => existsSync(join(home, n, "factory.db")));
+}
+
+function runAll(interval: number, log: (s: string) => void) {
+  const open_: Record<string, Database> = {};
+  const tick = () => {
+    for (const name of factories()) {
+      const p = paths(name);
+      const db = (open_[name] ??= open(p.db));
+      try {
+        setMeta(db, "heartbeat", new Date().toISOString());
+        writeStatus(db, p.status);
+      } catch (e) {
+        log(`factory ${name}: ${(e as Error).message}`);
+      }
+    }
+  };
+  tick();
+  log(`factory: serving ${factories().join(", ") || "no factories yet"} under ${factoryHome()}, every ${interval}s`);
+  setInterval(tick, interval * 1000);
 }
 
 if (import.meta.main) {

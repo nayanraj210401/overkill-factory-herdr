@@ -75,6 +75,7 @@ S3–S8 depend only on S0–S2 and touch separate mod folders, so they can run i
 
 - **M2, daemon** (TypeScript on Bun, decided 2026-11-21). Slices:
   - **D1 Core:** SQLite (WAL, migrations), the `factory` CLI (`init`, `ticket add/set`, `status`), and `factory run`, which rewrites `~/.factory/<name>/status.json` atomically after every change. The mods read it in place of the fixture. Done when the daemon's output passes `validateStatus` and the window shows the daemon's tickets.
+  - **D1b Always on:** `factory service install|uninstall|status` installs a per-user LaunchAgent (`RunAtLoad`, `KeepAlive`, PATH captured at install time) that runs `factory run --all` for every factory under `~/.factory`. There's no server: the CLI writes SQLite, and the window watches `status.json`.
   - **D2 Ticket folders:** the daemon writes STATUS.md and EVIDENCE.md from rows.
   - **D3 `.factory/` loading:** YAML parse, a JSON Schema check per file type, and Config shows the result.
   - **D4 Graph runner:** start stage agents in worktrees through `hc`, and record sessions with their tokens.

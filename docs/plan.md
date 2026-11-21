@@ -389,7 +389,7 @@ learn:
 The first time factory mode opens in a space with no `.factory/` folder, it runs setup instead of Home. Every step can be skipped and rerun later from Config.
 
 1. **Check the tools:** herdr-core, the GitHub CLI and its login, and at least one agent harness. Each missing one gets its install command.
-2. **Start the daemon** as a login item, so the babysitter and triggers keep running with the window closed.
+2. **Start the daemon** as a login item (`factory service install`: a per-user launchd LaunchAgent with KeepAlive), so the babysitter and triggers keep running with the window closed.
 3. **Connect the queue:** pick the GitHub Project, its Ready column and the assignee.
 4. **Choose the basics:** budget per ticket and per day, the merge gate, `max_running`, the learning target and tunables.
 5. **Write `.factory/`** with the default blueprints and agents, show the files, and commit them to a branch when you agree.
