@@ -99,3 +99,9 @@ test("parseTokens reads what compact writes, and what people type", () => {
   assert.equal(parseTokens("3 M"), 3_000_000);
   for (const bad of ["", "lots", "-3M", "3G", "1e6"]) assert.equal(parseTokens(bad), null);
 });
+
+test("a paused ticket waits in the queue, labelled with where it stopped", () => {
+  const t = { id: 1, title: "x", state: "paused", stage: "implement", tokens: { input: 0, output: 0 }, budget: { input: 1, output: 1 } };
+  assert.deepEqual(groupTickets([t]).queue, [t]);
+  assert.equal(subtitle(t), "paused at implement");
+});

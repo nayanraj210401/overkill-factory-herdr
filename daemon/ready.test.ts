@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta } from "./db.ts";
-import { advance, answer, fixStage, loadBlueprint, mergeTicket, restartStage, sendBack, sh, startTicket, tryPr, type Run } from "./runner.ts";
+import { advance, answer, fixStage, loadBlueprint, mergeTicket, pause, restartStage, resume, sendBack, sh, startTicket, tryPr, type Run } from "./runner.ts";
 import { readyRules, templateProblems } from "./ready.ts";
 
 const GOOD_PR = "Rate-limits login per user; nothing else changes.\n\n**What changed:** middleware.\n**Why:** brute force.\n**How it was verified:** 14 tests.\n**Risk:** low.\n";
@@ -131,4 +131,27 @@ test("u answers a parked ticket into GATES.md and reruns where it stopped", () =
   expect(readFileSync(join(dir, "tickets/7/GATES.md"), "utf8")).toContain("Verify failed 3 times: tests check failed\n\n**Your answer:** The flaky test is known; skip it with .skip.\n");
   db.query("UPDATE tickets SET state = 'grooming', needs_kind = 'question', needs_text = 'Which plan?' WHERE id = 7").run();
   expect(() => answer(db, { dir, repo, id: 7, text: "pro", run })).toThrow("answered on the issue until intake (D6)");
+});
+
+test("p pauses a running ticket (its agent killed, its stage kept) and resumes it with a fresh session", () => {
+  const { db, dir, repo, run, ticket } = setup();
+  const killed: string[][] = [];
+  const spy: Run = (argv, cwd) => (argv[1] === "kill" ? (killed.push(argv), { code: 1, out: "no terminal t1" }) : run(argv, cwd));
+  expect(pause(db, { id: 7, run: spy })).toEqual({ stage: "implement", killed: ["t1"] });
+  expect(killed).toEqual([["hc", "kill", "t1"]]);
+  expect(ticket()).toMatchObject({ state: "paused", stage: "implement" });
+  expect(db.query("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL").get()).toEqual({ n: 0 });
+  expect(db.query("SELECT detail FROM stages ORDER BY id DESC").get()).toEqual({ detail: "paused" });
+  expect(() => pause(db, { id: 7, run })).toThrow("#7 is paused; only a running ticket pauses");
+  expect(resume(db, { dir, repo, id: 7, run })).toEqual({ stage: "implement", terminal: "t1" });
+  expect(ticket()).toMatchObject({ state: "running", stage: "implement" });
+  expect(() => resume(db, { dir, repo, id: 7, run })).toThrow("#7 is running; only a paused ticket resumes");
+});
+
+test("a ticket paused while waiting at pr resumes waiting there, with no agent", () => {
+  const { db, dir, repo, run, ticket } = setup();
+  advance(db, { dir, repo, id: 7, run }); // implement → verify → pr, waiting on PR.md
+  expect(pause(db, { id: 7, run })).toEqual({ stage: "pr", killed: [] });
+  expect(resume(db, { dir, repo, id: 7, run })).toEqual({ stage: "pr", terminal: null });
+  expect(ticket()).toMatchObject({ state: "running", stage: "pr" });
 });

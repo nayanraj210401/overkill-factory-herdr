@@ -84,6 +84,7 @@ export default class FactoryTicket extends View {
         .when(ticket.state === "ready" && Boolean(ticket.pr), (el) => el.child(h_flex().gap(8)
           .child(button("merge", `Merge PR #${ticket.pr?.number}  m`, true, () => act({ kind: "merge" }, ticket)))
           .child(button("send-back", "Send back  x", false, () => act({ kind: "send-back" }, ticket)))))
+        .when(ticket.state === "running" || ticket.state === "paused", (el) => el.child(button("pause", ticket.state === "paused" ? "Resume  p" : "Pause  p", false, () => act({ kind: "pause" }, ticket))))
         .when(ticket.state === "parked", (el) => el.child(button("answer", "Answer and restart  u", true, () => act({ kind: "answer" }, ticket)))));
   }
 }
