@@ -18,7 +18,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   decide <ticket> <who> <what> [why] log a decision
   status                             write status.json and print a summary
   run [--interval seconds] [--all]   the daemon: keep status.json fresh (--all: every factory)
-  service install|uninstall|status   keep \`factory run --all\` alive with launchd
+  service install|uninstall|restart|status [--json]  keep \`factory run --all\` alive with launchd
 data: $FACTORY_HOME (default ~/.factory)/<name>/`;
 
 // field name → column, and how to read the value.
@@ -65,10 +65,11 @@ export function main(argv: string[], log = console.log) {
   const interval = Number(flag(args, "interval") ?? 5);
   const p = paths(name);
   const all = args.includes("--all");
-  const [cmd, sub, ...rest] = args.filter((a) => a !== "--all");
+  const json = args.includes("--json");
+  const [cmd, sub, ...rest] = args.filter((a) => a !== "--all" && a !== "--json");
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
-  if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log });
+  if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json });
   if (cmd === "run" && all) return runAll(interval, log);
   const db = open(p.db);
   try {

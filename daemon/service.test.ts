@@ -48,3 +48,18 @@ test("run --all serves every folder that has a factory.db", () => {
   Bun.spawnSync(["bun", join(import.meta.dir, "cli.ts"), "init", "--name", "one"], { env: { ...process.env, FACTORY_HOME: home } });
   expect(factories(home)).toEqual(["one"]);
 });
+
+test("status --json is what the window reads; restart kickstarts the job", () => {
+  const out: string[] = [];
+  const calls: string[][] = [];
+  const o = { factoryHome: "/fh", label: "x.test", uid: 501, log: (s: string) => out.push(s), json: true };
+  service("status", { ...o, run: () => ({ code: 0, out: "\tstate = running\n\tpid = 42\n" }) });
+  service("status", { ...o, run: () => ({ code: 113, out: "" }) });
+  expect(out.map((s) => JSON.parse(s))).toEqual([
+    { installed: true, state: "running", pid: 42, logs: "/fh/logs" },
+    { installed: false, state: "absent", pid: null, logs: "/fh/logs" },
+  ]);
+  service("restart", { ...o, run: (a) => (calls.push(a), { code: 0, out: "" }) });
+  expect(calls[0]).toEqual(["kickstart", "-k", "gui/501/x.test"]);
+  expect(() => service("restart", { ...o, run: () => ({ code: 113, out: "Could not find service" }) })).toThrow(/factory service install/);
+});

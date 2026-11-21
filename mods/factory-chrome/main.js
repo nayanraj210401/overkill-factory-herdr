@@ -1,6 +1,6 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, props, window } from "herdr";
+import { theme, props, window, run } from "herdr";
 import { compact } from "./lib/model.js";
 import { startLoader, state } from "./lib/store.js";
 
@@ -25,7 +25,9 @@ export default class FactoryChrome extends View {
     if (props()?.footer) return s ? this.footer(t, s) : div().size_full().bg(t.chrome);
     const mac = window()?.platform === "macos" && !window()?.fullscreen;
     const line = s
-      ? h_flex().gap(6).items_center()
+      ? h_flex().id("daemon-line").gap(6).items_center().cursor_pointer().hover((st) => st.text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // not a window drag
+          .on_click(() => run("layout.select", { stack: "pages", child: "config" }))
           .child(div().size(7).rounded_full().bg(s.factory.daemon ? t.done : t.dim))
           .child(`${s.source === "fixture" ? "sample data" : s.factory.daemon ? "daemon on" : "daemon off"} · 5h ${Math.round(s.plan.window_5h * 100)}%`)
       : div().text_color(t.blocked).truncate().child(errors[0] ?? "no status");

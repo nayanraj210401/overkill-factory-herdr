@@ -80,3 +80,14 @@ test("STATUS.md parses into a stage timeline", async () => {
   assert.deepEqual(stages[4], { state: "next", name: "Verify", time: null, detail: "" });
   assert.deepEqual(parseStatusMd(null), { summary: "", stages: [] });
 });
+
+test("the Daemon bar offers what each state allows", async () => {
+  const { daemonView } = await import("../lib/model.js");
+  assert.deepEqual(daemonView(null).actions, []);
+  assert.equal(daemonView(null, "bun: command not found\nmore").text, "factory CLI failed: bun: command not found");
+  assert.deepEqual(daemonView({ installed: false, state: "absent", pid: null }).actions, ["install"]);
+  const up = daemonView({ installed: true, state: "running", pid: 42 });
+  assert.equal(up.text, "Running · pid 42 · starts at login");
+  assert.deepEqual(up.actions, ["restart", "uninstall", "logs"]);
+  assert.equal(daemonView({ installed: true, state: "spawn scheduled", pid: null }).tone, "blocked");
+});

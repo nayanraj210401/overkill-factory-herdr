@@ -1,11 +1,12 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, EditorState, Editor } from "gpui-base";
-import { theme, exec, readTextFile, watchFolder, nextCommand, checking } from "herdr";
-import { configFiles } from "./lib/model.js";
+import { theme, exec, readTextFile, watchFolder, nextCommand, checking, notify } from "herdr";
+import { configFiles, daemonView } from "./lib/model.js";
+import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { root } from "./lib/store.js";
 
-// The Config page: the .factory/ files, the selected one read-only, ⌘O to edit it
-// in your own editor (docs/layouts/07-config.png). Schema checks arrive with M2.
+// The Config page: the daemon's service controls, the .factory/ files, the selected
+// one read-only, ⌘O to edit it in your own editor (docs/layouts/07-config.png).
 export default class FactoryConfig extends View {
   init(_props, cx) {
     this.dir = `${root()}/.factory`;
@@ -13,6 +14,12 @@ export default class FactoryConfig extends View {
     this.selected = null;
     this.error = null;
     this.editor = null;
+    this.daemon = undefined; // undefined: not asked yet; null: the CLI didn't answer
+    this.busy = null;
+    if (!checking()) {
+      this.refreshDaemon(cx);
+      cx.timer.every(10000, (cx) => this.refreshDaemon(cx));
+    }
     cx.spawn(async (cx) => {
       await this.list();
       if (this.files.length) await this.select(this.files[0], cx);
@@ -31,6 +38,48 @@ export default class FactoryConfig extends View {
         cx.notify();
       }
     });
+  }
+
+  factory(args) {
+    return exec(CLI[0], [...CLI.slice(1), ...args], { timeout: 20000 });
+  }
+
+  refreshDaemon(cx) {
+    cx.spawn(async (cx) => {
+      const r = await this.factory(["service", "status", "--json"]).catch(() => null);
+      try {
+        this.daemon = r?.code === 0 ? JSON.parse(r.stdout) : null;
+        this.daemonError = r ? r.stderr || r.stdout : "could not run";
+      } catch {
+        this.daemon = null;
+        this.daemonError = `not JSON: ${r.stdout}`;
+      }
+      cx.notify();
+    });
+  }
+
+  act(action, cx) {
+    if (action === "logs") return exec("open", [this.daemon.logs]);
+    this.busy = action;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.factory(["service", action]).catch((e) => ({ code: 1, stderr: String(e) }));
+      if (r.code !== 0) notify({ title: `Daemon ${action} failed`, body: (r.stderr || r.stdout).trim(), level: "error" });
+      this.busy = null;
+      this.refreshDaemon(cx);
+    });
+  }
+
+  daemonBar(t) {
+    const v = this.daemon === undefined ? { text: "Checking…", tone: "dim", actions: [] } : daemonView(this.daemon, this.daemonError);
+    const LABEL = { install: "Install", restart: "Restart", uninstall: "Uninstall", logs: "Logs" };
+    return h_flex().id("daemon").h(40).flex_none().px(14).gap(10).items_center().rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .child(div().size(8).rounded_full().bg(t[v.tone]))
+      .child(div().font_semibold().text_color(t.foreground).child("Daemon"))
+      .child(div().flex_1().truncate().text_color(t.muted).child(this.busy ? `${LABEL[this.busy]}…` : v.text))
+      .children(v.actions.map((a) => div().id(`d-${a}`).px(10).py(3).rounded(6).border(1).cursor_pointer().text_size(12)
+        .border_color(a === "install" ? t.accent : t.border).text_color(a === "install" ? t.accent : t.muted)
+        .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.busy || this.act(a, cx)).child(LABEL[a])));
   }
 
   async list() {
@@ -66,7 +115,7 @@ export default class FactoryConfig extends View {
         .child(svg(`mods/workspace-chrome/${f.language === "markdown" ? "file-text" : "settings"}.svg`).size(13))
         .child(div().truncate().child(f.path));
     };
-    return h_flex().size_full().gap(8).text_size(13)
+    return v_flex().size_full().gap(8).text_size(13).child(this.daemonBar(t)).child(h_flex().flex_1().w_full().gap(8)
       .child(v_flex().id("files").w(240).flex_none().h_full().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()
         .child(div().px(8).pb(6).text_size(11).text_color(t.dim).child(".FACTORY"))
         .children(this.files.map(row))
@@ -78,6 +127,6 @@ export default class FactoryConfig extends View {
           .child(div().id("open").px(8).py(2).rounded(6).border(1).border_color(t.border).text_size(12).text_color(t.muted).cursor_pointer()
             .hover((s) => s.bg(t.hover)).on_click(() => this.selected && exec("open", [`${this.dir}/${this.selected.path}`]))
             .child("Open in editor ⌘O")))
-        .child(div().flex_1().p(4).when(Boolean(this.editor), (el) => el.child(Editor.new(this.editor).size_full()))));
+        .child(div().flex_1().p(4).when(Boolean(this.editor), (el) => el.child(Editor.new(this.editor).size_full())))));
   }
 }
