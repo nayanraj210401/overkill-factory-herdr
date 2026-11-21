@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { newAsk, mergeAsk, budgetAsk, sendBackAsk, answerAsk, cliCommand } from "../lib/actions.js";
+import { newAsk, pauseAsk, mergeAsk, budgetAsk, sendBackAsk, answerAsk, cliCommand } from "../lib/actions.js";
 
 const ticket = (o) => ({ id: 409, title: "Bump dependencies", state: "ready", pr: { number: 511, watched: true },
   tokens: { input: 1_200_000, output: 64_000 }, budget: { input: 3_000_000, output: 200_000 }, ...o });
@@ -44,4 +44,12 @@ test("x asks for a note on a ready PR; u asks a parked ticket's question", () =>
 test("n asks for an issue or goal and starts it", () => {
   const a = newAsk();
   assert.deepEqual([a.args, a.input.value, a.confirm], [["new", "--start"], "", "Create and start"]);
+});
+
+test("p pauses a running ticket and resumes a paused one", () => {
+  const run = pauseAsk(ticket({ state: "running", stage: "implement", terminal: "t7" }));
+  assert.deepEqual([run.title, run.args], ["Pause #409?", ["pause", "409"]]);
+  assert.match(run.detail, /agent in t7 is ended/);
+  assert.deepEqual(pauseAsk(ticket({ state: "paused", stage: "implement" })).args, ["resume", "409"]);
+  assert.deepEqual(pauseAsk(ticket()), { error: "#409 is ready; only a running ticket pauses" });
 });

@@ -17,6 +17,7 @@ export function summary(t: ReturnType<typeof ticketOf>) {
     case "running": return `${t.title} is in ${t.stage ?? "a stage"}${t.detail ? `, ${t.detail}` : ""}, at ${cost}.`;
     case "ready": return `${t.title} is ready${t.pr ? `: PR #${t.pr.number}` : ""}, at ${cost}.`;
     case "parked": return `${t.title} is parked: ${t.needs?.text ?? "it is stuck"}.`;
+    case "paused": return `${t.title} is paused at ${t.stage ?? "its start"}, at ${cost}.`;
     case "blocked": return `${t.title} waits on #${t.blocked_by}.`;
     case "grooming": return `${t.title} is being groomed${t.needs ? `: ${t.needs.text}` : ""}.`;
     case "merged": return `${t.title} is merged, at $${t.usd.toFixed(2)}.`;
