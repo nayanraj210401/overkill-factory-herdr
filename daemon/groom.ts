@@ -10,6 +10,7 @@ import { enterStage } from "./ticket.ts";
 import { getMeta } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { argvFor, loadAgent, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
+import { mayStart } from "./away.ts";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
 
@@ -206,8 +207,9 @@ function each(db: Database, ids: number[], start: (id: number) => unknown, log?:
 export function startGroomed(db: Database, o: { dir: string; repo: string; run: Run; now: string; log?: (s: string) => void }) {
   const max = readFactory(o.repo).max_running ?? 3;
   const running = (db.query("SELECT COUNT(*) AS n FROM tickets WHERE state = 'running'").get() as { n: number }).n;
-  const waiting = db.query("SELECT id FROM tickets WHERE state = 'queued' AND groomed_at IS NOT NULL ORDER BY groomed_at, id LIMIT ?")
-    .all(Math.max(0, max - running)) as { id: number }[];
+  // While you're away, only the blueprints away.blueprints names start.
+  const waiting = (db.query("SELECT id, blueprint FROM tickets WHERE state = 'queued' AND groomed_at IS NOT NULL ORDER BY groomed_at, id").all() as { id: number; blueprint: string }[])
+    .filter((w) => mayStart(db, o.repo, w.blueprint)).slice(0, Math.max(0, max - running));
   return each(db, waiting.map((w) => w.id), (id) => startTicket(db, { dir: o.dir, repo: o.repo, id, run: o.run, now: o.now }), o.log);
 }
 

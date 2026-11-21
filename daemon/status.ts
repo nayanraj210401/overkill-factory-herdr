@@ -5,6 +5,7 @@ import { renameSync, writeFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
 import { getMeta } from "./db.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
+import { digest } from "./away.ts";
 
 type Row = Record<string, any>;
 
@@ -51,6 +52,7 @@ export function buildStatus(db: Database, now = new Date()) {
       tokens: { input: used.i ?? 0, output: used.o ?? 0 },
       budget: { input: Number(getMeta(db, "budget_day_in") ?? 40e6), output: Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
+    away: digest(db, now.toISOString()),
     to_review: 0,
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,

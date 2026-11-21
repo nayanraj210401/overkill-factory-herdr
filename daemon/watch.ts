@@ -7,6 +7,7 @@
 import type { Database } from "bun:sqlite";
 import { finishPr, readFactory, reviewBack, type Run } from "./runner.ts";
 import { commentsNote, pushbackLimit, storeComments, type GhComment } from "./comments.ts";
+import { reviewRoundsLeft } from "./away.ts";
 
 function ghJson(run: Run, argv: string[]) {
   const r = run(argv);
@@ -46,9 +47,10 @@ export function watchPrs(db: Database, o: { dir: string; repo: string; slug: str
         const limit = pushbackLimit((readFactory(o.repo) as any).review);
         const rows = storeComments(db, { ticket: t.id, pr: t.pr_number, comments: fresh, limit });
         if (!rows.length) return;
-        reviewBack(db, { dir: o.dir, repo: o.repo, id: t.id, run: o.run, now: o.now, text: commentsNote({ ticket: t.id, pr: t.pr_number, rows, limit }),
+        const park = reviewRoundsLeft(db, o.repo, t.id) <= 0 ? `${rows.length} new review comment${rows.length > 1 ? "s" : ""} on PR #${t.pr_number}; away.review_rounds is used up while you're away` : undefined;
+        reviewBack(db, { dir: o.dir, repo: o.repo, id: t.id, run: o.run, now: o.now, park, text: commentsNote({ ticket: t.id, pr: t.pr_number, rows, limit }),
           heading: `${rows.length} review comment${rows.length > 1 ? "s" : ""} on PR #${t.pr_number} · ${o.now.slice(0, 16).replace("T", " ")}` });
-        out.push({ id: t.id, event: `${rows.length} comment${rows.length > 1 ? "s" : ""}` });
+        out.push({ id: t.id, event: `${rows.length} comment${rows.length > 1 ? "s" : ""}${park ? ", parked (away)" : ""}` });
       })();
     } catch (e) {
       o.log?.(`factory: #${t.id}: watching PR #${t.pr_number}: ${(e as Error).message}`);

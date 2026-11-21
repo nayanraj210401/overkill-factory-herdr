@@ -10,6 +10,7 @@ import { openPr, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from
 import { closeSpace, openAgent, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
+import { budgetCap, forbiddenTouched } from "./away.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -145,7 +146,7 @@ export function checkReady(db: Database, o: { dir: string; repo: string; id: num
   if (!t.worktree) throw new Error(`#${o.id} has no worktree yet; factory start ${o.id}`);
   const b = loadBlueprint(o.repo, t.blueprint);
   const expects = Object.values(b.stages).map((s) => verdictOf(o.repo, s)).filter((k): k is VerdictKind => !!k);
-  return readyRules(db, { id: o.id, dir: o.dir, worktree: t.worktree, rules: readFactory(o.repo).ready ?? DEFAULT_READY, run: o.run, expects });
+  return readyRules(db, { id: o.id, dir: o.dir, worktree: t.worktree, rules: readFactory(o.repo).ready ?? DEFAULT_READY, run: o.run, expects, cap: budgetCap(db, o.repo) });
 }
 
 // A check stage the daemon runs itself. Returns whether it passed, after recording evidence.
@@ -190,8 +191,11 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   const at = t.stage as string;
   // Review comments the stage handled: each needs a verdict; an escalation stops for you.
   const gate = o.failed ? null : commentGate(db, o.id, now);
-  if (gate && "park" in gate) {
-    db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(gate.park, now, o.id);
+  // While you're away, a ticket that touched a path away.never names stops for you.
+  const touched = t.worktree ? forbiddenTouched(db, { repo: o.repo, worktree: t.worktree, run }) : [];
+  const stop = gate && "park" in gate ? gate.park : touched.length ? `Touched ${touched.slice(0, 3).join(", ")}${touched.length > 3 ? "…" : ""}, which never runs while you're away` : null;
+  if (stop) {
+    db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(stop, now, o.id);
     db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
     return { parked: true, stage: at };
   }
@@ -386,10 +390,16 @@ export function sendBack(db: Database, o: { dir: string; repo: string; id: numbe
 }
 
 // The PR watcher: reviewers' comments on a ready PR send it back like `x` does, by the daemon.
-export function reviewBack(db: Database, o: { dir: string; repo: string; id: number; heading: string; text: string; run: Run; now: string }) {
+export function reviewBack(db: Database, o: { dir: string; repo: string; id: number; heading: string; text: string; run: Run; now: string; park?: string }) {
   const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
   const b = loadBlueprint(o.repo, t.blueprint);
   const undo = note(o.dir, o.id, "REVIEW.md", o.heading, o.text);
+  // Out of unattended review rounds: the comments wait in REVIEW.md, and `u` runs the fix stage.
+  if (o.park) {
+    db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+    db.query("UPDATE tickets SET state = 'parked', stage = ?, needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(fixStage(b), o.park, o.now, o.id);
+    return { parked: true };
+  }
   return withNote(undo, () => restart(db, { ...o, b, stage: fixStage(b), who: `review comments on PR #${t.pr_number}`, why: o.heading, by: "daemon" }));
 }
 
