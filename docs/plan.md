@@ -611,6 +611,8 @@ limits: { max_usd: 40, parallel: 3 }
 schedule: weekly
 ```
 
+The held-out tests are scored by running factory.yaml's `quality_floor` commands in the replayed worktree with `$FACTORY_HOLDOUT_FILES` set; a scheduled suite first runs one interval after the daemon sees it, since it spends money.
+
 Benchmarks inform you; the learning loop above is what tunes settings, on live tickets and within your limits.
 
 ## What the user reads per ticket

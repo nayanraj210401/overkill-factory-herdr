@@ -144,6 +144,22 @@
    "tokens_out": 8000,
    "usd": 0.41,
    "transcript": "/Users/you/.claude/projects/-work-trees-acme-factory-401/s6.jsonl"
+  },
+  {
+   "id": -3,
+   "ticket": null,
+   "title": "implement-model · #377 · sonnet-builder",
+   "kind": "benchmark",
+   "stage": "implement stage",
+   "harness": "claude",
+   "model": "claude-sonnet-5-5",
+   "started_at": "2026-11-15T02:10:00Z",
+   "ended_at": "2026-11-15T02:19:00Z",
+   "duration_s": 540,
+   "tokens_in": 470000,
+   "tokens_out": 24000,
+   "usd": 0.58,
+   "transcript": null
   }
  ]
 }

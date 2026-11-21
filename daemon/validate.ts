@@ -49,9 +49,11 @@ export const KINDS: Record<string, Rule> = {
   benchmark: {
     required: ["target", "variants"],
     object: {
-      target: { object: { stage: str, blueprint: str } }, size: { enum: ["smoke", "mini", "full"] }, tasks: open,
+      target: { object: { stage: str, blueprint: str } }, size: { enum: ["smoke", "mini", "full"] },
+      tasks: { object: { from: { enum: ["merged-prs"] }, repo: str, pick: num, holdout: { enum: ["tests-added-by-pr"] } } },
       variants: { list: { object: { name: str, set: { map: "any" } }, required: ["name"] } },
-      score: strs, limits: { object: { max_usd: num, parallel: num } }, schedule: str,
+      score: { list: { enum: ["holdout_pass", "cost_usd", "minutes", "diff_lines"] } },
+      limits: { object: { max_usd: num, max_tokens: num, parallel: num } }, schedule: str,
     },
   },
 };
@@ -61,6 +63,16 @@ export function parseEvery(v: unknown): number | null {
   const m = typeof v === "string" ? v.trim().match(/^(\d+)([mhd])$/) : null;
   return m && Number(m[1]) > 0 ? Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"] : null;
 }
+
+// A benchmark's `schedule:` in milliseconds: hourly, daily, weekly, or the triggers' 30m / 6h / 1d.
+export function parseSchedule(v: unknown): number | null {
+  const named = ({ hourly: 3_600_000, daily: 86_400_000, weekly: 7 * 86_400_000 } as Record<string, number>)[String(v).trim()];
+  return named ?? parseEvery(v);
+}
+
+// Where a variant's `set:` path may start: agents.<name>.<key>, factory.<key>…, blueprints.<name>.…
+export const SET_HEADS = ["agents", "factory", "blueprints"];
+const AGENT_KEYS = Object.keys((KINDS.agent as { object: object }).object);
 
 const kindOf = (path: string) =>
   path === "factory.yaml" ? "factory"
@@ -152,7 +164,26 @@ export function validateFile(path: string, text: string): string[] {
     if (t?.on === "schedule" && parseEvery(t.every) === null) errors.push("every: a schedule trigger needs every: 30m, 6h or 1d");
     if (t?.on !== "schedule" && t?.every !== undefined) errors.push("every: only a schedule trigger has it");
   }
+  if (kind === "benchmark") benchmarkRefs(doc, errors);
   return errors;
+}
+
+function benchmarkRefs(b: any, errors: string[]) {
+  const t = b?.target;
+  if (t && typeof t === "object" && !t.stage === !t.blueprint) errors.push("target: name exactly one of stage or blueprint");
+  if (b?.schedule !== undefined && parseSchedule(b.schedule) === null) errors.push("schedule: hourly, daily, weekly, or 30m, 6h, 1d");
+  const seen = new Set<string>();
+  (Array.isArray(b?.variants) ? b.variants : []).forEach((v: any, i: number) => {
+    if (seen.has(v?.name)) errors.push(`variants[${i}].name: "${v.name}" is used twice`);
+    seen.add(v?.name);
+    for (const path of Object.keys(v?.set ?? {})) {
+      const parts = path.split(".");
+      if (!SET_HEADS.includes(parts[0]) || parts.length < (parts[0] === "factory" ? 2 : 3))
+        errors.push(`variants[${i}].set.${path}: use a dotted path like agents.builder.model, factory.defaults.model or blueprints.feature.stages.verify.max_retries`);
+      else if (parts[0] === "agents" && !AGENT_KEYS.includes(parts[2]))
+        errors.push(`variants[${i}].set.${path}: agents have no ${parts[2]} (allowed: ${AGENT_KEYS.join(", ")})`);
+    }
+  });
 }
 
 function files(dir: string): string[] {

@@ -92,7 +92,7 @@ function codexFiles(since: string) {
   return days.flatMap(jsonl);
 }
 
-function jsonl(dir: string): string[] {
+export function jsonl(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
     d.isDirectory() ? jsonl(join(dir, d.name)) : d.name.endsWith(".jsonl") ? [join(dir, d.name)] : []);

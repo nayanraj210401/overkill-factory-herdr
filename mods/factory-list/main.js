@@ -112,7 +112,7 @@ export default class FactoryList extends View {
           .when(focused && i === this.at, (el) => el.bg(t.selected))
           .hover((st) => st.bg(t.hover))
           .on_click(() => this.openTranscript(r))
-          .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(`#${r.ticket} ${r.title}`))
+          .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(r.ticket == null ? r.title : `#${r.ticket} ${r.title}`))
           .child(cell(140, runWhat(r), t.muted))
           .child(cell(190, runModel(r), t.muted))
           .child(cell(100, startedAt(r.started_at), t.muted))
