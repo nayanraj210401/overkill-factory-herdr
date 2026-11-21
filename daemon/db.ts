@@ -23,6 +23,16 @@ const MIGRATIONS = [
    CREATE TABLE decisions (
      id INTEGER PRIMARY KEY, ticket INTEGER, who TEXT NOT NULL, what TEXT NOT NULL, why TEXT, at TEXT NOT NULL
    );`,
+  // D2: each ticket's stage history and check results, the source of STATUS.md and EVIDENCE.md.
+  `CREATE TABLE stages (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id),
+     name TEXT NOT NULL, detail TEXT, started_at TEXT NOT NULL, ended_at TEXT
+   );
+   CREATE TABLE planned (ticket INTEGER NOT NULL REFERENCES tickets(id), pos INTEGER NOT NULL, name TEXT NOT NULL);
+   CREATE TABLE evidence (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id),
+     check_name TEXT NOT NULL, result TEXT NOT NULL CHECK (result IN ('PASS', 'FAIL')), detail TEXT, at TEXT NOT NULL
+   );`,
 ];
 
 export function open(path: string): Database {

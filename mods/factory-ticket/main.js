@@ -2,7 +2,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, shared, readTextFile, nextCommand, checking, notify } from "herdr";
 import { parseStatusMd, TICKET_TABS, compact, currentTicket } from "./lib/model.js";
-import { root, status } from "./lib/store.js";
+import { root, status, state } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
@@ -23,8 +23,9 @@ export default class FactoryTicket extends View {
   }
 
   load(id, cx) {
+    if (this.id !== id) this.files = {};
     this.id = id;
-    this.files = {};
+    this.at = state().at;
     cx.spawn(async (cx) => {
       const dir = `${root()}/tickets/${id}`;
       for (const name of ["STATUS.md", ...TICKET_TABS.map((t) => t.file)]) this.files[name] = await readTextFile(`${dir}/${name}`);
@@ -37,7 +38,8 @@ export default class FactoryTicket extends View {
     const s = status();
     const ticket = s && currentTicket(s.tickets, shared("factory.ticket"));
     if (!ticket) return div().size_full().bg(t.background);
-    if (ticket.id !== this.id) this.load(ticket.id, cx);
+    // The daemon rewrites these files with each status.json, so re-read on every reload.
+    if (ticket.id !== this.id || state().at !== this.at) this.load(ticket.id, cx);
     const { summary, stages } = parseStatusMd(this.files["STATUS.md"]);
     const dot = (state) => div().size(12).flex_none().mt(3).rounded_full()
       .bg(state === "done" ? t.done : state === "now" ? t.working : t.raised).border(1).border_color(state === "next" ? t.border : t.background);
