@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { renameSync, writeFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { getMeta, leadRepo } from "./db.ts";
+import { getMeta, leadRepo, listRepos } from "./db.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
 import { digest } from "./away.ts";
 
@@ -11,14 +11,17 @@ type Row = Record<string, any>;
 
 const HEARTBEAT_MS = 15_000;
 
-export function ticketOf(r: Row) {
+const prOf = (r: Row) => (r.pr_number == null ? null : { number: r.pr_number, watched: !!r.pr_watched, checked_at: r.pr_checked_at });
+
+export function ticketOf(r: Row, repos?: Row[]) {
   return {
     id: r.id, title: r.title, state: r.state, blueprint: r.blueprint,
     stage: r.stage, detail: r.detail, updated_at: r.updated_at,
     tokens: { input: r.tokens_in, output: r.tokens_out },
     budget: { input: r.budget_in, output: r.budget_out },
     usd: r.usd, where: r.location,
-    pr: r.pr_number == null ? null : { number: r.pr_number, watched: !!r.pr_watched, checked_at: r.pr_checked_at },
+    pr: prOf(r),
+    ...(repos ? { repos: repos.map((x) => ({ slug: x.repo, lead: !!x.lead, pr: prOf(x), worktree: x.worktree ?? null })) } : {}),
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,
     terminal: r.terminal ?? null,
@@ -27,8 +30,12 @@ export function ticketOf(r: Row) {
 
 export function buildStatus(db: Database, now = new Date()) {
   // A ticket's terminal: its latest session still open (the window's `e` opens it).
+  // Each ticket's repos, lead first; one that hasn't started works in the factory's lead repo.
+  const lead = leadRepo(db);
+  const work = Map.groupBy(db.query("SELECT * FROM ticket_repos ORDER BY ticket, lead DESC, repo").all() as Row[], (r) => r.ticket);
+  const reposOf = (id: number) => work.get(id) ?? (lead ? [{ repo: lead.slug, lead: 1 }] : undefined);
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal
-    FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map(ticketOf);
+    FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ticketOf(r, reposOf(r.id)));
   const today = now.toISOString().slice(0, 10);
   const used = db.query("SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o, SUM(usd) AS usd FROM usage WHERE at >= ?").get(today) as any;
   // PRs opened today: what each cost, and how long from the ticket's first stage to the PR.
@@ -41,7 +48,7 @@ export function buildStatus(db: Database, now = new Date()) {
     version: 1,
     generated_at: now.toISOString(),
     source: "daemon",
-    factory: { name: getMeta(db, "name") ?? "factory", repo: leadRepo(db)?.slug ?? "unknown", daemon: now.getTime() - beat < HEARTBEAT_MS },
+    factory: { name: getMeta(db, "name") ?? "factory", repo: lead?.slug ?? "unknown", ...(lead ? { repos: listRepos(db).map((r) => r.slug) } : {}), daemon: now.getTime() - beat < HEARTBEAT_MS },
     plan: planMeters(db, now),
     today: {
       time_to_pr_min: Math.round(avg(prs.filter((p) => p.began).map((p) => (Date.parse(p.at) - Date.parse(p.began!)) / 60000))),

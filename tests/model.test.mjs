@@ -105,3 +105,33 @@ test("a paused ticket waits in the queue, labelled with where it stopped", () =>
   assert.deepEqual(groupTickets([t]).queue, [t]);
   assert.equal(subtitle(t), "paused at implement");
 });
+
+test("repos: the contract takes the factory's repos (lead first) and each ticket's, with one lead", () => {
+  const s = structuredClone(status);
+  s.factory.repos = ["acme/web", "acme/api"];
+  s.tickets[0].repos = [{ slug: "acme/api", lead: false, pr: { number: 3 } }, { slug: "", lead: false }];
+  assert.deepEqual(validateStatus(s), [
+    "factory.repos: needs the repo slugs, the lead (factory.repo) first",
+    "tickets[0].repos[0].pr: needs {number, watched}",
+    "tickets[0].repos[1]: needs {slug, lead: boolean, pr, worktree}",
+    "tickets[0].repos: needs exactly one lead repo",
+  ]);
+  delete s.factory.repos;
+  delete s.tickets[0].repos;
+  assert.deepEqual(validateStatus(s), []); // both are optional
+});
+
+test("repos: a badge only when the factory has more than one; the filter finds a cross-repo ticket in each repo", async () => {
+  const { repoBadge, filterTickets, countBy } = await import("../lib/model.js");
+  const one = { ...status, factory: { ...status.factory, repos: ["acme/api"] } };
+  const t418 = status.tickets.find((t) => t.id === 418);
+  const t412 = status.tickets.find((t) => t.id === 412);
+  assert.equal(repoBadge(one, t418), null);
+  assert.equal(repoBadge(status, t418), "api + web");
+  assert.equal(repoBadge(status, t412), "api"); // no repos: the factory's lead repo
+  const lead = status.factory.repo;
+  assert.deepEqual(filterTickets(status.tickets, "all", "", "acme/web", lead).map((t) => t.id), [418]);
+  assert.equal(filterTickets(status.tickets, "all", "", "acme/api", lead).length, status.tickets.length);
+  assert.deepEqual(filterTickets(status.tickets, "all", "acme/web", null, lead).map((t) => t.id), [418]); // search matches repos too
+  assert.equal(countBy(status.tickets, "acme/web", lead).running, 1);
+});
