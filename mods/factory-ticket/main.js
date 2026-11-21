@@ -1,8 +1,9 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
-import { theme, shared, readTextFile, nextCommand, checking } from "herdr";
+import { theme, shared, readTextFile, nextCommand, checking, notify } from "herdr";
 import { parseStatusMd, TICKET_TABS, compact, currentTicket } from "./lib/model.js";
 import { root, status } from "./lib/store.js";
+import { keyAction } from "./lib/keys.js";
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
 // beside the live agent terminal once M2 starts agents (docs/layouts/02-ticket.png).
@@ -11,6 +12,7 @@ export default class FactoryTicket extends View {
     this.id = null;
     this.files = {};
     this.tab = "1";
+    this.handle = cx.focus_handle();
     if (!checking()) cx.spawn(async (cx) => {
       for (;;) {
         const m = (await nextCommand()).match(/tab-(\d)$/);
@@ -42,6 +44,13 @@ export default class FactoryTicket extends View {
     const tab = TICKET_TABS.find((x) => x.key === this.tab);
     const body = this.files[tab.file];
     return h_flex().size_full().gap(8).text_size(13)
+      .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus())
+      .on_key_down((e, cx) => {
+        // Bare 1-4 switch tabs here, as in the mockup; actions toast until their milestone.
+        if (/^[1-4]$/.test(e.key) && !e.modifiers.platform && !e.modifiers.control) { this.tab = e.key; cx.stop_propagation(); cx.notify(); return; }
+        const a = keyAction(e);
+        if (a?.kind === "soon") { notify({ title: `${a.label}: coming in ${a.milestone}`, level: "info", timeout: 2500 }); cx.stop_propagation(); }
+      })
       .child(v_flex().id("ticket").flex_1().h_full().p(16).gap(10).rounded(10).bg(t.background).border(1).border_color(t.border).overflow_y_scroll()
         .child(div().text_size(17).font_semibold().text_color(t.foreground).child(`#${ticket.id} ${ticket.title}`))
         .child(div().text_color(t.muted).child(summary || `${ticket.state} · no STATUS.md yet`))

@@ -1,8 +1,9 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, setShared } from "herdr";
+import { theme, run, setShared, notify } from "herdr";
 import { needsYou, ago, compact } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
+import { keyAction, clamp } from "./lib/keys.js";
 import { status } from "./lib/store.js";
 
 const open = (id) => {
@@ -12,11 +13,27 @@ const open = (id) => {
 
 // Home: what needs you, then what runs, then today's four numbers (docs/layouts/01-home.png).
 export default class FactoryHome extends View {
-  card(t, { ticket, kind }, now) {
+  init(_props, cx) {
+    this.handle = cx.focus_handle();
+    this.at = 0;
+  }
+
+  // j/k walk Needs you then Running; enter opens; unbuilt actions toast their milestone.
+  key(e, items, cx) {
+    const a = keyAction(e);
+    if (!a) return;
+    if (a.kind === "move") this.at = clamp(this.at + a.delta, items.length);
+    else if (a.kind === "open" && items[this.at]) open(items[this.at].id);
+    else if (a.kind === "soon") notify({ title: `${a.label}: coming in ${a.milestone}`, level: "info", timeout: 2500 });
+    cx.stop_propagation();
+    cx.notify();
+  }
+
+  card(t, { ticket, kind }, now, on) {
     const color = kind === "merge" ? t.done : t.blocked;
     const tag = kind === "question" ? "grooming · waiting on you" : kind === "parked" ? "parked"
       : ticket.pr?.watched && ticket.pr.checked_at ? `watching · checked ${ago(ticket.pr.checked_at, now)}` : "ready to merge";
-    return h_flex().id(`n-${ticket.id}`).rounded(8).bg(t.surface).border(1).border_color(t.border).cursor_pointer()
+    return h_flex().id(`n-${ticket.id}`).rounded(8).bg(t.surface).border(1).border_color(on ? t.accent : t.border).cursor_pointer()
       .hover((s) => s.bg(t.hover)).on_click(() => open(ticket.id))
       .child(div().w(3).h_full().rounded_l(8).bg(color))
       .child(v_flex().flex_1().px(14).py(10).gap(3)
@@ -33,15 +50,20 @@ export default class FactoryHome extends View {
     const now = Date.now();
     const section = (title) => div().pt(12).pb(4).text_size(15).font_semibold().text_color(t.foreground).child(title);
     const running = s.tickets.filter((x) => x.state === "running");
+    const needs = needsYou(s.tickets);
+    const items = [...needs.map((n) => n.ticket), ...running];
+    const focused = this.handle.is_focused();
     const d = s.today;
     const tile = (label, value) => v_flex().flex_1().p(14).gap(6).rounded(8).bg(t.surface).border(1).border_color(t.border)
       .child(div().text_size(12).text_color(t.muted).child(label))
       .child(div().text_size(26).font_semibold().text_color(t.foreground).child(value));
     return v_flex().id("home").size_full().px(18).pb(16).gap(8).bg(t.background).rounded(10).text_size(13).overflow_y_scroll()
+      .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus()).on_key_down((e, cx) => this.key(e, items, cx))
       .child(section("Needs you"))
-      .children(needsYou(s.tickets).map((n) => this.card(t, n, now)))
+      .children(needs.map((n, i) => this.card(t, n, now, focused && i === this.at)))
       .child(section("Running"))
-      .children(running.map((x) => h_flex().id(`r-${x.id}`).h(30).px(4).gap(10).items_center().rounded(6).cursor_pointer()
+      .children(running.map((x, i) => h_flex().id(`r-${x.id}`).h(30).px(4).gap(10).items_center().rounded(6).cursor_pointer()
+        .when(focused && needs.length + i === this.at, (el) => el.bg(t.selected))
         .hover((st) => st.bg(t.hover)).on_click(() => open(x.id))
         .child(div().size(7).rounded_full().bg(t.working))
         .child(div().flex_1().text_color(t.foreground).truncate().child(`#${x.id} ${x.title}`))
