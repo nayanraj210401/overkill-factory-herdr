@@ -9,10 +9,11 @@ test("j/k/arrows move, enter opens", () => {
   assert.deepEqual(k("up"), { kind: "move", delta: -1 });
   assert.deepEqual(k("enter"), { kind: "open" });
   assert.deepEqual(k("e"), { kind: "terminal" });
+  assert.deepEqual(k("m"), { kind: "merge" });
 });
 
 test("unbuilt actions name their milestone", () => {
-  assert.deepEqual(k("m"), { kind: "soon", label: "Merge the ready PR", milestone: "M2" });
+  assert.deepEqual(k("x"), { kind: "soon", label: "Send it back with a note", milestone: "M2" });
   assert.equal(k("c", { shift: true }).milestone, "M3");
 });
 

@@ -1,10 +1,10 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, setShared, notify } from "herdr";
+import { theme, run, setShared } from "herdr";
 import { needsYou, ago, compact } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status, peekAgent } from "./lib/store.js";
+import { status, act } from "./lib/store.js";
 
 const open = (id) => {
   setShared("factory.ticket", id);
@@ -18,14 +18,13 @@ export default class FactoryHome extends View {
     this.at = 0;
   }
 
-  // j/k walk Needs you then Running; enter opens; unbuilt actions toast their milestone.
+  // j/k walk Needs you then Running; enter opens; action keys act on the selected ticket.
   key(e, items, cx) {
     const a = keyAction(e);
     if (!a) return;
     if (a.kind === "move") this.at = clamp(this.at + a.delta, items.length);
     else if (a.kind === "open" && items[this.at]) open(items[this.at].id);
-    else if (a.kind === "terminal") peekAgent(items[this.at]);
-    else if (a.kind === "soon") notify({ title: `${a.label}: coming in ${a.milestone}`, level: "info", timeout: 2500 });
+    else act(a, items[this.at]);
     cx.stop_propagation();
     cx.notify();
   }

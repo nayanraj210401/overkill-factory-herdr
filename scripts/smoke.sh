@@ -23,6 +23,11 @@ for p in $pages; do
   herdr-app shot "$out/$p.png" >/dev/null
   errors
 done
+# The confirm dialog every ticket action opens (here without props: its defaults).
+herdr-app do mod.open '{"name":"factory-ask"}' >/dev/null; sleep 0.7
+herdr-app shot "$out/ask.png" >/dev/null
+errors
+herdr-app do overlay.close '{}' >/dev/null; sleep 0.3
 herdr-app do layout.switch '{"name":"main"}' >/dev/null; sleep 0.7
 [[ $(herdr-app status | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).layout)') == main ]]
 herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.7
