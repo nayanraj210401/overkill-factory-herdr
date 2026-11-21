@@ -2,6 +2,115 @@
   "days": 7,
   "blueprints": [
     {
+      "name": "address-review",
+      "start": "fix",
+      "orchestrator": "foreman",
+      "error": null,
+      "grooming_runs": 2,
+      "stages": [
+        {
+          "id": "fix",
+          "agent": "builder",
+          "role": "build",
+          "check": null,
+          "next": [
+            "verify"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 3
+        },
+        {
+          "id": "verify",
+          "agent": null,
+          "role": null,
+          "check": "tests",
+          "next": [
+            "end"
+          ],
+          "on_fail": "fix",
+          "gate": "auto",
+          "requires": null,
+          "runs": 3
+        }
+      ]
+    },
+    {
+      "name": "bugfix",
+      "start": "implement",
+      "orchestrator": "foreman",
+      "error": null,
+      "grooming_runs": 5,
+      "stages": [
+        {
+          "id": "implement",
+          "agent": "builder",
+          "role": "build",
+          "check": null,
+          "next": [
+            "verify"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 5
+        },
+        {
+          "id": "verify",
+          "agent": null,
+          "role": null,
+          "check": "tests",
+          "next": [
+            "review"
+          ],
+          "on_fail": "implement",
+          "gate": "auto",
+          "requires": null,
+          "runs": 6
+        },
+        {
+          "id": "review",
+          "agent": "reviewer",
+          "role": "review",
+          "check": null,
+          "next": [
+            "pr"
+          ],
+          "on_fail": "implement",
+          "gate": "auto",
+          "requires": null,
+          "runs": 3
+        },
+        {
+          "id": "pr",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "merge"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": "ready",
+          "runs": 4
+        },
+        {
+          "id": "merge",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "end"
+          ],
+          "on_fail": null,
+          "gate": "human",
+          "requires": null,
+          "runs": 3
+        }
+      ]
+    },
+    {
       "name": "chore",
       "start": "implement",
       "orchestrator": "foreman",
@@ -11,7 +120,7 @@
         {
           "id": "implement",
           "agent": "builder",
-          "role": null,
+          "role": "build",
           "check": null,
           "next": [
             "verify"
@@ -72,7 +181,7 @@
         {
           "id": "spec",
           "agent": "spec-writer",
-          "role": null,
+          "role": "spec",
           "check": null,
           "next": [
             "plan",
@@ -86,7 +195,7 @@
         {
           "id": "plan",
           "agent": "planner",
-          "role": null,
+          "role": "plan",
           "check": null,
           "next": [
             "implement"
@@ -99,7 +208,7 @@
         {
           "id": "implement",
           "agent": "builder",
-          "role": null,
+          "role": "build",
           "check": null,
           "next": [
             "verify"

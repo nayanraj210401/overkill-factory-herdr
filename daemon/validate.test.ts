@@ -1,5 +1,7 @@
 import { test, expect } from "bun:test";
 import { join } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { validateDir, validateFile } from "./validate.ts";
 
 test("the sample .factory/ from plan.md is valid", () => {
@@ -33,6 +35,27 @@ test("agents need a header with a role and a prompt; bad YAML and stray files ar
   expect(validateFile("agents/a.md", "no header")).toEqual(["agent: needs a YAML header between --- lines, then the prompt"]);
   expect(validateFile("triggers/t.yaml", "on: [unclosed")[0]).toStartWith("YAML:");
   expect(validateFile("notes.txt", "")[0]).toStartWith("not a .factory file kind");
+});
+
+test("every agent, orchestrator, grooming blueprint and trigger blueprint a factory names has its file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "factory-names-"));
+  const put = (p: string, text: string) => { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), text); };
+  put("factory.yaml", "name: t\ngrooming: { agent: triager, blueprints: [feature, bugfix] }\n");
+  put("blueprints/feature.yaml", "name: feature\norchestrator: foreman\nstart: a\nstages:\n  a: { agent: builder, next: [end] }\n");
+  put("triggers/t.yaml", "on: manual\nblueprint: nope\n");
+  put("agents/builder.md", "---\nrole: build\n---\nBuild.\n");
+  const errors = validateDir(dir).flatMap((f) => f.errors.map((e) => `${f.path}: ${e}`));
+  expect(errors).toEqual([
+    "blueprints/feature.yaml: orchestrator: no file agents/foreman.md",
+    "factory.yaml: grooming.agent: no file agents/triager.md",
+    "factory.yaml: grooming.blueprints: no file blueprints/bugfix.yaml",
+    "triggers/t.yaml: blueprint: no file blueprints/nope.yaml",
+  ]);
+});
+
+test("the default .factory/ that setup and init copy names only files it has", () => {
+  const errors = validateDir(join(import.meta.dir, "../fixtures/acme-api/.factory")).flatMap((f) => f.errors.map((e) => `${f.path}: ${e}`));
+  expect(errors).toEqual([]);
 });
 
 test("duplicate keys are caught, per block, not across blocks or list items", async () => {

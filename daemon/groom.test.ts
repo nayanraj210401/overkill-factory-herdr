@@ -45,14 +45,14 @@ test("triage runs in the ticket's folder with a brief naming the issue, the blue
   expect(argv[argv.indexOf("--cwd") + 1]).toBe(join(dir, "tickets/412"));
   const brief = argv.at(-1)!;
   expect(brief).toContain("gh issue view 412 --repo acme/api --comments");
-  expect(brief).toContain("one of chore, feature");
+  expect(brief).toContain("one of address-review, bugfix, chore, feature");
   expect(brief).toContain("factory question 412 product <question>");
   expect(brief).toContain("Read the issue and the code it touches"); // the triager agent's own prompt
   expect(ticket()).toMatchObject({ state: "grooming", stage: "groom" });
   expect(() => startGrooming(db, { dir, repo, id: 412, run, now })).toThrow("being groomed already");
   pick(db, { repo, id: 412, blueprint: "chore", now });
   expect(ticket().blueprint).toBe("chore");
-  expect(() => pick(db, { repo, id: 412, blueprint: "bugfix", now })).toThrow(`"bugfix" isn't a blueprint grooming may pick: chore, feature`);
+  expect(() => pick(db, { repo, id: 412, blueprint: "hotfix", now })).toThrow(`"hotfix" isn't a blueprint grooming may pick: address-review, bugfix, chore, feature`);
   expect(db.query("SELECT who, what FROM decisions").get()).toEqual({ who: "triager", what: "picked the chore blueprint" });
 });
 
