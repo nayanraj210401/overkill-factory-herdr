@@ -126,10 +126,10 @@
       "state": "running",
       "blueprint": "feature",
       "stage": "implement",
-      "detail": "slice 2 of 3",
+      "detail": "handoff at 60%",
       "updated_at": "2026-11-21T09:48:00Z",
       "tokens": {
-        "input": 1200000,
+        "input": 2500000,
         "output": 64000
       },
       "budget": {
@@ -138,9 +138,11 @@
       },
       "usd": 1.8,
       "where": "local",
+      "warning": "83% of its token budget used",
       "pr": null,
       "blocked_by": null,
       "needs": null,
+      "session": 2,
       "repos": [
         {
           "slug": "acme/api",
@@ -182,7 +184,8 @@
       "where": "cloud",
       "pr": null,
       "blocked_by": null,
-      "needs": null
+      "needs": null,
+      "session": 3
     },
     {
       "id": 409,

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { newAsk, pauseAsk, mergeAsk, budgetAsk, sendBackAsk, answerAsk, cliCommand } from "../lib/actions.js";
+import { newAsk, pauseAsk, mergeAsk, budgetAsk, sendBackAsk, answerAsk, cloudAllAsk, cliCommand } from "../lib/actions.js";
 
 const ticket = (o) => ({ id: 409, title: "Bump dependencies", state: "ready", pr: { number: 511, watched: true },
   tokens: { input: 1_200_000, output: 64_000 }, budget: { input: 3_000_000, output: 200_000 }, ...o });
@@ -45,6 +45,15 @@ test("x asks for a note on a ready PR; u asks a parked ticket's question", () =>
 test("n asks for an issue or goal and starts it", () => {
   const a = newAsk();
   assert.deepEqual([a.args, a.input.value, a.confirm], [["new", "--start"], "", "Create and start"]);
+});
+
+test("Home's button moves every locally running ticket to the cloud", () => {
+  const tickets = [ticket({ id: 1, state: "running", where: "local" }), ticket({ id: 2, state: "running", where: "cloud" }),
+    ticket({ id: 3, state: "ready" }), ticket({ id: 4, state: "running", where: "local" })];
+  const a = cloudAllAsk(tickets);
+  assert.deepEqual([a.title, a.args, a.done], ["Move all 2 running tickets to the cloud?", ["cloud", "--all"], "2 tickets are in the cloud"]);
+  assert.match(a.detail, /^#1, #4:/);
+  assert.deepEqual(cloudAllAsk([tickets[1], tickets[2]]), { error: "No ticket is running here" });
 });
 
 test("p pauses a running ticket and resumes a paused one", () => {

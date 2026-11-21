@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, shared, readTextFile, nextCommand, checking } from "herdr";
-import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge } from "./lib/model.js";
+import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, stageDetail } from "./lib/model.js";
 import { root, status, state, peekAgent, act } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 
@@ -79,13 +79,14 @@ export default class FactoryTicket extends View {
           .child(div().text_size(17).font_semibold().text_color(t.foreground).child(`#${ticket.id} ${ticket.title}`))
           .when(!!badge, (el) => el.child(div().px(8).py(1).rounded(10).border(1).border_color(t.accent).text_size(12).text_color(t.accent).child(badge))))
         .child(div().text_color(t.muted).child(summary || `${ticket.state} · no STATUS.md yet`))
+        .when(Boolean(ticket.warning), (el) => el.child(div().id("budget-warning").px(10).py(6).rounded(6).border(1).border_color(t.blocked).text_color(t.blocked).child(`Budget: ${ticket.warning}`)))
         .when(!!cross, (el) => el.child(cross))
         .child(v_flex().gap(10).pt(4)
           .children(stages.map((st) => h_flex().gap(12)
             .child(dot(st.state))
-            .child(v_flex().flex_1()
+            .child(v_flex().flex_1().min_w_0()
               .child(div().font_semibold().text_color(st.state === "next" ? t.dim : t.foreground).child(st.name))
-              .when(Boolean(st.detail), (el) => el.child(div().text_color(t.muted).child(st.detail))))
+              .when(Boolean(stageDetail(st, ticket).text), (el) => el.child(div().text_color(stageDetail(st, ticket).warn ? t.blocked : t.muted).child(stageDetail(st, ticket).text))))
             .when(Boolean(st.time), (el) => el.child(div().text_color(st.state === "now" ? t.accent : t.muted).child(st.state === "now" ? `${st.time} so far` : st.time))))))
         .child(div().h(1).bg(t.border).my(4))
         .child(h_flex().gap(4)

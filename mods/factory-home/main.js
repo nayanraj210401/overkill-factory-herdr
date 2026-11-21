@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, setShared } from "herdr";
-import { needsYou, ago, compact, repoBadge } from "./lib/model.js";
+import { theme, run, setShared, props } from "herdr";
+import { needsYou, ago, compact, repoBadge, warnMark, holdText, localRunning } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, act } from "./lib/store.js";
@@ -19,6 +19,7 @@ export default class FactoryHome extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
     this.at = 0;
+    this.hold = props()?.hold ?? null; // a prop only smoke.sh passes: the sample data has no hold
   }
 
   // j/k walk Needs you then Running; enter opens; action keys act on the selected ticket.
@@ -50,8 +51,9 @@ export default class FactoryHome extends View {
 
   render() {
     const t = theme();
-    const s = status();
-    if (!s) return div().size_full().bg(t.background);
+    const live = status();
+    if (!live) return div().size_full().bg(t.background);
+    const s = this.hold ? { ...live, plan: { ...live.plan, hold: this.hold } } : live;
     const now = Date.now();
     const section = (title) => div().pt(12).pb(4).text_size(15).font_semibold().text_color(t.foreground).child(title);
     const running = s.tickets.filter((x) => x.state === "running");
@@ -75,6 +77,9 @@ export default class FactoryHome extends View {
             .child(div().w(70).text_color(t.dim).truncate().child(e.who))
             .child(div().flex_1().text_color(t.foreground).truncate().child(e.what))))
           .when(!s.away.events.length, (el) => el.child(div().text_color(t.dim).child("Nothing happened.")))))
+      .when(Boolean(holdText(s)), (el) => el.child(v_flex().id("hold").mt(8).p(10).gap(2).rounded(8).bg(t.surface).border(1).border_color(t.blocked)
+        .child(div().font_semibold().text_color(t.blocked).child(holdText(s)))
+        .child(div().text_color(t.muted).child("Tickets already running carry on; queued ones wait."))))
       .child(section("Needs you"))
       .children(needs.map((n, i) => this.card(t, s, n, now, focused && i === this.at)))
       .child(section("Running"))
@@ -82,13 +87,17 @@ export default class FactoryHome extends View {
         .when(focused && needs.length + i === this.at, (el) => el.bg(t.selected))
         .hover((st) => st.bg(t.hover)).on_click(() => open(x.id))
         .child(div().size(7).rounded_full().bg(t.working))
-        .child(div().flex_1().text_color(t.foreground).truncate().child(`#${x.id} ${x.title}`))
+        .child(div().flex_1().min_w_0().text_color(t.foreground).truncate().child(`#${x.id} ${x.title}`))
+        .when(!!warnMark(x), (el) => el.child(div().flex_none().px(6).rounded(8).text_size(11).border(1).border_color(t.blocked).text_color(t.blocked).child(warnMark(x))))
         .when(!!repoBadge(s, x), (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child(repoBadge(s, x))))
         .child(div().w(200).text_color(x.where === "cloud" ? t.accent : t.muted).truncate()
           .child(x.where === "cloud" ? `${x.stage} · in cloud` : [x.stage, x.detail].filter(Boolean).join(" · ")))
         .child(div().w(70).text_color(t.muted).child(`${compact(x.tokens.input)} in`))
         .child(div().w(50).text_color(t.foreground).child(`$${x.usd.toFixed(2)}`))))
       .when(!running.length, (el) => el.child(div().text_color(t.dim).child("Nothing running.")))
+      .when(localRunning(s.tickets).length > 0, (el) => el.child(h_flex().pt(6)
+        .child(div().id("cloud-all").px(10).py(6).rounded(6).border(1).border_color(t.accent).text_color(t.accent).cursor_pointer()
+          .hover((st) => st.bg(t.hover)).on_click(() => act({ kind: "cloud-all" })).child("Move running tickets to cloud"))))
       .child(section("Today"))
       .child(h_flex().gap(10)
         .child(tile("Time to PR", `${d.time_to_pr_min}m`))
