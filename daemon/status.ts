@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { renameSync, writeFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { getMeta, leadRepo, listRepos } from "./db.ts";
+import { getMeta, leadRepo, listRepos, mergeOrder } from "./db.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
 import { digest } from "./away.ts";
 
@@ -21,7 +21,8 @@ export function ticketOf(r: Row, repos?: Row[]) {
     budget: { input: r.budget_in, output: r.budget_out },
     usd: r.usd, where: r.location,
     pr: prOf(r),
-    ...(repos ? { repos: repos.map((x) => ({ slug: x.repo, lead: !!x.lead, pr: prOf(x), worktree: x.worktree ?? null })) } : {}),
+    ...(repos ? { repos: repos.map((x) => ({ slug: x.repo, lead: !!x.lead, pr: prOf(x), worktree: x.worktree ?? null, branch: x.branch ?? null,
+      merged_at: x.merged_at ?? null, merge: mergeOrder(repos as any).indexOf(x) + 1 })) } : {}),
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,
     terminal: r.terminal ?? null,

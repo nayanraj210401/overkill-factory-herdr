@@ -140,7 +140,27 @@
       "where": "local",
       "pr": null,
       "blocked_by": null,
-      "needs": null
+      "needs": null,
+      "repos": [
+        {
+          "slug": "acme/api",
+          "lead": true,
+          "pr": null,
+          "worktree": "~/.herdr/worktrees/acme-api/factory-412-rate-limit-login",
+          "branch": "factory/412-rate-limit-login",
+          "merged_at": null,
+          "merge": 2
+        },
+        {
+          "slug": "acme/web",
+          "lead": false,
+          "pr": null,
+          "worktree": "~/.herdr/worktrees/acme-web/factory-412-rate-limit-login",
+          "branch": "factory/412-rate-limit-login",
+          "merged_at": null,
+          "merge": 1
+        }
+      ]
     },
     {
       "id": 418,
@@ -162,21 +182,7 @@
       "where": "cloud",
       "pr": null,
       "blocked_by": null,
-      "needs": null,
-      "repos": [
-        {
-          "slug": "acme/api",
-          "lead": true,
-          "pr": null,
-          "worktree": null
-        },
-        {
-          "slug": "acme/web",
-          "lead": false,
-          "pr": null,
-          "worktree": null
-        }
-      ]
+      "needs": null
     },
     {
       "id": 409,
