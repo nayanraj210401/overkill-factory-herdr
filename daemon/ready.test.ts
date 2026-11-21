@@ -168,5 +168,5 @@ test("d shows what the ticket changed, committed or not, against the repo's bran
   expect(d).toContain("diff --git a/limit.ts b/limit.ts");
   expect(d).toContain("+export const MAX = 6;");
   db.query("INSERT INTO tickets (id, title, updated_at) VALUES (8, 'Later', '2026-11-21T10:00:00Z')").run();
-  expect(() => ticketDiff(db, { repo, id: 8, run })).toThrow("#8 has no worktree yet");
+  expect(() => ticketDiff(db, { repo, id: 8, run })).toThrow("#8 has no worktree");
 });

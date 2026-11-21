@@ -1,11 +1,13 @@
-// The graph runner's first half: a ticket gets its own worktree, enters its
-// blueprint's first stage, and that stage's agent starts in a herdr-core terminal.
+// The graph runner's first half: a ticket gets its own worktree (a Herdr worktree
+// space when the app runs), enters its blueprint's first stage, and that stage's
+// agent starts in a tab there, or in a free-floating herdr-core terminal.
 import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { openPr, readyRules, rulesPass } from "./ready.ts";
+import { closeSpace, openAgent, worktreePath } from "./herdr.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -75,10 +77,16 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
   if (!["queued", "grooming"].includes(t.state) || t.needs_kind) throw new Error(`#${o.id} is ${t.state}${t.needs_kind ? " with open questions" : ""}; only a groomed or queued ticket starts`);
   const b = loadBlueprint(o.repo, t.blueprint);
   const branch = `factory/${o.id}-${slug(t.title)}`;
-  const worktree = join(o.dir, "worktrees", String(o.id));
-  mkdirSync(join(o.dir, "worktrees"), { recursive: true });
-  const wt = run(["git", "-C", o.repo, "worktree", "add", "-b", branch, worktree]);
-  if (wt.code !== 0) throw new Error(`git worktree add failed: ${wt.out}`);
+  const worktree = worktreePath(o.repo, branch);
+  mkdirSync(dirname(worktree), { recursive: true });
+  // Idempotent: a start that failed after this step (its rows rolled back) left the
+  // branch and checkout behind; reuse them, as Herdr's New worktree does a branch.
+  const here = existsSync(worktree) && run(["git", "-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"]).out === branch;
+  if (!here) {
+    const known = run(["git", "-C", o.repo, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).code === 0;
+    const wt = run(["git", "-C", o.repo, "worktree", "add", ...(known ? [worktree, branch] : ["-b", branch, worktree])]);
+    if (wt.code !== 0) throw new Error(`git worktree add failed: ${wt.out}`);
+  }
   db.query("UPDATE tickets SET state = 'running', worktree = ?, branch = ? WHERE id = ?").run(worktree, branch, o.id);
   return startStage(db, { ...o, run, now, blueprint: b, stage: b.start });
 }
@@ -93,12 +101,21 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const defaults = { harness: "claude", model: "sonnet" };
   const argv = argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id))));
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
-  const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", name, "--cwd", t.worktree,
-    "--label", `factory.ticket=${o.id}`, "--label", `factory.stage=${o.stage}`, ...argv]);
-  if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
-  const terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
-  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now);
+  const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
+  const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
+  let terminal: string;
+  if (made) {
+    terminal = made.terminal;
+    o.run(["hc", "label", terminal, ...labels]);
+    db.query("UPDATE tickets SET space = ? WHERE id = ?").run(made.space, o.id);
+  } else {
+    const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", name, "--cwd", t.worktree,
+      ...labels.flatMap((l) => ["--label", l]), ...argv]);
+    if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
+    terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
+  }
+  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0);
   return terminal;
 }
 
@@ -234,6 +251,14 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
   db.query("DELETE FROM planned WHERE ticket = ?").run(o.id);
   db.query("UPDATE tickets SET state = 'merged', detail = NULL, pr_watched = 0, updated_at = ? WHERE id = ?").run(now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, 'squash', ?)").run(o.id, `merged PR #${pr}`, now);
+  // The plan: the worktree goes once the PR merges; the branch and the ticket's .md files stay.
+  // A worktree with uncommitted work is left for a person to look at.
+  const w = db.query("SELECT worktree, space FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null; space: string | null };
+  if (w.worktree) {
+    closeSpace(run, w.space);
+    const rm = run(["git", "-C", o.repo, "worktree", "remove", w.worktree]);
+    if (rm.code === 0) db.query("UPDATE tickets SET worktree = NULL, space = NULL WHERE id = ?").run(o.id);
+  }
   return { pr: t.pr_number };
 }
 
@@ -338,7 +363,7 @@ export function ticketDiff(db: Database, o: { repo: string; id: number; run?: Ru
   const run = o.run ?? sh;
   const t = db.query("SELECT worktree FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
-  if (!t.worktree) throw new Error(`#${o.id} has no worktree yet; it hasn't started`);
+  if (!t.worktree) throw new Error(`#${o.id} has no worktree: it hasn't started, or it merged and its worktree was removed`);
   const base = run(["git", "-C", o.repo, "symbolic-ref", "--short", "HEAD"]);
   if (base.code !== 0) throw new Error(`can't tell the repo's branch: ${base.out}`);
   const from = run(["git", "-C", t.worktree, "merge-base", base.out, "HEAD"]);

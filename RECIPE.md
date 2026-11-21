@@ -57,6 +57,7 @@ The theme is `factory` in dark mode (`#1b1e24` background; `accent` and `working
 - Editing a person's keys.json stops Herdr upgrading its default shortcuts. sync.sh merges keys only with `--keys`, and keeps a backup.
 - A Herdr home's socket path has to fit macOS's limit. Use `mktemp -d -t hf` for test homes.
 - Bare-letter keys live in the page mods (focus + `on_key_down`), not in keys.json: a layout-level `j` would also fire while typing in search.
+- With Herdr running, a started ticket is a worktree space nested under its repo's space (named after the branch), with one tab per stage's agent; without it, agents run as free-floating herdr-core terminals. `e` peeks at either.
 - Not built yet: Runs view, cross-repo tickets, and the Reviews, Overwatch, Blueprint and Metrics pages.
 
 ## Done when
