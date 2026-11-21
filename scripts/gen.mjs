@@ -54,6 +54,7 @@ export function layout() {
 
 export function keys() {
   const factory = { "cmd-shift-f": "layout.switch:main", "cmd-o": "factory-config.open" };
+  for (const n of ["1", "2", "3", "4"]) factory[`cmd-alt-${n}`] = `factory-ticket.tab-${n}`;
   for (const p of PAGES) if (p.key) factory[`cmd-${p.key}`] = { command: "layout.select", args: { stack: STACK, child: p.id } };
   return { global: { "cmd-shift-f": "layout.switch:factory" }, "layout:factory": factory };
 }

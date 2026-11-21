@@ -69,3 +69,14 @@ test("Config lists .factory files in plan order", async () => {
   assert.deepEqual(got.map((f) => f.path), ["factory.yaml", "blueprints/chore.yaml", "blueprints/feature.yaml", "agents/reviewer.md", "triggers/x.yaml"]);
   assert.equal(got[3].language, "markdown");
 });
+
+test("STATUS.md parses into a stage timeline", async () => {
+  const { parseStatusMd } = await import("../lib/model.js");
+  const text = readFileSync(new URL("../fixtures/acme-api/tickets/412/STATUS.md", import.meta.url), "utf8");
+  const { summary, stages } = parseStatusMd(text);
+  assert.match(summary, /^Rate-limit login is in implement/);
+  assert.deepEqual(stages.map((s) => s.state), ["done", "done", "done", "now", "next", "next", "next"]);
+  assert.deepEqual(stages[3], { state: "now", name: "Implement", time: "12m", detail: "slice 2 of 3 · builder" });
+  assert.deepEqual(stages[4], { state: "next", name: "Verify", time: null, detail: "" });
+  assert.deepEqual(parseStatusMd(null), { summary: "", stages: [] });
+});

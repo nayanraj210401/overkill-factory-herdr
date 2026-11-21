@@ -5,6 +5,10 @@
   "layout:factory": {
     "cmd-shift-f": "layout.switch:main",
     "cmd-o": "factory-config.open",
+    "cmd-alt-1": "factory-ticket.tab-1",
+    "cmd-alt-2": "factory-ticket.tab-2",
+    "cmd-alt-3": "factory-ticket.tab-3",
+    "cmd-alt-4": "factory-ticket.tab-4",
     "cmd-1": {
       "command": "layout.select",
       "args": {

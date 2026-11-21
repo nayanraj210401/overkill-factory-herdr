@@ -161,10 +161,7 @@
               "id": "ticket",
               "type": "block",
               "content": {
-                "mod": "factory-soon",
-                "props": {
-                  "page": "ticket"
-                }
+                "mod": "factory-ticket"
               }
             }
           ]
