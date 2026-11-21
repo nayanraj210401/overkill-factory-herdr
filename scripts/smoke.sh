@@ -44,6 +44,12 @@ for tab in Cost Quality; do
   errors
   herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
 done
+# The Tickets page's Runs view (r), which check never reaches (it renders the tickets).
+echo '{"id":"root","type":"row","children":[{"id":"r","type":"block","content":{"mod":"factory-list","props":{"view":"runs"}}}]}' > "$home/layouts/factory-runs-test.json"
+herdr-app do layout.switch '{"name":"factory-runs-test"}' >/dev/null; sleep 1.3
+herdr-app shot "$out/runs.png" >/dev/null
+errors
+herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
 herdr-app do layout.switch '{"name":"main"}' >/dev/null; sleep 0.7
 [[ $(herdr-app status | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).layout)') == main ]]
 herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.7
