@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { cpSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
@@ -83,8 +83,11 @@ test("a hit blocks the call, is noted, kills the session and parks the ticket", 
   const run: Run = (argv, cwd) => (argv[0] === "hc" ? (calls.push(argv), { code: 0, out: argv[1] === "get" ? '{"state":"agent"}' : '{"address":"t1"}' }) : sh(argv, cwd));
   startTicket(db, { dir, repo, id: 7, run, now: "2026-11-21T10:00:00Z" });
   const argv = calls[0];
-  const settings = argv[argv.indexOf("--settings") + 1];
-  const command = JSON.parse(settings).hooks.PreToolUse[0].hooks[0].command as string;
+  // One settings file holds both hooks (Claude Code reads one --settings): the guard, then the handoff hook.
+  expect(argv.filter((a) => a === "--settings")).toHaveLength(1);
+  const hooks = JSON.parse(readFileSync(argv[argv.indexOf("--settings") + 1], "utf8")).hooks.PreToolUse;
+  expect(hooks.map((h: any) => h.hooks[0].command.includes("handoff-hook.ts"))).toEqual([false, true]);
+  const command = hooks[0].hooks[0].command as string;
   const wt = (db.query("SELECT worktree FROM ticket_lead WHERE id = 7").get() as any).worktree as string;
   expect(command).toContain("--stops 'push-to-main,outside-worktree'");
   expect(command).toContain(wt);

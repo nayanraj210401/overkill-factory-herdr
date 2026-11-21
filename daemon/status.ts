@@ -26,6 +26,7 @@ export function ticketOf(r: Row, repos?: Row[]) {
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,
     terminal: r.terminal ?? null,
+    session: r.sessions || null, // "session 3 of #412": the sessions started for it so far
   };
 }
 
@@ -35,7 +36,8 @@ export function buildStatus(db: Database, now = new Date()) {
   const lead = leadRepo(db);
   const work = Map.groupBy(db.query("SELECT * FROM ticket_repos ORDER BY ticket, lead DESC, repo").all() as Row[], (r) => r.ticket);
   const reposOf = (id: number) => work.get(id) ?? (lead ? [{ repo: lead.slug, lead: 1 }] : undefined);
-  const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal
+  const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal,
+    (SELECT COUNT(*) FROM sessions s WHERE s.ticket = t.id AND s.agent != 'cloud') AS sessions
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ticketOf(r, reposOf(r.id)));
   const today = now.toISOString().slice(0, 10);
   const used = db.query("SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o, SUM(usd) AS usd FROM usage WHERE at >= ?").get(today) as any;
