@@ -1,0 +1,12 @@
+# .factory/blueprints/feature.yaml
+name: feature
+orchestrator: foreman
+start: spec
+stages:
+  spec:      { agent: spec-writer, output: INTENT.md, next: [plan, implement] }
+  plan:      { agent: planner, output: SLICES.md, next: [implement] }
+  implement: { agent: builder, per: slice, next: [verify] }
+  verify:    { check: evidence, next: [review], on_fail: implement, max_retries: 3 }
+  review:    { agent: reviewer, next: [pr], on_fail: implement }
+  pr:        { requires: ready, output: PR.md, template: pr-readable, next: [merge] }
+  merge:     { gate: human, next: [end] }

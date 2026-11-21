@@ -4,6 +4,7 @@
   },
   "layout:factory": {
     "cmd-shift-f": "layout.switch:main",
+    "cmd-o": "factory-config.open",
     "cmd-1": {
       "command": "layout.select",
       "args": {

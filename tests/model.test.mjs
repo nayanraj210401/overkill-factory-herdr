@@ -62,3 +62,10 @@ test("Tickets filters: chips cover every ticket, search narrows", async () => {
   assert.deepEqual(filterTickets(status.tickets, "queue", "feature").map((t) => t.id).sort(), [430, 431, 433]);
   assert.deepEqual(filterTickets(status.tickets, "all", "no such thing"), []);
 });
+
+test("Config lists .factory files in plan order", async () => {
+  const { configFiles } = await import("../lib/model.js");
+  const got = configFiles(["agents/reviewer.md", "notes.txt", "blueprints/feature.yaml", "factory.yaml", "blueprints/chore.yaml", "triggers/x.yaml"]);
+  assert.deepEqual(got.map((f) => f.path), ["factory.yaml", "blueprints/chore.yaml", "blueprints/feature.yaml", "agents/reviewer.md", "triggers/x.yaml"]);
+  assert.equal(got[3].language, "markdown");
+});
