@@ -304,19 +304,25 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
     // `gh pr ready` on a PR that is already ready says so and changes nothing.
     if (r.code !== 0 && !(argv[2] === "ready" && /already .*ready/i.test(r.out))) throw new Error(`${argv.slice(0, 3).join(" ")} failed: ${r.out}`);
   }
-  db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
+  finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: method });
+  return { pr: t.pr_number };
+}
+
+// A ticket's PR is over: merged (by `m`, or on GitHub) or closed unmerged. The gate
+// ends and, as the plan says, the worktree goes; the branch and the .md files stay.
+// A worktree with uncommitted work is left for a person to look at.
+export function finishPr(db: Database, o: { repo: string; id: number; run: Run; now: string; state: "merged" | "closed"; why: string | null; who?: string }) {
+  const pr = (db.query("SELECT pr_number FROM tickets WHERE id = ?").get(o.id) as { pr_number: number }).pr_number;
+  db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
   db.query("DELETE FROM planned WHERE ticket = ?").run(o.id);
-  db.query("UPDATE tickets SET state = 'merged', detail = NULL, pr_watched = 0, updated_at = ? WHERE id = ?").run(now, o.id);
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, ?, ?)").run(o.id, `merged PR #${pr}`, method, now);
-  // The plan: the worktree goes once the PR merges; the branch and the ticket's .md files stay.
-  // A worktree with uncommitted work is left for a person to look at.
+  db.query("UPDATE tickets SET state = ?, detail = NULL, needs_kind = NULL, needs_text = NULL, pr_watched = 0, updated_at = ? WHERE id = ?").run(o.state, o.now, o.id);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.who ?? "you", `${o.state} PR #${pr}`, o.why, o.now);
   const w = db.query("SELECT worktree, space FROM tickets WHERE id = ?").get(o.id) as { worktree: string | null; space: string | null };
   if (w.worktree) {
-    closeSpace(run, w.space);
-    const rm = run(["git", "-C", o.repo, "worktree", "remove", w.worktree]);
+    closeSpace(o.run, w.space);
+    const rm = o.run(["git", "-C", o.repo, "worktree", "remove", w.worktree]);
     if (rm.code === 0) db.query("UPDATE tickets SET worktree = NULL, space = NULL WHERE id = ?").run(o.id);
   }
-  return { pr: t.pr_number };
 }
 
 // Where a person's note restarts work: an agent stage. A check or gate can't act on a
@@ -352,9 +358,9 @@ function withNote<T>(undo: () => void, fn: () => T): T {
   try { return fn(); } catch (e) { undo(); throw e; }
 }
 
-function restart(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; stage: string; b: Blueprint; who: string; why: string }) {
+function restart(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; stage: string; b: Blueprint; who: string; why: string; by?: string }) {
   db.query("UPDATE tickets SET state = 'running', needs_kind = NULL, needs_text = NULL, retries = 0, updated_at = ? WHERE id = ?").run(o.now, o.id);
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, ?, ?)").run(o.id, o.who, o.why, o.now);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.by ?? "you", o.who, o.why, o.now);
   return { stage: o.stage, terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run: o.run, now: o.now, blueprint: o.b, stage: o.stage }) };
 }
 
@@ -369,6 +375,14 @@ export function sendBack(db: Database, o: { dir: string; repo: string; id: numbe
   const b = loadBlueprint(o.repo, t.blueprint);
   const undo = note(o.dir, o.id, "REVIEW.md", `Sent back by you · ${now.slice(0, 16).replace("T", " ")} · PR #${t.pr_number}`, o.note);
   return withNote(undo, () => restart(db, { ...o, run, now, b, stage: fixStage(b), who: `sent PR #${t.pr_number} back`, why: o.note.trim() }));
+}
+
+// The PR watcher: reviewers' comments on a ready PR send it back like `x` does, by the daemon.
+export function reviewBack(db: Database, o: { dir: string; repo: string; id: number; heading: string; text: string; run: Run; now: string }) {
+  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
+  const b = loadBlueprint(o.repo, t.blueprint);
+  const undo = note(o.dir, o.id, "REVIEW.md", o.heading, o.text);
+  return withNote(undo, () => restart(db, { ...o, b, stage: fixStage(b), who: `review comments on PR #${t.pr_number}`, why: o.heading, by: "daemon" }));
 }
 
 // `u`: answer a parked ticket and run the stage it stopped at again.
