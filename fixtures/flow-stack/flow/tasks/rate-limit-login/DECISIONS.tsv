@@ -1,0 +1,3 @@
+ts	who	decision	why	evidence	reversible
+2026-10-04T10:00:00Z	agent	use a sliding window	fixed windows allow bursts	docs/limits.md	yes
+2026-10-04T10:05:00Z	human	limit is 5 per minute	matches the issue		yes

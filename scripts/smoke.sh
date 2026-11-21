@@ -56,6 +56,12 @@ herdr-app do layout.switch '{"name":"factory-runs-test"}' >/dev/null; sleep 1.3
 herdr-app shot "$out/runs.png" >/dev/null
 errors
 herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
+# Home's first-run checklist, which check never reaches (the sample has a .factory/).
+echo '{"id":"root","type":"row","children":[{"id":"h","type":"block","content":{"mod":"factory-home","props":{"setup":true}}}]}' > "$home/layouts/factory-setup-test.json"
+herdr-app do layout.switch '{"name":"factory-setup-test"}' >/dev/null; sleep 1.3
+herdr-app shot "$out/setup.png" >/dev/null
+errors
+herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
 herdr-app do layout.switch '{"name":"main"}' >/dev/null; sleep 0.7
 [[ $(herdr-app status | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).layout)') == main ]]
 herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.7

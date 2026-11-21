@@ -34,6 +34,8 @@ import { overwatch } from "./overwatch.ts";
 import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { migrateFlowStack } from "./migrate.ts";
+import { skipStep, setupSteps, skippedSteps, showSteps, writeSetup } from "./setup.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -72,6 +74,11 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   comment <id> C<n> fix|pushback|escalate <reason…>  the fix agent's verdict on a reviewer's comment
   verdict <id> holdout|review pass|fail [detail…] [--by voter]  a checker's or reviewer's verdict
   decide <ticket> <who> <what> [why] log a decision
+  setup [--json]                     the first-run checklist: each step ok, missing or skipped, with its fix command
+  setup skip|unskip <step>           set a step aside (it stays on the list; rerun setup any time)
+  setup write [--budget 3M/150k] [--budget-day 40M/2M] [--merge human|auto] [--max-running n] [--queue owner/project]
+                                     write .factory/ on branch factory/setup (a temporary worktree; your checkout is untouched)
+  migrate flow-stack [--dry-run]     copy decisions, past tasks and lessons count from ~/.flow-stack and .flow/; prints proposals
   validate [dir] [--json]            check .factory/ files (default ./.factory)
   status                             write status.json and print a summary
   run [--interval seconds] [--all]   the daemon: keep status.json fresh (--all: every factory)
@@ -124,12 +131,18 @@ export function main(argv: string[], log = console.log) {
   const next = flag(args, "next");
   const repoPath = flag(args, "path");
   const failReason = flag(args, "fail");
+  const budgetFlag = flag(args, "budget");
+  const budgetDayFlag = flag(args, "budget-day");
+  const mergeFlag = flag(args, "merge");
+  const maxRunningFlag = flag(args, "max-running");
+  const queueFlag = flag(args, "queue");
   const by = flag(args, "by");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
   const start = args.includes("--start");
-  const [cmd, sub, ...rest] = args.filter((a) => a !== "--all" && a !== "--json" && a !== "--start");
+  const dryRun = args.includes("--dry-run");
+  const [cmd, sub, ...rest] = args.filter((a) => a !== "--all" && a !== "--json" && a !== "--start" && a !== "--dry-run");
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json });
@@ -149,6 +162,27 @@ export function main(argv: string[], log = console.log) {
   try {
     if (cmd === "init") {
       change(db, () => { setMeta(db, "name", name); setRepo(db, { slug: repo, path: resolve(repoPath ?? "."), lead: true }); });
+    } else if (cmd === "setup") {
+      const lead = needLead(db);
+      if (sub === "skip" || sub === "unskip") {
+        change(db, () => skipStep(db, rest[0] ?? "", sub === "skip"));
+        log(`${rest[0]}: ${sub === "skip" ? "skipped" : "back on the list"}`);
+      } else if (sub === "write") {
+        const r = writeSetup({ repo: lead.path, name: getMeta(db, "name") ?? name, slug: lead.slug,
+          basics: { budget: budgetFlag ?? undefined, budgetDay: budgetDayFlag ?? undefined, merge: mergeFlag ?? undefined, maxRunning: maxRunningFlag === null ? undefined : Number(maxRunningFlag), queue: queueFlag ?? undefined } });
+        log(`${r.committed ? `committed ${r.sha} on` : "already up to date on"} ${r.branch}: ${r.files.join(", ")}\nyour checkout (${r.from}) is untouched; review the branch, then merge it: git merge ${r.branch}`);
+        return;
+      } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | write [--budget …]]");
+      else {
+        const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db) });
+        log(json ? JSON.stringify({ steps }) : showSteps(steps));
+        return;
+      }
+    } else if (cmd === "migrate") {
+      if (sub !== "flow-stack") throw new Error("usage: factory migrate flow-stack [--dry-run]");
+      const lead = needLead(db);
+      const listed = existsSync(join(lead.path, ".factory", "blueprints")) ? readdirSync(join(lead.path, ".factory", "blueprints")).map((f) => f.replace(/\.yaml$/, "")) : [];
+      change(db, () => { migrateFlowStack(db, { home: process.env.HOME ?? homedir(), repo: lead.path, dir: p.dir, blueprints: listed, dryRun, now: now(), log }); });
     } else if (cmd === "repo") {
       if (sub === "add") {
         const [slug] = rest;

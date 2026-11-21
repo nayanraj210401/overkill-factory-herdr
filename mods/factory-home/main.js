@@ -5,6 +5,7 @@ import { needsYou, ago, compact, repoBadge, warnMark, holdText, localRunning } f
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, act } from "./lib/store.js";
+import { SETUP_SAMPLE, setupProgress } from "./lib/setup.js";
 
 // HH:MM, local; the mod runtime ignores toLocaleTimeString's options.
 const clock = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
@@ -49,12 +50,33 @@ export default class FactoryHome extends View {
         .child(div().text_color(t.muted).child(ticket.needs?.text ?? ticket.detail ?? "")));
   }
 
+  setupPage(t, setup) {
+    const p = setupProgress(setup);
+    const dot = { ok: t.done, missing: t.blocked, skipped: t.dim };
+    const word = { ok: "done", missing: "to do", skipped: "skipped" };
+    return v_flex().id("home").size_full().px(18).pb(16).gap(8).bg(t.background).rounded(10).text_size(13).overflow_y_scroll()
+      .child(div().pt(12).text_size(18).font_semibold().text_color(t.foreground).child("Set up the factory"))
+      .child(div().text_color(t.muted).child(`This repo has no .factory/ folder yet. ${p.text}. Run each fix in a terminal; rerun any time with factory setup.`))
+      .children(setup.steps.map((st) => v_flex().id(`su-${st.id}`).gap(4).p(12).rounded(8).bg(t.surface).border(1).border_color(t.border)
+        .child(h_flex().gap(10).items_center()
+          .child(div().size(8).rounded_full().bg(dot[st.status]))
+          .child(div().flex_1().min_w_0().font_semibold().text_color(st.status === "ok" ? t.muted : t.foreground).child(st.label))
+          .child(div().text_size(12).text_color(dot[st.status]).child(word[st.status])))
+        .when(st.status !== "ok" && !!st.fix, (el) => el.child(h_flex().gap(8).pl(18)
+          .child(div().text_size(12).text_color(t.dim).child("fix"))
+          .child(div().flex_1().min_w_0().text_size(12).text_color(t.accent).child(st.fix))))
+        .when(st.status === "missing", (el) => el.child(div().pl(18).text_size(12).text_color(t.dim).child(`not now: factory setup skip ${st.id}`)))));
+  }
+
   render() {
     const t = theme();
     const live = status();
     if (!live) return div().size_full().bg(t.background);
     const s = this.hold ? { ...live, plan: { ...live.plan, hold: this.hold } } : live;
     const now = Date.now();
+    // No .factory/ yet: the setup checklist, in place of everything else.
+    const setup = props()?.setup ? SETUP_SAMPLE : s.setup; // the prop is only smoke.sh's
+    if (setup) return this.setupPage(t, setup);
     const section = (title) => div().pt(12).pb(4).text_size(15).font_semibold().text_color(t.foreground).child(title);
     const running = s.tickets.filter((x) => x.state === "running");
     const needs = needsYou(s.tickets);
