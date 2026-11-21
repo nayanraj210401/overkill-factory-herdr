@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta } from "./db.ts";
 import { advance, answer, sh, type Run } from "./runner.ts";
-import { ask, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming } from "./groom.ts";
+import { ask, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { recordUsage, transcriptDir } from "./usage.ts";
 
 const now = "2026-11-21T10:00:00Z";
@@ -142,4 +142,16 @@ test("triage's tokens count for its ticket, from transcripts in the ticket's fol
   writeFileSync(join(t, "s.jsonl"), JSON.stringify({ type: "assistant", timestamp: "2026-11-21T10:01:00Z", message: { id: "m1", model: "claude-sonnet-5-5", usage: { input_tokens: 100, output_tokens: 20 } } }));
   recordUsage(db);
   expect(ticket()).toMatchObject({ tokens_in: 100, tokens_out: 20 });
+});
+
+test("tickets from the queue wait for triage, at most max_running triage agents at once", () => {
+  const { db, dir, repo, run, hc, ticket } = setup("name: t\nmax_running: 2\nquality_floor: [\"true\"]\n");
+  for (const id of [412, 413, 414]) db.query("INSERT INTO tickets (id, title, state, updated_at) VALUES (?, 'x', 'grooming', ?)").run(id, now);
+  expect(startPendingGrooming(db, { dir, repo, run, now })).toEqual([412, 413]);
+  expect(startPendingGrooming(db, { dir, repo, run, now })).toEqual([]);
+  ask(db, { id: 412, kind: "engineering", text: "Which store?", now });
+  advance(db, { dir, repo, id: 412, run, now }); // 412 waits on its question: a triage slot frees
+  expect(startPendingGrooming(db, { dir, repo, run, now })).toEqual([414]);
+  expect(hc.length).toBe(3);
+  expect(ticket(412).needs_kind).toBe("question");
 });

@@ -222,3 +222,15 @@ export function readIssueAnswers(db: Database, o: { dir: string; repo: string; r
     }
   }
 }
+
+// Tickets waiting for triage (from the queue: grooming, no session yet, nothing
+// asked) start it oldest first, with at most max_running triage agents at once.
+export function startPendingGrooming(db: Database, o: { dir: string; repo: string; run: Run; now: string }) {
+  const max = readFactory(o.repo).max_running ?? 3;
+  const busy = (db.query("SELECT COUNT(*) AS n FROM sessions WHERE stage = 'groom' AND ended_at IS NULL").get() as { n: number }).n;
+  const pending = db.query(`SELECT id FROM tickets t WHERE state = 'grooming' AND needs_kind IS NULL
+      AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL) ORDER BY updated_at, id LIMIT ?`)
+    .all(Math.max(0, max - busy)) as { id: number }[];
+  for (const { id } of pending) startGrooming(db, { ...o, id });
+  return pending.map((p) => p.id);
+}
