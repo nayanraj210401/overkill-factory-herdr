@@ -70,7 +70,7 @@ const write = (path: string, text: string) => {
 };
 
 export function writeTicketFiles(db: Database, dir: string, id: number, now = new Date().toISOString()) {
-  const row = db.query("SELECT * FROM tickets WHERE id = ?").get(id) as Record<string, any> | null;
+  const row = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as Record<string, any> | null;
   if (!row) return;
   const stages = db.query("SELECT name, detail, started_at, ended_at FROM stages WHERE ticket = ? ORDER BY id").all(id) as Stage[];
   const planned = (db.query("SELECT name FROM planned WHERE ticket = ? ORDER BY pos").all(id) as { name: string }[]).map((p) => p.name);

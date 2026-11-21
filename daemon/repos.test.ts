@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { MIGRATIONS, leadRepo, listRepos, open, repoOf, setRepo, setWork } from "./db.ts";
 import { main, paths } from "./cli.ts";
 import { buildStatus } from "./status.ts";
+import { writeTicketFiles } from "./ticket.ts";
 
 test("migration 11 moves a one-repo factory's repo and each ticket's work to the new tables", () => {
   const path = join(mkdtempSync(join(tmpdir(), "mig-")), "factory.db");
@@ -74,4 +75,14 @@ test("factory repo add records a checkout of a repo factory.yaml lists, and repo
   expect(repoOf(db, "acme/api", []).lead).toBe(true); // the lead is always the factory's
   expect(() => repoOf(db, "acme/web", ["acme/api"])).toThrow("acme/web isn't in factory.yaml's repos:");
   expect(() => repoOf(db, "acme/docs", ["acme/docs"])).toThrow("acme/docs has no checkout here; run factory repo add acme/docs --path <dir>");
+});
+
+test("a ticket's files read its PR from the lead repo's row", () => {
+  const dir = mkdtempSync(join(tmpdir(), "files-"));
+  const db = open(join(dir, "factory.db"));
+  setRepo(db, { slug: "acme/api", path: "/src/api", lead: true });
+  db.query("INSERT INTO tickets (id, title, state, updated_at) VALUES (9, 'Ship it', 'ready', '2026-11-21T09:00:00Z')").run();
+  setWork(db, 9, { pr_number: 77, pr_watched: 1 });
+  writeTicketFiles(db, dir, 9);
+  expect(readFileSync(join(dir, "tickets/9/STATUS.md"), "utf8")).toContain("Ship it is ready: PR #77");
 });
