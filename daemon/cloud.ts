@@ -4,6 +4,7 @@
 // `claude --cloud` starts from it. The factory can't see a cloud session, so the
 // ticket shows "in cloud" and the daemon leaves it alone until `⇧L` fetches the
 // branch, imports RESULT.md (evidence, notes, PR.md), and resumes locally.
+import { STOPS } from "./guard.ts";
 import type { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -110,7 +111,7 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   const f = readFactory(o.repo) as any;
   writeFileSync(join(pack, "CLOUD.md"), handoffMd({
     id: o.id, title: t.title, branch: t.branch, blueprint: t.blueprint, stage, left: plannedPath(b, stage), agent: b.stages[stage]?.agent ?? null,
-    ready: f.ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], floor: f.quality_floor ?? [], hardStops: f.hard_stops ?? [], files,
+    ready: f.ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], floor: f.quality_floor ?? [], hardStops: f.hard_stops ?? [...STOPS], files,
     others: repos.slice(1).map((r) => r.repo),
   }));
   // Every repo's work in progress goes up on its branch; the pack rides in the lead's.
