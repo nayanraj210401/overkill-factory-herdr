@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { enterStage } from "./ticket.ts";
 import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
+import { capsOf, readTriggers, runningByTrigger, withinCaps } from "./triggers.ts";
 import { argvFor, loadAgent, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
 import { mayStart } from "./away.ts";
 import { estimateBudget, startHold } from "./budget.ts";
@@ -238,8 +239,11 @@ export function startGroomed(db: Database, o: { dir: string; repo: string; run: 
   if (startHold(db, o.repo, new Date(o.now))) return []; // the groomed ones wait; status.json says why
   const running = (db.query("SELECT COUNT(*) AS n FROM tickets WHERE state = 'running'").get() as { n: number }).n;
   // While you're away, only the blueprints away.blueprints names start.
-  const waiting = (db.query("SELECT id, blueprint FROM tickets WHERE state = 'queued' AND groomed_at IS NOT NULL ORDER BY groomed_at, id").all() as { id: number; blueprint: string }[])
-    .filter((w) => mayStart(db, o.repo, w.blueprint)).slice(0, Math.max(0, max - running));
+  // A trigger's concurrency caps its own tickets: one at its cap waits, and the next ticket starts.
+  const waiting = withinCaps(
+    (db.query("SELECT id, blueprint, trigger_name AS trigger FROM tickets WHERE state = 'queued' AND groomed_at IS NOT NULL ORDER BY groomed_at, id").all() as { id: number; blueprint: string; trigger: string | null }[])
+      .filter((w) => mayStart(db, o.repo, w.blueprint)), runningByTrigger(db), capsOf(readTriggers(o.repo).triggers),
+  ).slice(0, Math.max(0, max - running));
   return each(db, waiting.map((w) => w.id), (id) => startTicket(db, { dir: o.dir, repo: o.repo, id, run: o.run, now: o.now }), o.log);
 }
 

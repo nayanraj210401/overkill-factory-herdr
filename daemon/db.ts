@@ -117,6 +117,8 @@ export const MIGRATIONS = [
      FROM tickets t LEFT JOIN ticket_repos r ON r.ticket = t.id AND r.lead = 1;`,
   // Cross-repo merge order: each repo's place, when the plan (or you) set one.
   `ALTER TABLE ticket_repos ADD COLUMN merge_pos INTEGER;`,
+  // Triggers: the trigger a ticket came from, so its concurrency can count its running tickets.
+  `ALTER TABLE tickets ADD COLUMN trigger_name TEXT;`,
 ];
 
 export function open(path: string): Database {

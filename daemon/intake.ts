@@ -2,6 +2,7 @@
 // one-line goal. D6 adds the Project's Ready column and grooming on top of this.
 import type { Database } from "bun:sqlite";
 import type { Run } from "./runner.ts";
+import { matchesFilter, type Trigger } from "./triggers.ts";
 
 // Goals without an issue get ids from here up, clear of any repo's issue numbers.
 export const LOCAL_IDS = 10000;
@@ -17,7 +18,7 @@ export function parseSource(text: string): Source {
   return { goal: t.replace(/\s+/g, " ") };
 }
 
-export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string }) {
+export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string }) {
   const src = parseSource(o.text);
   let id: number;
   let title: string;
@@ -39,7 +40,7 @@ export function newTicket(db: Database, o: { text: string; repo: string; bluepri
     title = issue.title;
   }
   if (db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`#${id} is already a ticket`);
-  db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (?, ?, ?, ?)").run(id, title, o.blueprint, o.now);
+  db.query("INSERT INTO tickets (id, title, blueprint, trigger_name, updated_at) VALUES (?, ?, ?, ?, ?)").run(id, title, o.blueprint, o.trigger ?? "manual", o.now);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, `added ${"goal" in src ? "a goal" : `issue #${id}`}`, o.now);
   return { id, title };
 }
@@ -47,7 +48,7 @@ export function newTicket(db: Database, o: { text: string; repo: string; bluepri
 // D6 queue (plan: Grooming): issues in the GitHub Project's Ready column, assigned to
 // you, join as grooming tickets. factory.yaml: queue: { github_project: owner/<number
 // or title>, column: Ready, assignee: me }. Triage starts on them a few at a time.
-type Item = { status?: string; assignees?: string[]; content?: { type?: string; number?: number; title?: string; repository?: string; url?: string } };
+type Item = { status?: string; assignees?: string[]; labels?: string[]; content?: { type?: string; number?: number; title?: string; repository?: string; url?: string } };
 
 const repoOf = (s = "") => s.replace(/^https:\/\/github\.com\//, "").split("/").slice(0, 2).join("/").toLowerCase();
 
@@ -83,7 +84,7 @@ export function login(db: Database, run: Run, assignee: string) {
   return r.out.trim();
 }
 
-export function pollQueue(db: Database, o: { queue: { github_project?: string; column?: string; assignee?: string } | undefined; repo: string; run: Run; now: string }) {
+export function pollQueue(db: Database, o: { queue: { github_project?: string; column?: string; assignee?: string } | undefined; repo: string; run: Run; now: string; trigger?: Trigger }) {
   const q = o.queue;
   if (!q?.github_project) return [];
   const { owner, number } = projectNumber(db, o.run, q.github_project);
@@ -96,8 +97,11 @@ export function pollQueue(db: Database, o: { queue: { github_project?: string; c
     if (c?.type !== "Issue" || !c.number || (it.status ?? "").toLowerCase() !== column) continue;
     if (repoOf(c.repository ?? c.url) !== o.repo.toLowerCase()) continue; // another repo's issue
     if (who && !(it.assignees ?? []).some((a) => a.toLowerCase() === who.toLowerCase())) continue;
+    if (!matchesFilter(o.trigger?.filter, { repo: repoOf(c.repository ?? c.url), labels: it.labels })) continue;
     if (db.query("SELECT 1 FROM tickets WHERE id = ?").get(c.number)) continue;
-    db.query("INSERT INTO tickets (id, title, state, updated_at) VALUES (?, ?, 'grooming', ?)").run(c.number, c.title ?? `Issue #${c.number}`, o.now);
+    // Without a trigger the blueprint stays the column default; triage may still pick another.
+    db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, updated_at) VALUES (?, ?, 'grooming', ?, ?, ?)")
+      .run(c.number, c.title ?? `Issue #${c.number}`, o.trigger?.blueprint ?? "feature", o.trigger?.name ?? "queue", o.now);
     db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(c.number, `joined from ${q.github_project}'s ${q.column ?? "Ready"} column`, o.now);
     added.push(c.number);
   }
