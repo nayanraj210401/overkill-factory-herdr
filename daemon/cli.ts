@@ -21,6 +21,7 @@ import { setAway } from "./away.ts";
 import { toCloud, toLocal } from "./cloud.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
+import { watchContext } from "./handoff.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
 import { validateMetrics } from "../lib/metrics.js";
 import { renameSync, writeFileSync } from "node:fs";
@@ -377,6 +378,8 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   const lead = leadRepo(db);
   if (!lead) return;
   const repoDir = lead.path;
+  // Sessions near their context limit: asked to hand off, or replaced by the next one. Before the exits below see them.
+  change(db, () => watchContext(db, { dir: p.dir, repo: repoDir, run, now: new Date().toISOString(), log }));
   // A ticket in the cloud is out of sight until ⇧L brings it back: its sessions aren't watched.
   const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as

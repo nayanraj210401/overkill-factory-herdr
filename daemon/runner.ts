@@ -13,6 +13,7 @@ import { commentGate } from "./comments.ts";
 import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
 import { budgetCap, forbiddenTouched } from "./away.ts";
 import { STOPS, guardSettings, hardStopLog, takeHardStop } from "./guard.ts";
+import { withHandoffHook } from "./handoff-hook.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -117,9 +118,10 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const agent = loadAgent(o.repo, s.agent);
   const defaults = { harness: "claude", model: "sonnet" };
   const repos = ticketRepos(db, o.id);
-  // Hard stops factory.yaml lists (all four when it lists none) are enforced by a hook on the worker's tool calls.
-  const settings = guardSettings({ stops: readFactory(o.repo).hard_stops ?? [...STOPS], roots: [...repos.flatMap((r) => r.worktree ?? []), join(o.dir, "tickets", String(o.id))], log: hardStopLog(o.dir, o.id) });
-  const argv = argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id)), agent?.role, repos), settings);
+  // Hard stops factory.yaml lists (all four when it lists none) are enforced by a hook on the worker's tool calls;
+  // the handoff hook joins it in the same settings file (Claude Code takes one --settings).
+  const guard = guardSettings({ stops: readFactory(o.repo).hard_stops ?? [...STOPS], roots: [...repos.flatMap((r) => r.worktree ?? []), join(o.dir, "tickets", String(o.id))], log: hardStopLog(o.dir, o.id) });
+  const argv = withHandoffHook(argvFor(agent, defaults, brief(t as any, o.stage, agent?.prompt ?? null, join(o.dir, "tickets", String(o.id)), agent?.role, repos)), o.dir, o.id, guard);
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
