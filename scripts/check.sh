@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 node --test tests/*.test.mjs
+bun test daemon/
 node scripts/gen.mjs --check
 home=$(mktemp -d)
 trap 'rm -rf "$home"' EXIT
