@@ -12,12 +12,13 @@ import { validateStatus } from "../lib/status.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
-import { startTicket } from "./runner.ts";
+import { advance, sh, startTicket } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database (path: the repo checkout, default .)
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
+  stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
   sessions <id>                      the agent sessions started for a ticket
   ticket add <id> <title…> [--blueprint b]
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
@@ -74,6 +75,7 @@ export function main(argv: string[], log = console.log) {
   const interval = Number(flag(args, "interval") ?? 5);
   const next = flag(args, "next");
   const repoPath = flag(args, "path");
+  const failReason = flag(args, "fail");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -133,6 +135,12 @@ export function main(argv: string[], log = console.log) {
       let terminal: string | null = null;
       change(db, () => { terminal = startTicket(db, { dir: p.dir, repo: repoDir, id: Number(sub) }); });
       log(terminal ? `#${sub} started: agent in ${terminal}` : `#${sub} started`);
+    } else if (cmd === "stage-done") {
+      const repoDir = getMeta(db, "repo_path");
+      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      let r: any = null;
+      change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
+      log(`#${sub}: ${r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
     } else if (cmd === "sessions") {
       for (const r of db.query("SELECT * FROM sessions WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open"}  ${JSON.parse(r.argv)[0]}`);
@@ -146,7 +154,7 @@ export function main(argv: string[], log = console.log) {
       log(`${s.factory.name}: ${s.tickets.length} tickets, daemon ${s.factory.daemon ? "on" : "off"} → ${p.status}`);
       return;
     } else if (cmd === "run") {
-      const tick = () => { setMeta(db, "heartbeat", now()); writeAll(db, p); };
+      const tick = () => { setMeta(db, "heartbeat", now()); watchSessions(db, p); writeAll(db, p); };
       tick();
       log(`factory ${name}: writing ${p.status} every ${interval}s`);
       setInterval(tick, interval * 1000);
@@ -157,6 +165,25 @@ export function main(argv: string[], log = console.log) {
     if (Number.isInteger(id)) writeTicketFiles(db, p.dir, id);
   } finally {
     if (cmd !== "run") db.close();
+  }
+}
+
+// An agent whose terminal exited without calling stage-done has still finished its turn.
+export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = sh, log = console.log) {
+  const repoDir = getMeta(db, "repo_path");
+  if (!repoDir) return;
+  const open_ = db.query("SELECT ticket, terminal FROM sessions WHERE ended_at IS NULL AND terminal IS NOT NULL").all() as { ticket: number; terminal: string }[];
+  for (const s of open_) {
+    const r = run(["hc", "get", s.terminal, "--json"]);
+    let gone = r.code !== 0;
+    try { if (!gone) gone = JSON.parse(r.out).exit_code != null; } catch { gone = true; }
+    if (!gone) continue;
+    try {
+      change(db, () => advance(db, { dir: p.dir, repo: repoDir, id: s.ticket, run }));
+      log(`factory: #${s.ticket}'s agent in ${s.terminal} finished; advanced`);
+    } catch (e) {
+      log(`factory: #${s.ticket}: ${(e as Error).message}`);
+    }
   }
 }
 
@@ -180,6 +207,7 @@ function runAll(interval: number, log: (s: string) => void) {
       const db = (open_[name] ??= open(p.db));
       try {
         setMeta(db, "heartbeat", new Date().toISOString());
+        watchSessions(db, p, sh, log);
         writeAll(db, p);
       } catch (e) {
         log(`factory ${name}: ${(e as Error).message}`);
