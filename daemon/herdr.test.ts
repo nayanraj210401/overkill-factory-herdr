@@ -2,7 +2,7 @@ import { test, expect, afterEach } from "bun:test";
 import { cpSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setMeta } from "./db.ts";
+import { open, setMeta, setRepo, setWork } from "./db.ts";
 import { sh, startTicket, mergeTicket, type Run } from "./runner.ts";
 import { watchSessions } from "./cli.ts";
 import { branchSlug, openAgent, sessionState, worktreePath, worktreeRoot } from "./herdr.ts";
@@ -62,7 +62,7 @@ function factory() {
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));
-  setMeta(db, "repo_path", repo);
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
   db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (7, 'Wire it', 'feature', '2026-11-21T10:00:00Z')").run();
   return { db, dir, repo, p: { dir, db: join(dir, "factory.db"), status: join(dir, "status.json") } };
 }
@@ -79,13 +79,13 @@ test("with Herdr running, a ticket's agents are tabs in its worktree space, and 
     return sh(argv, cwd);
   };
   expect(startTicket(db, { dir, repo, id: 7, run })).toBe("t1");
-  const t = db.query("SELECT worktree, space FROM tickets").get() as any;
+  const t = db.query("SELECT worktree, space FROM ticket_lead").get() as any;
   expect(t).toEqual({ worktree: join(realTrees, require("node:path").basename(repo), "factory-7-wire-it"), space: "sp9" });
   expect(existsSync(join(t.worktree, ".factory"))).toBe(true);
   expect(calls[0][2]).toBe("space.new");
   expect(calls[1]).toEqual(["hc", "label", "t1", "factory.ticket=7", "factory.stage=spec"]);
   const tick = () => watchSessions(db, p, run, () => {});
-  const stage = () => (db.query("SELECT stage FROM tickets").get() as any).stage;
+  const stage = () => (db.query("SELECT stage FROM ticket_lead").get() as any).stage;
   tick(); // the shell is in front, the agent not seen yet: still starting
   expect(stage()).toBe("spec");
   fg = 2; tick(); // the agent is in front
@@ -103,12 +103,13 @@ test("merging closes the ticket's space and removes its worktree; the branch sta
     argv[0] === "herdr-app" ? (argv[2] === "space.close" && closed.push(argv), { code: 0, out: '{"space":"sp9","tab":"tb1","terminal":"t1"}' })
     : argv[0] === "hc" || argv[0] === "gh" ? { code: 0, out: "" } : sh(argv, cwd);
   startTicket(db, { dir, repo, id: 7, run });
-  const wt = (db.query("SELECT worktree FROM tickets").get() as any).worktree;
-  db.query("UPDATE tickets SET state = 'ready', pr_number = 42 WHERE id = 7").run();
+  const wt = (db.query("SELECT worktree FROM ticket_lead").get() as any).worktree;
+  db.query("UPDATE tickets SET state = 'ready' WHERE id = 7").run();
+  setWork(db, 7, { pr_number: 42 });
   mergeTicket(db, { repo, id: 7, run });
   expect(closed).toEqual([["herdr-app", "do", "space.close", '{"id":"sp9","confirmed":true}']]);
   expect(existsSync(wt)).toBe(false);
-  expect(db.query("SELECT worktree, space FROM tickets").get()).toEqual({ worktree: null, space: null });
+  expect(db.query("SELECT worktree, space FROM ticket_lead").get()).toEqual({ worktree: null, space: null });
   expect(sh(["git", "-C", repo, "branch", "--list", "factory/7-wire-it"]).out).toContain("factory/7-wire-it");
 });
 
@@ -116,10 +117,11 @@ test("a start that failed after making the worktree can simply be run again", ()
   const { db, dir, repo } = factory();
   const broken: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 1, out: "hc: no server" } : sh(argv, cwd));
   expect(() => db.transaction(() => startTicket(db, { dir, repo, id: 7, run: broken }))()).toThrow("hc run failed");
-  expect((db.query("SELECT state FROM tickets").get() as any).state).toBe("queued"); // rolled back; the checkout stays
+  expect((db.query("SELECT state FROM ticket_lead").get() as any).state).toBe("queued"); // rolled back; the checkout stays
   const ok: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: '{"address":"t3"}' } : sh(argv, cwd));
   expect(startTicket(db, { dir, repo, id: 7, run: ok })).toBe("t3");
-  sh(["git", "-C", repo, "worktree", "remove", "--force", (db.query("SELECT worktree FROM tickets").get() as any).worktree]);
-  db.query("UPDATE tickets SET state = 'queued', worktree = NULL").run();
+  sh(["git", "-C", repo, "worktree", "remove", "--force", (db.query("SELECT worktree FROM ticket_lead").get() as any).worktree]);
+  db.query("UPDATE tickets SET state = 'queued'").run();
+  setWork(db, 7, { worktree: null });
   expect(startTicket(db, { dir, repo, id: 7, run: ok })).toBe("t3"); // the branch alone is left: checked out again
 });

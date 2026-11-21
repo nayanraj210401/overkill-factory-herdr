@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setMeta } from "./db.ts";
+import { open, setMeta, setRepo } from "./db.ts";
 import { advance, answer, fixStage, loadBlueprint, mergeTicket, pause, restartStage, ticketDiff, resume, sendBack, sh, startTicket, tryPr, type Run } from "./runner.ts";
 import { readyRules, recordVerdict, templateProblems } from "./ready.ts";
 
@@ -19,7 +19,7 @@ function setup() {
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));
-  setMeta(db, "repo_path", repo);
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
   const gh: string[][] = [];
   // Real git (pushing to a local bare repo); hc and gh are faked.
   const run: Run = (argv, cwd) =>
@@ -30,7 +30,7 @@ function setup() {
   startTicket(db, { dir, repo, id: 7, run });
   const prFile = join(dir, "tickets/7/PR.md");
   mkdirSync(join(dir, "tickets/7"), { recursive: true });
-  return { db, dir, repo, origin, run, gh, prFile, ticket: () => db.query("SELECT * FROM tickets WHERE id = 7").get() as any };
+  return { db, dir, repo, origin, run, gh, prFile, ticket: () => db.query("SELECT * FROM ticket_lead WHERE id = 7").get() as any };
 }
 
 test("the template rule wants one plain sentence, then the reviewer's fields", () => {

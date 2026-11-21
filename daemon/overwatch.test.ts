@@ -9,7 +9,6 @@ import type { Run } from "./runner.ts";
 test("overwatch starts once in the factory's folder, and the live one is reused until it exits", () => {
   const dir = mkdtempSync(join(tmpdir(), "ow-"));
   const db = open(join(dir, "factory.db"));
-  setMeta(db, "repo", "acme/api");
   const calls: string[][] = [];
   let exited = false;
   let n = 0;

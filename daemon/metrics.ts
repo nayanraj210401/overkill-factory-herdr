@@ -38,7 +38,7 @@ export function revertRate(db: Database, now: Date) {
 // GitHub's Revert button opens a PR titled `Revert "…"` whose body says
 // "Reverts owner/repo#123". The daemon looks every 10 minutes.
 export function findReverts(db: Database, o: { repo: string; run: Run; now: string }) {
-  const merged = db.query("SELECT id, pr_number FROM tickets WHERE state = 'merged' AND pr_number IS NOT NULL AND reverted_by IS NULL").all() as { id: number; pr_number: number }[];
+  const merged = db.query("SELECT id, pr_number FROM ticket_lead WHERE state = 'merged' AND pr_number IS NOT NULL AND reverted_by IS NULL").all() as { id: number; pr_number: number }[];
   if (!merged.length || o.repo === "unknown") return [];
   const r = o.run(["gh", "pr", "list", "--repo", o.repo, "--state", "merged", "--search", "Revert in:title", "--json", "number,body", "--limit", "100"]);
   if (r.code !== 0) throw new Error(`gh pr list failed: ${r.out.slice(0, 200)}`);

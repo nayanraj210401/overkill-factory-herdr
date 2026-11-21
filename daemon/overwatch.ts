@@ -3,7 +3,7 @@
 // through the `factory` CLI. `factory overwatch` starts it, or finds the live one.
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { getMeta, setMeta } from "./db.ts";
+import { getMeta, leadRepo, setMeta } from "./db.ts";
 import { argvFor, loadAgent, type Run } from "./runner.ts";
 
 export function overwatchBrief(o: { name: string; dir: string; repo: string | null }) {
@@ -23,7 +23,7 @@ const alive = (run: Run, terminal: string) => {
 export function overwatch(db: Database, o: { name: string; dir: string; run: Run; now: string }) {
   const known = getMeta(db, "overwatch_terminal");
   if (known && alive(o.run, known)) return { terminal: known, started: false };
-  const repo = getMeta(db, "repo_path");
+  const repo = leadRepo(db)?.path ?? null;
   const agent = repo ? loadAgent(repo, "overwatch") : null;
   const argv = argvFor(agent, { harness: "claude", model: "sonnet" }, overwatchBrief({ name: o.name, dir: o.dir, repo }));
   const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f-overwatch-${o.name}`.slice(0, 32),

@@ -28,10 +28,11 @@ import { writeBlueprints } from "./blueprints.ts";
 import { overwatch } from "./overwatch.ts";
 import { ask, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
-import { getMeta } from "./db.ts";
+import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
-  init [--repo owner/name] [--path dir]  create the factory's database (path: the repo checkout, default .)
+  init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .)
+  repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
@@ -77,6 +78,7 @@ const FIELDS: Record<string, [string, (v: string) => unknown]> = {
   pr_checked_at: ["pr_checked_at", nullable], needs: ["needs_kind", nullable], needs_text: ["needs_text", nullable],
   blocked_by: ["blocked_by", nullableNumber],
 };
+const WORK = new Set(["pr_number", "pr_watched", "pr_checked_at"]);
 function nullable(v: string) { return v === "" || v === "null" ? null : v; }
 function nullableNumber(v: string) { return v === "" || v === "null" ? null : Number(v); }
 
@@ -136,7 +138,19 @@ export function main(argv: string[], log = console.log) {
   const db = open(p.db);
   try {
     if (cmd === "init") {
-      change(db, () => { setMeta(db, "name", name); setMeta(db, "repo", repo); setMeta(db, "repo_path", resolve(repoPath ?? ".")); });
+      change(db, () => { setMeta(db, "name", name); setRepo(db, { slug: repo, path: resolve(repoPath ?? "."), lead: true }); });
+    } else if (cmd === "repo") {
+      if (sub === "add") {
+        const [slug] = rest;
+        if (!slug?.includes("/") || !repoPath) throw new Error("usage: factory repo add owner/name --path <dir>");
+        const listed = readFactory(needLead(db).path).repos ?? [];
+        if (!listed.includes(slug)) throw new Error(`${slug} isn't in factory.yaml's repos: (${listed.join(", ") || "none listed"}); add it there first`);
+        if (!existsSync(join(resolve(repoPath), ".git"))) throw new Error(`${resolve(repoPath)} isn't a git checkout`);
+        if (leadRepo(db)?.slug === slug) throw new Error(`${slug} is the lead repo; factory init --path moves its checkout`);
+        change(db, () => setRepo(db, { slug, path: resolve(repoPath), lead: false }));
+      } else if (sub) throw new Error("usage: factory repo [add owner/name --path <dir>]");
+      for (const r of listRepos(db)) log(`${r.lead ? "*" : " "} ${r.slug}  ${r.path}`);
+      return;
     } else if (cmd === "ticket" && sub === "add") {
       const [id, ...title] = rest;
       if (!Number.isInteger(Number(id)) || !title.length) throw new Error("usage: factory ticket add <id> <title…>");
@@ -150,10 +164,14 @@ export function main(argv: string[], log = console.log) {
         return [field[0], field[1](pair.slice(at + 1))] as const;
       });
       if (!sets.length) throw new Error("usage: factory ticket set <id> <field=value>…");
+      // The PR fields are the lead repo's work; the rest are the ticket's.
+      const work = sets.filter(([c]) => WORK.has(c));
+      const own = sets.filter(([c]) => !WORK.has(c));
       change(db, () => {
-        const r = db.query(`UPDATE tickets SET ${sets.map(([c]) => `${c} = ?`).join(", ")}, updated_at = ? WHERE id = ?`)
-          .run(...sets.map(([, v]) => v as any), now(), Number(id));
+        const r = db.query(`UPDATE tickets SET ${own.map(([c]) => `${c} = ?, `).join("")}updated_at = ? WHERE id = ?`)
+          .run(...own.map(([, v]) => v as any), now(), Number(id));
         if (r.changes === 0) throw new Error(`no ticket ${id}`);
+        setWork(db, Number(id), Object.fromEntries(work));
       });
     } else if (cmd === "stage") {
       const [name, ...detail] = rest;
@@ -174,7 +192,7 @@ export function main(argv: string[], log = console.log) {
       const [c = "", verdict = "", ...why] = rest;
       const n = Number(c.replace(/^C/i, ""));
       if (!Number.isInteger(Number(sub)) || !Number.isInteger(n) || n < 1) throw new Error("usage: factory comment <id> C<n> fix|pushback|escalate <reason…>");
-      change(db, () => judge(db, { ticket: Number(sub), n, verdict, reason: why.join(" "), now: now(), repo: getMeta(db, "repo_path") ?? undefined }));
+      change(db, () => judge(db, { ticket: Number(sub), n, verdict, reason: why.join(" "), now: now(), repo: leadRepo(db)?.path }));
       log(`#${sub}: C${n} ${verdict}`);
     } else if (cmd === "verdict") {
       const [kind, result, ...detail] = rest;
@@ -186,21 +204,19 @@ export function main(argv: string[], log = console.log) {
       log(`#${sub}: ${kind} ${r} from ${voter}`);
     } else if (cmd === "new") {
       const text = [sub, ...rest].filter(Boolean).join(" ");
-      const repoDir = getMeta(db, "repo_path");
-      if (start && !repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const lead = needLead(db);
       let r: any = null;
       let terminal: string | null = null;
       change(db, () => {
-        r = newTicket(db, { text, repo: getMeta(db, "repo") ?? "unknown", blueprint, run: sh, now: now() });
-        if (start) terminal = startTicket(db, { dir: p.dir, repo: repoDir!, id: r.id });
+        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now() });
+        if (start) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
       });
       log(`#${r.id} ${r.title}${start ? ` started${terminal ? `: agent in ${terminal}` : ""}` : " queued"}`);
       writeStatus(db, p.status);
       writeTicketFiles(db, p.dir, r.id);
       return;
     } else if (cmd === "groom" || cmd === "pick" || cmd === "question") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       const id = Number(sub);
       if (!Number.isInteger(id)) throw new Error(`usage: factory ${cmd} <id>…`);
       let out = "";
@@ -211,14 +227,12 @@ export function main(argv: string[], log = console.log) {
       });
       log(out);
     } else if (cmd === "start") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       let terminal: string | null = null;
       change(db, () => { terminal = startTicket(db, { dir: p.dir, repo: repoDir, id: Number(sub) }); });
       log(terminal ? `#${sub} started: agent in ${terminal}` : `#${sub} started`);
     } else if (cmd === "stage-done") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       let r: any = null;
       change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
       log(`#${sub}: ${r.questions ? `groomed, waiting on ${r.questions} answer${r.questions > 1 ? "s" : ""}` : r.groomed ? `groomed${r.started ? " and started" : ", queued"}` : r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
@@ -235,8 +249,7 @@ export function main(argv: string[], log = console.log) {
         db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(Number(sub), `set the budget to ${text}`, now());
       });
     } else if (cmd === "send-back" || cmd === "answer") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       const text = rest.join(" ");
       let r: any = null;
       change(db, () => {
@@ -246,28 +259,24 @@ export function main(argv: string[], log = console.log) {
       log(r.answered ? `#${sub}: answered ${r.answered.map((n: number) => `Q${n}`).join(", ")}; ${r.left ? `${r.left} open` : r.started ? "groomed and started" : "groomed, queued"}`
         : `#${sub}: back to ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
     } else if (cmd === "diff") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       return log(ticketDiff(db, { repo: repoDir, id: Number(sub) }));
     } else if (cmd === "pause") {
       let r: any = null;
       change(db, () => { r = pause(db, { id: Number(sub) }); });
       log(`#${sub}: paused at ${r.stage}${r.killed.length ? `; stopped ${r.killed.join(", ")}` : ""}`);
     } else if (cmd === "resume") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       let r: any = null;
       change(db, () => { r = resume(db, { dir: p.dir, repo: repoDir, id: Number(sub) }); });
       log(`#${sub}: resumed at ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
     } else if (cmd === "merge") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       let r: any = null;
       change(db, () => { r = mergeTicket(db, { repo: repoDir, id: Number(sub) }); });
       log(`#${sub}: merged PR #${r.pr}`);
     } else if (cmd === "ready") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       const rules = checkReady(db, { dir: p.dir, repo: repoDir, id: Number(sub), run: sh });
       for (const r of rules) log(`${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`);
       return;
@@ -276,10 +285,9 @@ export function main(argv: string[], log = console.log) {
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
       return;
     } else if (cmd === "cloud" || cmd === "local") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       const ids = cmd === "cloud" && all
-        ? (db.query("SELECT id FROM tickets WHERE state = 'running' AND location = 'local' AND worktree IS NOT NULL ORDER BY id").all() as { id: number }[]).map((r) => r.id)
+        ? (db.query("SELECT id FROM ticket_lead WHERE state = 'running' AND location = 'local' AND worktree IS NOT NULL ORDER BY id").all() as { id: number }[]).map((r) => r.id)
         : [Number(sub)];
       if (!ids.every(Number.isInteger)) throw new Error(`usage: factory ${cmd} <id>${cmd === "cloud" ? " | --all" : ""}`);
       for (const id of ids) {
@@ -303,8 +311,7 @@ export function main(argv: string[], log = console.log) {
       change(db, () => { r = overwatch(db, { name, dir: p.dir, run: sh, now: now() }); });
       return log(json ? JSON.stringify(r) : `overwatch ${r.started ? "started" : "running"} in ${r.terminal}`);
     } else if (cmd === "blueprints") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       const doc = writeBlueprints(db, repoDir, p.blueprints);
       log(`${doc.blueprints.map((b) => b.name).join(", ") || "no blueprints"} → ${p.blueprints}`);
       return;
@@ -314,12 +321,11 @@ export function main(argv: string[], log = console.log) {
       change(db, () => setPlan(db, h5, wk));
       log(`plan meters: ${sub} per 5 hours, ${rest[0]} per week`);
     } else if (cmd === "queue") {
-      const repoDir = getMeta(db, "repo_path");
-      if (!repoDir) throw new Error("this factory has no repo path; run factory init --path <repo>");
+      const repoDir = needLead(db).path;
       const queue = readFactory(repoDir).queue;
       if (!queue?.github_project) throw new Error("factory.yaml has no queue: { github_project: owner/<number or title>, column: Ready, assignee: me }");
       let added: number[] = [];
-      change(db, () => { added = pollQueue(db, { queue, repo: getMeta(db, "repo") ?? "unknown", run: sh, now: now() }); });
+      change(db, () => { added = pollQueue(db, { queue, repo: needLead(db).slug, run: sh, now: now() }); });
       log(added.length ? `added ${added.map((n) => `#${n}`).join(", ")} to grooming` : "no new issues in the queue");
     } else if (cmd === "usage") {
       change(db, () => recordUsage(db, log));
@@ -348,8 +354,9 @@ export function main(argv: string[], log = console.log) {
 
 // An agent whose terminal exited without calling stage-done has still finished its turn.
 export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = sh, log = console.log) {
-  const repoDir = getMeta(db, "repo_path");
-  if (!repoDir) return;
+  const lead = leadRepo(db);
+  if (!lead) return;
+  const repoDir = lead.path;
   // A ticket in the cloud is out of sight until ⇧L brings it back: its sessions aren't watched.
   const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as
@@ -379,7 +386,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     try {
       let added: number[] = [];
       change(db, () => {
-        added = pollQueue(db, { queue: readFactory(repoDir).queue, repo: getMeta(db, "repo") ?? "unknown", run, now: nowIso });
+        added = pollQueue(db, { queue: readFactory(repoDir).queue, repo: lead.slug, run, now: nowIso });
       });
       if (added.length) log(`factory: ${added.map((n) => `#${n}`).join(", ")} joined from the queue`);
     } catch (e) {
@@ -395,10 +402,10 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   }
   // Factory PRs waiting on you, every 2 minutes: merged or closed on GitHub, or new review comments.
   const lastWatch = getMeta(db, "prs_watched_at");
-  const slug = getMeta(db, "repo") ?? "unknown";
+  const slug = lead.slug;
   if (slug !== "unknown" && (!lastWatch || Date.now() - Date.parse(lastWatch) >= 120_000)) {
     setMeta(db, "prs_watched_at", nowIso);
-    if (db.query("SELECT 1 FROM tickets WHERE state = 'ready' AND pr_watched = 1").get()) {
+    if (db.query("SELECT 1 FROM ticket_lead WHERE state = 'ready' AND pr_watched = 1").get()) {
       let me: string | null = null;
       try { me = login(db, run, "me"); } catch (e) { log(`factory: not watching PRs: ${(e as Error).message}`); }
       if (me) for (const e of watchPrs(db, { dir: p.dir, repo: repoDir, slug, me, run, now: nowIso, log })) log(`factory: #${e.id}'s PR: ${e.event}`);
@@ -408,7 +415,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   const lastReverts = getMeta(db, "reverts_checked_at");
   if (!lastReverts || Date.now() - Date.parse(lastReverts) >= 600_000) {
     setMeta(db, "reverts_checked_at", nowIso);
-    try { change(db, () => { for (const id of findReverts(db, { repo: getMeta(db, "repo") ?? "unknown", run, now: nowIso })) log(`factory: #${id}'s PR was reverted`); }); }
+    try { change(db, () => { for (const id of findReverts(db, { repo: slug, run, now: nowIso })) log(`factory: #${id}'s PR was reverted`); }); }
     catch (e) { log(`factory: checking reverts: ${(e as Error).message}`); }
   }
   // Groomed tickets waiting for room: one starts as another stops running.
@@ -441,8 +448,8 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
 // status.json plus every ticket's files, so "12m so far" keeps counting.
 function writeAll(db: Database, p: ReturnType<typeof paths>) {
   const s = writeStatus(db, p.status);
-  const repoDir = getMeta(db, "repo_path");
-  if (repoDir) writeBlueprints(db, repoDir, p.blueprints);
+  const lead = leadRepo(db);
+  if (lead) writeBlueprints(db, lead.path, p.blueprints);
   writeMetrics(db, p.metrics);
   for (const t of s.tickets) writeTicketFiles(db, p.dir, t.id);
 }

@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open } from "./db.ts";
+import { open, setRepo, setWork } from "./db.ts";
 import { buildStatus } from "./status.ts";
 import { codexHome, parseCodex, parseTranscript, recordUsage, transcriptDir, usd } from "./usage.ts";
 
@@ -39,7 +39,9 @@ test("dollars: input, 5m and 1h writes (1.25x, 2x), cache reads, output, per mod
 test("the daemon records each ticket's usage by stage session, once, and today's numbers follow", () => {
   const db = open(join(mkdtempSync(join(tmpdir(), "usage-")), "factory.db"));
   const wt = "/work/trees/acme/factory-7-wire-it";
-  db.query("INSERT INTO tickets (id, title, updated_at, worktree, state) VALUES (7, 'Wire it', '2026-11-21T09:00:00Z', ?, 'running')").run(wt);
+  db.query("INSERT INTO tickets (id, title, updated_at, state) VALUES (7, 'Wire it', '2026-11-21T09:00:00Z', 'running')").run();
+  setRepo(db, { slug: "acme/api", path: wt, lead: true });
+  setWork(db, 7, { worktree: wt });
   for (const [stage, at] of [["spec", "2026-11-21T09:00:00Z"], ["plan", "2026-11-21T09:30:00Z"]])
     db.query("INSERT INTO sessions (ticket, stage, argv, started_at) VALUES (7, ?, '[]', ?)").run(stage, at);
   db.query("INSERT INTO stages (ticket, name, started_at) VALUES (7, 'Spec', '2026-11-21T09:00:00Z')").run();
@@ -49,7 +51,7 @@ test("the daemon records each ticket's usage by stage session, once, and today's
   writeFileSync(join(dir, "s1.jsonl"), msg("a", "2026-11-21T09:10:00Z", U(1000, 1e5, 5e5, 2000)) + "\n");
   writeFileSync(join(dir, "s2.jsonl"), msg("b", "2026-11-21T09:40:00Z", U(500, 0, 0, 1000)) + "\n");
   writeFileSync(join(dir, "s2/subagents/agent-1.jsonl"), msg("c", "2026-11-21T09:41:00Z", U(100, 0, 0, 100), "claude-haiku-5-5") + "\n");
-  const t = () => db.query("SELECT tokens_in, tokens_out, usd FROM tickets").get() as any;
+  const t = () => db.query("SELECT tokens_in, tokens_out, usd FROM ticket_lead").get() as any;
   recordUsage(db);
   recordUsage(db); // nothing changed: no double count
   expect(t()).toMatchObject({ tokens_in: 1000 + 1e5 + 500 + 100, tokens_out: 3100 });
@@ -86,7 +88,9 @@ test("Codex sessions count for the ticket whose folder they ran in, one entry pe
 
   const db = open(join(mkdtempSync(join(tmpdir(), "usage-")), "factory.db"));
   const wt = mkdtempSync(join(tmpdir(), "wt-"));
-  db.query("INSERT INTO tickets (id, title, worktree, updated_at) VALUES (5, 'x', ?, '2026-11-21T09:00:00Z')").run(wt);
+  db.query("INSERT INTO tickets (id, title, updated_at) VALUES (5, 'x', '2026-11-21T09:00:00Z')").run();
+  setRepo(db, { slug: "acme/api", path: wt, lead: true });
+  setWork(db, 5, { worktree: wt });
   db.query(`INSERT INTO sessions (ticket, stage, argv, started_at, cwd) VALUES (5, 'implement', '["codex","go"]', '2026-11-21T09:59:00Z', ?)`).run(wt);
   const day = join(codexHome(), "sessions/2026/11/21");
   mkdirSync(day, { recursive: true });
@@ -96,7 +100,7 @@ test("Codex sessions count for the ticket whose folder they ran in, one entry pe
   writeFileSync(join(codexHome(), "sessions/2026/10/01/rollout-old.jsonl"), text(wt).replace(/"s1"/, '"s0"')); // before the factory used Codex
   const logs: string[] = [];
   recordUsage(db, (s) => logs.push(s));
-  expect(db.query("SELECT tokens_in, tokens_out, usd FROM tickets WHERE id = 5").get()).toEqual({ tokens_in: 1100, tokens_out: 80, usd: 0 });
+  expect(db.query("SELECT tokens_in, tokens_out, usd FROM ticket_lead WHERE id = 5").get()).toEqual({ tokens_in: 1100, tokens_out: 80, usd: 0 });
   expect(logs).toEqual(["factory: no price for gpt-5.3-codex; its usage counts as $0"]);
   recordUsage(db, (s) => logs.push(s));
   expect(logs).toHaveLength(1);

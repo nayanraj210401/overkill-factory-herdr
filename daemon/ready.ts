@@ -25,7 +25,7 @@ export const VERDICT_OF_ROLE: Record<string, VerdictKind> = { verify: "holdout",
 // `factory verdict`: a checker or reviewer agent reports. The vote is the open
 // session's agent's unless --by names another voter.
 export function recordVerdict(db: Database, o: { id: number; kind: VerdictKind; result: "PASS" | "FAIL"; detail: string | null; by?: string | null; now: string }) {
-  if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(o.id)) throw new Error(`no ticket ${o.id}`);
+  if (!db.query("SELECT 1 FROM ticket_lead WHERE id = ?").get(o.id)) throw new Error(`no ticket ${o.id}`);
   const s = db.query("SELECT id, agent FROM sessions WHERE ticket = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1").get(o.id) as { id: number; agent: string | null } | null;
   const voter = o.by ?? s?.agent ?? "you";
   db.query("INSERT INTO verdicts (ticket, session, kind, voter, result, detail, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -57,7 +57,7 @@ function verdictRule(db: Database, id: number, kind: VerdictKind, lastCommit: st
 }
 
 export function readyRules(db: Database, o: { id: number; dir: string; worktree: string; rules: string[]; run: Run; expects?: VerdictKind[]; cap?: { input: number; output: number } | null }): Rule[] {
-  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
   const latest = db.query(`SELECT check_name, result, at FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { check_name: string; result: string; at: string }[];
   const lastCommit = o.run(["git", "-C", o.worktree, "log", "-1", "--format=%cI"]).out.trim();
   const out: Rule[] = [];
@@ -95,7 +95,7 @@ export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fai
 // All rules pass: push the ticket's branch and open the PR from PR.md, as a draft
 // with the rule results appended. Agents can't push; only the daemon does (plan: Hard stops).
 export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null }) {
-  const t = db.query("SELECT title FROM tickets WHERE id = ?").get(o.id) as { title: string };
+  const t = db.query("SELECT title FROM ticket_lead WHERE id = ?").get(o.id) as { title: string };
   const md = readFileSync(join(o.dir, "tickets", String(o.id), "PR.md"), "utf8").trim();
   const table = o.rules.map((r) => `- ${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`).join("\n");
   const body = `${md}\n\n**Ready rules**\n${table}\n`;

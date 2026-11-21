@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-const MIGRATIONS = [
+export const MIGRATIONS = [
   `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
    CREATE TABLE tickets (
      id INTEGER PRIMARY KEY,
@@ -86,6 +86,35 @@ const MIGRATIONS = [
      verdict TEXT CHECK (verdict IN ('fix', 'pushback', 'escalate')), reason TEXT, judged_at TEXT, escalated_at TEXT,
      UNIQUE (ticket, gh_id), UNIQUE (ticket, n)
    );`,
+  // Multi-repo: the factory's repos (the lead, from init, plus the ones `repo add`
+  // records from factory.yaml's repos:), and per ticket, its work in each repo. Every
+  // ticket so far worked in the lead repo, so its worktree, branch and PR move to a
+  // lead row; the one-repo columns and meta keys go.
+  `CREATE TABLE repos (slug TEXT PRIMARY KEY, path TEXT NOT NULL, lead INTEGER NOT NULL DEFAULT 0);
+   CREATE UNIQUE INDEX repos_lead ON repos(lead) WHERE lead = 1;
+   INSERT INTO repos (slug, path, lead)
+     SELECT COALESCE((SELECT value FROM meta WHERE key = 'repo'), 'unknown'), COALESCE((SELECT value FROM meta WHERE key = 'repo_path'), '.'), 1
+     WHERE EXISTS (SELECT 1 FROM meta WHERE key IN ('repo', 'repo_path'));
+   CREATE TABLE ticket_repos (
+     ticket INTEGER NOT NULL REFERENCES tickets(id), repo TEXT NOT NULL REFERENCES repos(slug), lead INTEGER NOT NULL DEFAULT 0,
+     worktree TEXT, branch TEXT, pr_number INTEGER, pr_watched INTEGER NOT NULL DEFAULT 0, pr_checked_at TEXT, merged_at TEXT,
+     PRIMARY KEY (ticket, repo)
+   );
+   CREATE UNIQUE INDEX ticket_repos_lead ON ticket_repos(ticket) WHERE lead = 1;
+   INSERT INTO ticket_repos (ticket, repo, lead, worktree, branch, pr_number, pr_watched, pr_checked_at, merged_at)
+     SELECT t.id, r.slug, 1, t.worktree, t.branch, t.pr_number, t.pr_watched, t.pr_checked_at, CASE WHEN t.state = 'merged' THEN t.updated_at END
+     FROM tickets t JOIN repos r ON r.lead = 1
+     WHERE t.worktree IS NOT NULL OR t.branch IS NOT NULL OR t.pr_number IS NOT NULL;
+   DELETE FROM meta WHERE key IN ('repo', 'repo_path');
+   ALTER TABLE tickets DROP COLUMN worktree;
+   ALTER TABLE tickets DROP COLUMN branch;
+   ALTER TABLE tickets DROP COLUMN pr_number;
+   ALTER TABLE tickets DROP COLUMN pr_watched;
+   ALTER TABLE tickets DROP COLUMN pr_checked_at;
+   -- A ticket with its lead repo's work: what every one-repo reader wants.
+   CREATE VIEW ticket_lead AS
+     SELECT t.*, r.repo, r.worktree, r.branch, r.pr_number, COALESCE(r.pr_watched, 0) AS pr_watched, r.pr_checked_at, r.merged_at
+     FROM tickets t LEFT JOIN ticket_repos r ON r.ticket = t.id AND r.lead = 1;`,
 ];
 
 export function open(path: string): Database {
@@ -106,3 +135,52 @@ export const getMeta = (db: Database, key: string) =>
   (db.query("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | null)?.value ?? null;
 export const setMeta = (db: Database, key: string, value: string) =>
   db.query("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+
+// The factory's repos. The lead is the repo the factory was made for (its factory.yaml
+// is the factory's config); the others join cross-repo tickets.
+export type Repo = { slug: string; path: string; lead: boolean };
+const repoRow = (r: { slug: string; path: string; lead: number } | null): Repo | null => r && { slug: r.slug, path: r.path, lead: r.lead === 1 };
+
+export const leadRepo = (db: Database) => repoRow(db.query("SELECT * FROM repos WHERE lead = 1").get() as any);
+export const listRepos = (db: Database) => (db.query("SELECT * FROM repos ORDER BY lead DESC, slug").all() as any[]).map((r) => repoRow(r)!);
+
+// The lead repo, or why there's none: every command that touches a checkout needs it.
+export function needLead(db: Database): Repo {
+  const r = leadRepo(db);
+  if (!r) throw new Error("this factory has no repo; run factory init --repo owner/name --path <repo>");
+  return r;
+}
+
+// A repo the factory may work in: the lead, or one `repo add` recorded that factory.yaml's
+// repos: still lists (`listed`, read by the caller from the lead's factory.yaml).
+export function repoOf(db: Database, slug: string, listed: string[] | undefined): Repo {
+  const r = repoRow(db.query("SELECT * FROM repos WHERE slug = ?").get(slug) as any);
+  if (r?.lead) return r;
+  if (!(listed ?? []).includes(slug)) throw new Error(`${slug} isn't in factory.yaml's repos:`);
+  if (!r) throw new Error(`${slug} has no checkout here; run factory repo add ${slug} --path <dir>`);
+  return r;
+}
+
+// init sets the lead (again: a second init moves it); `repo add` records the others.
+export function setRepo(db: Database, r: Repo) {
+  if (r.lead) {
+    const old = leadRepo(db);
+    if (old && old.slug !== r.slug && db.query("SELECT 1 FROM ticket_repos WHERE repo = ?").get(old.slug))
+      throw new Error(`tickets already worked in ${old.slug}; the lead repo can't change`);
+    db.query("UPDATE repos SET lead = 0 WHERE lead = 1 AND slug != ?").run(r.slug);
+    if (old && old.slug !== r.slug) db.query("DELETE FROM repos WHERE slug = ?").run(old.slug);
+  }
+  db.query("INSERT INTO repos (slug, path, lead) VALUES (?, ?, ?) ON CONFLICT(slug) DO UPDATE SET path = excluded.path, lead = excluded.lead")
+    .run(r.slug, r.path, r.lead ? 1 : 0);
+}
+
+// A ticket's work in its lead repo: its worktree, branch and PR. The row is made on
+// the first write, in the factory's lead repo.
+export type Work = { worktree: string | null; branch: string | null; pr_number: number | null; pr_watched: number; pr_checked_at: string | null; merged_at: string | null };
+export function setWork(db: Database, ticket: number, w: Partial<Work>) {
+  const keys = Object.keys(w) as (keyof Work)[];
+  if (!keys.length) return;
+  const has = db.query("SELECT 1 FROM ticket_repos WHERE ticket = ? AND lead = 1").get(ticket);
+  if (!has) db.query("INSERT INTO ticket_repos (ticket, repo, lead) VALUES (?, ?, 1)").run(ticket, needLead(db).slug);
+  db.query(`UPDATE ticket_repos SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE ticket = ? AND lead = 1`).run(...(keys.map((k) => w[k]) as any[]), ticket);
+}

@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setMeta } from "./db.ts";
+import { open, setMeta, setRepo } from "./db.ts";
 import { advance, sh, startTicket, type Run } from "./runner.ts";
 import { watchPrs } from "./watch.ts";
 import { judge } from "./comments.ts";
@@ -21,7 +21,7 @@ function setup() {
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));
-  setMeta(db, "repo_path", repo);
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
   const gh: string[][] = [];
   let pr: any = { state: "OPEN", comments: [], reviews: [] };
   let inline: any[] = [];
@@ -41,7 +41,7 @@ function setup() {
   writeFileSync(join(dir, "tickets/7/PR.md"), GOOD_PR);
   advance(db, { dir, repo, id: 7, run, now: "2026-11-21T10:10:00Z" }); // implement → verify → pr: PR #42 opens, checked at 10:10
   const watch = (now: string, logs: string[] = []) => watchPrs(db, { dir, repo, slug: "acme/api", me: "pat", run, now, log: (s) => logs.push(s) });
-  const ticket = () => db.query("SELECT * FROM tickets WHERE id = 7").get() as any;
+  const ticket = () => db.query("SELECT * FROM ticket_lead WHERE id = 7").get() as any;
   return { db, dir, repo, gh, watch, ticket, set: (p: any, i: any[] = []) => { pr = p; inline = i; }, down: (v: boolean) => { fail = v; } };
 }
 

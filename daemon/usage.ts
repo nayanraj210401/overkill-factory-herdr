@@ -106,7 +106,7 @@ const warned = new Set<string>();
 // ticket folder triage runs in), then its totals. Idempotent: rows are keyed by
 // message id, so a rescan updates rather than double counts.
 export function recordUsage(db: Database, log: (s: string) => void = () => {}) {
-  const rows = db.query(`SELECT id, worktree AS dir FROM tickets WHERE worktree IS NOT NULL
+  const rows = db.query(`SELECT id, worktree AS dir FROM ticket_lead WHERE worktree IS NOT NULL
     UNION SELECT DISTINCT ticket, cwd FROM sessions WHERE cwd IS NOT NULL`).all() as { id: number; dir: string }[];
   const tickets = [...Map.groupBy(rows, (r) => r.id)].map(([id, rs]) => ({ id, dirs: rs.map((r) => r.dir) }));
   const put = db.query(`INSERT INTO usage (message_id, ticket, session, at, model, input, cache_write_5m, cache_write_1h, cache_read, output, usd)
