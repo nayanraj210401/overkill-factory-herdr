@@ -16,6 +16,7 @@ import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { watchPrs } from "./watch.ts";
+import { judge } from "./comments.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
@@ -52,6 +53,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
   stage <id> <Name> [detail…] [--next A,B]  enter a stage (the current one ends)
   evidence <id> <check> pass|fail [detail…] record a check result
+  comment <id> C<n> fix|pushback|escalate <reason…>  the fix agent's verdict on a reviewer's comment
   verdict <id> holdout|review pass|fail [detail…] [--by voter]  a checker's or reviewer's verdict
   decide <ticket> <who> <what> [why] log a decision
   validate [dir] [--json]            check .factory/ files (default ./.factory)
@@ -163,6 +165,12 @@ export function main(argv: string[], log = console.log) {
         if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(Number(sub))) throw new Error(`no ticket ${sub}`);
         db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now());
       });
+    } else if (cmd === "comment") {
+      const [c = "", verdict = "", ...why] = rest;
+      const n = Number(c.replace(/^C/i, ""));
+      if (!Number.isInteger(Number(sub)) || !Number.isInteger(n) || n < 1) throw new Error("usage: factory comment <id> C<n> fix|pushback|escalate <reason…>");
+      change(db, () => judge(db, { ticket: Number(sub), n, verdict, reason: why.join(" "), now: now() }));
+      log(`#${sub}: C${n} ${verdict}`);
     } else if (cmd === "verdict") {
       const [kind, result, ...detail] = rest;
       const r = result?.toUpperCase();

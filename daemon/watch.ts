@@ -5,9 +5,8 @@
 // gh account, so your own comments (and the agent's replies) never trigger it; send
 // your own notes with `x`.
 import type { Database } from "bun:sqlite";
-import { finishPr, reviewBack, type Run } from "./runner.ts";
-
-type Comment = { author: string; body: string; at: string; where: string | null; url: string | null };
+import { finishPr, readFactory, reviewBack, type Run } from "./runner.ts";
+import { commentsNote, pushbackLimit, storeComments, type GhComment } from "./comments.ts";
 
 function ghJson(run: Run, argv: string[]) {
   const r = run(argv);
@@ -19,20 +18,13 @@ function ghJson(run: Run, argv: string[]) {
 export function prComments(run: Run, slug: string, pr: number) {
   const view = ghJson(run, ["gh", "pr", "view", String(pr), "--repo", slug, "--json", "state,comments,reviews"]);
   const inline = ghJson(run, ["gh", "api", `repos/${slug}/pulls/${pr}/comments`, "--paginate"]) as any[];
-  const comments: Comment[] = [
-    ...(view.comments ?? []).map((c: any) => ({ author: c.author?.login ?? "", body: c.body ?? "", at: c.createdAt, where: null, url: c.url ?? null })),
-    ...(view.reviews ?? []).filter((r: any) => r.body?.trim()).map((r: any) => ({ author: r.author?.login ?? "", body: r.body, at: r.submittedAt, where: r.state === "CHANGES_REQUESTED" ? "changes requested" : null, url: null })),
-    ...inline.map((c: any) => ({ author: c.user?.login ?? "", body: c.body ?? "", at: c.created_at, where: c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : null, url: c.html_url ?? null })),
+  // An inline reply's thread is its root comment; anything else is a thread of its own.
+  const comments: GhComment[] = [
+    ...(view.comments ?? []).map((c: any) => ({ ghId: `c${c.id}`, thread: `c${c.id}`, author: c.author?.login ?? "", body: c.body ?? "", at: c.createdAt, place: null, url: c.url ?? null })),
+    ...(view.reviews ?? []).filter((r: any) => r.body?.trim()).map((r: any) => ({ ghId: `r${r.id}`, thread: `r${r.id}`, author: r.author?.login ?? "", body: r.body, at: r.submittedAt, place: r.state === "CHANGES_REQUESTED" ? "changes requested" : null, url: null })),
+    ...inline.map((c: any) => ({ ghId: `i${c.id}`, thread: `i${c.in_reply_to_id ?? c.id}`, author: c.user?.login ?? "", body: c.body ?? "", at: c.created_at, place: c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : null, url: c.html_url ?? null })),
   ];
   return { state: view.state as "OPEN" | "MERGED" | "CLOSED", comments: comments.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) };
-}
-
-export function commentsNote(pr: number, cs: Comment[]) {
-  return [
-    `For each comment: fix it, or reply on the PR with your reasoning (gh pr comment ${pr}, or a reply on the line). Fix anything that is correct and required; push back only with a reason a reviewer can check. Say in PR.md what you changed.`,
-    "",
-    ...cs.map((c) => `- **@${c.author}**${c.where ? ` (${c.where})` : ""}: ${c.body.trim().replace(/\n/g, "\n  ")}`),
-  ].join("\n");
 }
 
 export function watchPrs(db: Database, o: { dir: string; repo: string; slug: string; me: string | null; run: Run; now: string; log?: (s: string) => void }) {
@@ -47,13 +39,16 @@ export function watchPrs(db: Database, o: { dir: string; repo: string; slug: str
           finishPr(db, { repo: o.repo, id: t.id, run: o.run, now: o.now, state: pr.state === "MERGED" ? "merged" : "closed", why: "on GitHub", who: "daemon" });
           return out.push({ id: t.id, event: pr.state.toLowerCase() });
         }
-        const since = Date.parse(t.pr_checked_at ?? "1970-01-01T00:00:00Z");
-        const fresh = pr.comments.filter((c) => Date.parse(c.at) > since && c.body.trim() && c.author.toLowerCase() !== (o.me ?? "").toLowerCase());
+        // New is "not stored yet", not "after the last check": the pr stage moves the check
+        // time when it updates the PR, and a comment made during the fix must still count.
+        const fresh = pr.comments.filter((c) => c.body.trim() && c.author.toLowerCase() !== (o.me ?? "").toLowerCase());
         db.query("UPDATE tickets SET pr_checked_at = ? WHERE id = ?").run(o.now, t.id);
-        if (!fresh.length) return;
-        reviewBack(db, { dir: o.dir, repo: o.repo, id: t.id, run: o.run, now: o.now, text: commentsNote(t.pr_number, fresh),
-          heading: `${fresh.length} review comment${fresh.length > 1 ? "s" : ""} on PR #${t.pr_number} · ${o.now.slice(0, 16).replace("T", " ")}` });
-        out.push({ id: t.id, event: `${fresh.length} comment${fresh.length > 1 ? "s" : ""}` });
+        const limit = pushbackLimit((readFactory(o.repo) as any).review);
+        const rows = storeComments(db, { ticket: t.id, pr: t.pr_number, comments: fresh, limit });
+        if (!rows.length) return;
+        reviewBack(db, { dir: o.dir, repo: o.repo, id: t.id, run: o.run, now: o.now, text: commentsNote({ ticket: t.id, pr: t.pr_number, rows, limit }),
+          heading: `${rows.length} review comment${rows.length > 1 ? "s" : ""} on PR #${t.pr_number} · ${o.now.slice(0, 16).replace("T", " ")}` });
+        out.push({ id: t.id, event: `${rows.length} comment${rows.length > 1 ? "s" : ""}` });
       })();
     } catch (e) {
       o.log?.(`factory: #${t.id}: watching PR #${t.pr_number}: ${(e as Error).message}`);
