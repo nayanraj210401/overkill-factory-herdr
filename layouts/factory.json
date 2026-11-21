@@ -154,10 +154,7 @@
               "id": "config",
               "type": "block",
               "content": {
-                "mod": "factory-soon",
-                "props": {
-                  "page": "config"
-                }
+                "mod": "factory-config"
               }
             },
             {
