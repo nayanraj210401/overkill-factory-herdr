@@ -163,3 +163,13 @@ test("a cross-repo ticket's cards: lead first, each with its branch, PR and plac
   assert.deepEqual(crossRepoCards(opened).map((c) => c.order), ["merges 2nd, after #88", "merged"]);
   assert.equal(crossRepoCards(status.tickets.find((t) => t.id === 418)), null);
 });
+
+test("a ticket's space and its worktree's space show their factory, not a factory named after the folder", async () => {
+  const { factoryOf } = await import("../lib/model.js");
+  const h = "/Users/me";
+  assert.equal(factoryOf(`${h}/.factory/factory-sandbox/tickets/1`, h), "factory-sandbox");
+  assert.equal(factoryOf(`${h}/.herdr/worktrees/factory-sandbox/factory-1-add-slugify`, h), "factory-sandbox");
+  assert.equal(factoryOf(`${h}/Project/factory-sandbox`, h), "factory-sandbox");
+  assert.equal(factoryOf(`${h}/Project/factory-sandbox/`, h), "factory-sandbox");
+  assert.equal(factoryOf(undefined, h), null);
+});
