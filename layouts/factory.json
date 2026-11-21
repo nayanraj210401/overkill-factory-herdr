@@ -125,10 +125,7 @@
               "id": "overwatch",
               "type": "block",
               "content": {
-                "mod": "factory-soon",
-                "props": {
-                  "page": "overwatch"
-                }
+                "mod": "factory-overwatch"
               }
             },
             {
