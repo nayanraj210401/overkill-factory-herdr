@@ -1,0 +1,61 @@
+import { View, div } from "gpui-kit";
+import { h_flex, v_flex, InputState, Input } from "gpui-base";
+import { theme, run, setShared } from "herdr";
+import { FILTERS, filterTickets, countBy, groupOf, subtitle } from "./lib/model.js";
+import { STACK } from "./lib/pages.js";
+import { status } from "./lib/store.js";
+
+const DOT = { needs: "blocked", running: "working", ready: "done", queue: "dim" };
+const COLS = [["Stage", 230], ["Blueprint", 100], ["Tokens in", 90], ["Cost", 70]];
+
+// The Tickets page: every ticket, chips by state, search (docs/layouts/03-tickets.png).
+export default class FactoryList extends View {
+  init(_props, cx) {
+    this.filter = "all";
+    this.query = "";
+    this.input = InputState.new({ placeholder: "Search tickets…" });
+    this.input.on("change", (_e, cx) => { this.query = this.input.value(); cx.notify(); });
+  }
+
+  render() {
+    const t = theme();
+    const s = status();
+    if (!s) return div().size_full().bg(t.background);
+    const counts = countBy(s.tickets);
+    const rows = filterTickets(s.tickets, this.filter, this.query);
+    const now = Date.now();
+    const chip = (f) => {
+      const on = f.id === this.filter;
+      return div().id(`f-${f.id}`).px(10).py(3).rounded(12).border(1).cursor_pointer().text_size(12)
+        .border_color(on ? t.accent : t.border).bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)
+        .on_click((_e, cx) => { this.filter = f.id; cx.notify(); })
+        .child(`${f.title} · ${counts[f.id]}`);
+    };
+    const cell = (w, text, color) => div().w(w).flex_none().truncate().text_color(color).child(text);
+    return v_flex().size_full().p(16).gap(10).bg(t.background).rounded(10).text_size(13)
+      .child(h_flex().gap(6).items_center()
+        .children(FILTERS.map(chip))
+        .child(div().flex_1())
+        .child(h_flex().w(220).h(28).px(8).rounded(6).border(1).border_color(t.input).bg(t.surface)
+          .child(Input.new(this.input).flex_1().h_full().text_size(12.5).text_color(t.foreground))))
+      .child(h_flex().px(8).pb(4).gap(8).border_b(1).border_color(t.border).text_size(11.5).text_color(t.dim)
+        .child(div().flex_1().child("Ticket"))
+        .children(COLS.map(([name, w]) => div().w(w).flex_none().child(name))))
+      .child(v_flex().id("rows").flex_1().overflow_y_scroll()
+        .children(rows.map((x) => {
+          const g = groupOf(x);
+          const done = x.state === "merged" || x.state === "closed";
+          return h_flex().id(`row-${x.id}`).h(34).px(8).gap(8).items_center().rounded(6).cursor_pointer()
+            .hover((st) => st.bg(t.hover))
+            .on_click(() => { setShared("factory.ticket", x.id); run("layout.select", { stack: STACK, child: "ticket" }); })
+            .child(h_flex().flex_1().gap(8).items_center()
+              .child(div().size(7).flex_none().rounded_full().bg(done ? t.done : t[DOT[g]]).opacity(done ? 0.5 : 1))
+              .child(div().truncate().text_color(done ? t.muted : t.foreground).child(`#${x.id} ${x.title}`)))
+            .child(cell(230, subtitle(x, now), g === "needs" ? t.blocked : x.where === "cloud" ? t.accent : t.muted))
+            .child(cell(100, x.blueprint, t.muted))
+            .child(cell(90, x.tokens.input ? `${(x.tokens.input / 1e6).toFixed(1)}M` : "–", t.muted))
+            .child(cell(70, x.usd ? `$${x.usd.toFixed(2)}` : "–", t.foreground));
+        }))
+        .when(!rows.length, (el) => el.child(div().p(12).text_color(t.dim).child("No tickets match."))));
+  }
+}

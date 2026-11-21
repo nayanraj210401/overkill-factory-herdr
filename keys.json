@@ -1,0 +1,57 @@
+{
+  "global": {
+    "cmd-shift-f": "layout.switch:factory"
+  },
+  "layout:factory": {
+    "cmd-shift-f": "layout.switch:main",
+    "cmd-1": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "home"
+      }
+    },
+    "cmd-2": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "tickets"
+      }
+    },
+    "cmd-3": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "reviews"
+      }
+    },
+    "cmd-4": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "overwatch"
+      }
+    },
+    "cmd-5": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "blueprint"
+      }
+    },
+    "cmd-6": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "metrics"
+      }
+    },
+    "cmd-7": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "config"
+      }
+    }
+  }
+}
