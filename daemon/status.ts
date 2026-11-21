@@ -44,7 +44,7 @@ export function buildStatus(db: Database, now = new Date()) {
       budget: { input: Number(getMeta(db, "budget_day_in") ?? 40e6), output: Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
     to_review: 0,
-    rules_failing: 0,
+    rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,
   };
 }

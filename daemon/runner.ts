@@ -5,6 +5,7 @@ import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
+import { openPr, readyRules, rulesPass } from "./ready.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -100,7 +101,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-type Factory = { quality_floor?: string[] };
+type Factory = { quality_floor?: string[]; ready?: string[] };
+const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
   return text ? (Bun.YAML.parse(text) as Factory) : {};
@@ -182,12 +184,33 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
       return { ready: true, stage: to };
     }
     if (!next.agent) {
-      // The pr stage opens the PR once the ready rules pass (D5); until then it waits here.
-      enterStage(db, o.id, title(to), next.requires ? `waits for ${next.requires} rules (D5)` : null, plannedPath(b, to).map(title), now);
+      enterStage(db, o.id, title(to), null, plannedPath(b, to).map(title), now);
+      if (next.requires === "ready") return tryPr(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
       return { waiting: true, stage: to };
     }
     const terminal = startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, blueprint: b, stage: to });
     return { terminal, stage: to };
   }
   throw new Error("blueprint loops without an agent or a gate");
+}
+
+// The pr stage: check the ready rules; when they all pass, open the PR and move on
+// to the next stage (merge, a human gate by default). Called on entry and every tick.
+export function tryPr(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string }) {
+  const run = o.run ?? sh;
+  const now = o.now ?? new Date().toISOString();
+  const t = db.query("SELECT * FROM tickets WHERE id = ?").get(o.id) as Record<string, any>;
+  const rules = readyRules(db, { id: o.id, dir: o.dir, worktree: t.worktree, rules: readFactory(o.repo).ready ?? DEFAULT_READY, run });
+  if (!rulesPass(rules)) {
+    const failing = rules.filter((r) => r.result === "fail");
+    const detail = `${rules.length - failing.length} of ${rules.length} ready rules · ${failing[0].rule}: ${failing[0].detail}`;
+    db.query("UPDATE stages SET detail = ? WHERE ticket = ? AND ended_at IS NULL").run(detail, o.id);
+    db.query("UPDATE tickets SET detail = ? WHERE id = ?").run(detail, o.id);
+    return { waiting: true, stage: t.stage, failing: failing.length };
+  }
+  const number = openPr(db, { id: o.id, dir: o.dir, worktree: t.worktree, branch: t.branch, rules, run });
+  db.query("UPDATE tickets SET pr_number = ?, pr_watched = 1, pr_checked_at = ? WHERE id = ?").run(number, now, o.id);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
+    .run(o.id, `opened PR #${number}`, rules.map((r) => `${r.rule} ${r.result}`).join(", "), now);
+  return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now }), pr: number };
 }

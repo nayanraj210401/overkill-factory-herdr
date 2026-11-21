@@ -3,7 +3,8 @@
 // `factory run`, the daemon. Every change is checked against the status.json
 // contract inside its transaction, so a bad write never lands.
 import { homedir } from "node:os";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readyRules } from "./ready.ts";
 import { basename, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
@@ -12,13 +13,14 @@ import { validateStatus } from "../lib/status.js";
 import { service } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
-import { advance, sh, startTicket } from "./runner.ts";
+import { advance, sh, startTicket, tryPr } from "./runner.ts";
 import { getMeta } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database (path: the repo checkout, default .)
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
+  ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket
   ticket add <id> <title…> [--blueprint b]
   ticket set <id> <field=value>…     fields: ${"FIELDS"}
@@ -141,6 +143,14 @@ export function main(argv: string[], log = console.log) {
       let r: any = null;
       change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
       log(`#${sub}: ${r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
+    } else if (cmd === "ready") {
+      const t = db.query("SELECT worktree FROM tickets WHERE id = ?").get(Number(sub)) as any;
+      if (!t?.worktree) throw new Error(`#${sub} has no worktree yet; factory start ${sub}`);
+      const repoDir = getMeta(db, "repo_path")!;
+      const text = readFileSync(join(repoDir, ".factory/factory.yaml"), "utf8");
+      const rules = readyRules(db, { id: Number(sub), dir: p.dir, worktree: t.worktree, rules: (Bun.YAML.parse(text) as any).ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], run: sh });
+      for (const r of rules) log(`${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`);
+      return;
     } else if (cmd === "sessions") {
       for (const r of db.query("SELECT * FROM sessions WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open"}  ${JSON.parse(r.argv)[0]}`);
@@ -173,6 +183,16 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   const repoDir = getMeta(db, "repo_path");
   if (!repoDir) return;
   const open_ = db.query("SELECT ticket, terminal FROM sessions WHERE ended_at IS NULL AND terminal IS NOT NULL").all() as { ticket: number; terminal: string }[];
+  // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
+  for (const { id } of db.query("SELECT id FROM tickets WHERE state = 'running' AND stage = 'pr'").all() as { id: number }[]) {
+    try {
+      let r: any;
+      change(db, () => { r = tryPr(db, { dir: p.dir, repo: repoDir, id, run }); });
+      if (r.pr) log(`factory: #${id} opened PR #${r.pr}`);
+    } catch (e) {
+      log(`factory: #${id}: ${(e as Error).message}`);
+    }
+  }
   for (const s of open_) {
     const r = run(["hc", "get", s.terminal, "--json"]);
     let gone = r.code !== 0;
