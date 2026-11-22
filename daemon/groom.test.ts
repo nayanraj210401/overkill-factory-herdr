@@ -8,6 +8,11 @@ import { ask, askMidRun, parseAnswers, pick, questionsComment, readIssueAnswers,
 import { recordUsage, transcriptDir } from "./usage.ts";
 
 const now = "2026-11-21T10:00:00Z";
+// A fake triager that finishes: its last step is GROOMING.md in the folder it runs in.
+const triaged = (argv: string[]) => {
+  if (argv.includes("factory.stage=groom") && argv.includes("--cwd")) writeFileSync(join(argv[argv.indexOf("--cwd") + 1], "GROOMING.md"), "groomed\n");
+};
+
 function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
@@ -23,7 +28,7 @@ function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   let comments: object[] = [];
   let n = 0;
   const run: Run = (argv, cwd) => {
-    if (argv[0] === "hc") return hc.push(argv), { code: 0, out: `{"address":"t${++n}"}` };
+    if (argv[0] === "hc") return triaged(argv), hc.push(argv), { code: 0, out: `{"address":"t${++n}"}` };
     if (argv[0] !== "gh") return sh(argv, cwd);
     gh.push(argv);
     if (argv.includes("author")) return { code: 0, out: "pat-po" };
@@ -211,3 +216,18 @@ test("an agent's mid-run product question parks the ticket, goes on the issue, a
   expect(gates).toContain("**Your answer:** Per user");
 });
 
+
+test("triage that stops before GROOMING.md (killed, crashed) parks the ticket instead of starting it, and isn't retried on its own", () => {
+  const { db, dir, repo, add, ticket } = setup();
+  add(412);
+  const hc: string[][] = [];
+  const quiet: Run = (argv, cwd) => (argv[0] === "hc" ? (hc.push(argv), { code: 0, out: '{"address":"t1"}' }) : sh(argv, cwd)); // never writes GROOMING.md
+  startGrooming(db, { dir, repo, id: 412, run: quiet, now });
+  advance(db, { dir, repo, id: 412, run: quiet, now }); // its terminal exited
+  expect(ticket().state).toBe("grooming");
+  expect(ticket().needs_kind).toBe("parked");
+  expect(ticket().needs_text).toContain("factory groom 412");
+  expect(startPendingGrooming(db, { dir, repo, run: quiet, now })).toEqual([]); // no loop
+  expect(startGrooming(db, { dir, repo, id: 412, run: quiet, now })).toBe("t1"); // `factory groom` reruns it
+  expect(ticket().needs_kind).toBe(null);
+});
