@@ -146,7 +146,7 @@ test("a failed move for sleep is logged on the ticket and the ticket isn't on th
   add(3);
   const r = onSleep(db, ctx())!;
   expect(r.failed).toHaveLength(1);
-  expect(decisions(3)[0]).toMatchObject({ who: "daemon", what: "couldn't move to the cloud for sleep" });
+  expect(decisions(3)[0]).toMatchObject({ who: "daemon", what: "couldn't move to the cloud for sleep; the agent keeps running here" });
   expect(readState(db).moved).toEqual([]);
 });
 
