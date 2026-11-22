@@ -51,7 +51,7 @@ import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retir
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
-import { advance, answer, checkReady, readFactory, mergeTicket, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, answer, autoMerge, checkReady, readFactory, mergeOnGithub, recordMerge, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { publishFailed, recordArtifact } from "./artifacts.ts";
 import { migrateFlowStack } from "./migrate.ts";
 import { claudeConfig, MIGRATION_META, MIGRATION_REQUEST, migrationRequest, realProbe, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
@@ -595,7 +595,9 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     } else if (cmd === "merge") {
       const repoDir = needLead(db).path;
       let r: any = null;
-      change(db, () => { r = mergeTicket(db, { repo: repoDir, id: Number(sub), dir: p.dir }); });
+      // gh runs outside the transaction (#110); the record of it is the short one.
+      const gh = mergeOnGithub(db, { repo: repoDir, id: Number(sub), dir: p.dir });
+      change(db, () => { r = recordMerge(db, { repo: repoDir, id: Number(sub), r: gh }); });
       let merged = { vacuum: false };
       change(db, () => { merged = applyMerged(db, { dir: p.dir, now: now(), run: sh, log }); });
       if (merged.vacuum) db.exec("VACUUM"); // a merged cleanup's; never inside a transaction
@@ -936,6 +938,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   } catch (e) {
     log(`factory: starting triage: ${(e as Error).message}`);
   }
+  // A ready ticket whose last gate is auto merges itself (the same code `m` runs), if its safety holds.
+  try { autoMerge(db, { dir: p.dir, repo: repoDir, run, commit: (fn) => change(db, fn), log }); }
+  catch (e) { log(`factory: auto merge: ${(e as Error).message}`); }
   // A merged request's changes outside its repo apply (the account config, factory agents, a
   // cleanup); an override that held files its request.
   try {

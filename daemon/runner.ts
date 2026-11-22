@@ -10,7 +10,7 @@ import { closesIssue, openPr, prBody, prText, readyRules, rulesPass, VERDICT_OF_
 import { closeSpace, openAgent, openTab, toolPath, withFactory, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
-import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
+import { getMeta, mergeOrder, repoOf, setMeta, setWork, ticketRepos } from "./db.ts";
 import { budgetCap, forbiddenTouched } from "./away.ts";
 import { STOPS, guardSettings, hardStopLog, takeHardStop } from "./guard.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
@@ -486,6 +486,18 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
       db.query("UPDATE tickets SET state = 'ready', updated_at = ? WHERE id = ?").run(now, o.id);
       return { ready: true, stage: to };
     }
+    // gate: auto passes on its own once the work and the rules got here. The last gate (merge)
+    // is the ready ticket the daemon's auto merge picks up, each tick, while its safety holds.
+    if (next.gate === "auto" && !next.agent) {
+      if (isLastGate(next)) {
+        enterStage(db, o.id, title(to), "merges itself (gate: auto)", plannedPath(b, to).map(title), now);
+        db.query("UPDATE tickets SET state = 'ready', updated_at = ? WHERE id = ?").run(now, o.id);
+        return { ready: true, stage: to };
+      }
+      enterStage(db, o.id, title(to), null, plannedPath(b, to).map(title), now);
+      at = to;
+      continue;
+    }
     if (!next.agent) {
       enterStage(db, o.id, title(to), null, plannedPath(b, to).map(title), now);
       if (next.requires === "ready") return tryPr(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
@@ -574,24 +586,24 @@ function linkPrs(db: Database, o: { dir: string; id: number }, prs: { repo: stri
 // `m` on a ready ticket: the human merge gate. A PR left as a draft (opened before PRs
 // opened ready for review) is marked ready first, as gh refuses to merge a draft, then merged on GitHub the way
 // factory.yaml's merge_method says (squash unless it names merge or rebase).
-export function mergeTicket(db: Database, o: { repo: string; id: number; run?: Run; now?: string; dir?: string }) {
+// Two halves, so a caller can keep the gh calls (seconds long) out of a database transaction
+// (#110): mergeOnGithub only reads the database, recordMerge writes what happened.
+export type GithubMerge = { outside: true } | { outside?: false; pr: number; method: string; merged: { repo: string; pr: number; slug: string }[]; failed?: string; count: number };
+
+export function mergeOnGithub(db: Database, o: { repo: string; id: number; run?: Run; dir?: string }): GithubMerge {
   const run = o.run ?? sh;
-  const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT state, pr_number, blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; pr_number: number | null; blueprint: string } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   // A request with no PR (the account config, factory agents, a cleanup): your `m` is the
   // gate; the caller applies the change (applyMerged in maintainer.ts).
-  if (t.state === "ready" && t.pr_number == null && t.blueprint === FACTORY_BLUEPRINT && o.dir && outsidePending(o.dir, o.id)) {
-    finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: "a change outside the repo" });
-    return { pr: null, merged: [] as string[] };
-  }
+  if (t.state === "ready" && t.pr_number == null && t.blueprint === FACTORY_BLUEPRINT && o.dir && outsidePending(o.dir, o.id)) return { outside: true };
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready ticket's PR merges`);
   const method = readFactory(o.repo).merge_method ?? "squash";
   // Every repo's PR, in merge order; it stops at the first that fails. The ones merged
   // stay merged (GitHub can't take them back), so `m` again goes on from the failure.
   const repos = ticketRepos(db, o.id);
   if (repos.some((r) => r.pr_number == null)) throw new Error(`#${o.id} has no PR in ${repos.filter((r) => r.pr_number == null).map((r) => r.repo).join(", ")}`);
-  const merged: string[] = [];
+  const merged: { repo: string; pr: number; slug: string }[] = [];
   for (const r of mergeOrder(repos).filter((x) => !x.merged_at)) {
     const pr = String(r.pr_number);
     for (const argv of [["gh", "pr", "ready", pr], ["gh", "pr", "merge", pr, `--${method}`]]) {
@@ -600,15 +612,94 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
       if (g.code !== 0 && !(argv[2] === "ready" && /already .*ready/i.test(g.out))) {
         const failed = `${argv.slice(0, 3).join(" ")} failed${repos.length > 1 ? ` in ${r.repo}` : ""}: ${g.out}`;
         if (!merged.length) throw new Error(failed);
-        db.query("UPDATE tickets SET detail = ?, updated_at = ? WHERE id = ?").run(`merged ${merged.join(", ")}; ${failed}`, now, o.id);
-        return { pr: t.pr_number, merged, failed };
+        return { pr: t.pr_number, method, merged, failed, count: repos.length };
       }
     }
-    setWork(db, o.id, { merged_at: now }, r.repo);
-    merged.push(`${r.repo}#${r.pr_number}`);
+    merged.push({ repo: r.repo, pr: r.pr_number!, slug: `${r.repo}#${r.pr_number}` });
   }
-  finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: method });
-  return { pr: t.pr_number, merged };
+  return { pr: t.pr_number, method, merged, count: repos.length };
+}
+
+export function recordMerge(db: Database, o: { repo: string; id: number; r: GithubMerge; run?: Run; now?: string; who?: string; note?: string }) {
+  const run = o.run ?? sh;
+  const now = o.now ?? new Date().toISOString();
+  const note = o.note ? `; ${o.note}` : "";
+  if (o.r.outside) {
+    finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: `a change outside the repo${note}`, who: o.who });
+    return { pr: null, merged: [] as string[] };
+  }
+  for (const m of o.r.merged) setWork(db, o.id, { merged_at: now }, m.repo);
+  const merged = o.r.merged.map((m) => m.slug);
+  if (o.r.failed) {
+    db.query("UPDATE tickets SET detail = ?, updated_at = ? WHERE id = ?").run(`merged ${merged.join(", ")}; ${o.r.failed}`, now, o.id);
+    return { pr: o.r.pr, merged, failed: o.r.failed };
+  }
+  finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: `${o.r.method}${note}`, who: o.who });
+  return { pr: o.r.pr, merged };
+}
+
+export function mergeTicket(db: Database, o: { repo: string; id: number; run?: Run; now?: string; dir?: string }) {
+  return recordMerge(db, { ...o, r: mergeOnGithub(db, o) });
+}
+
+// The last gate of a blueprint (nothing but `end` after it): merge, in the shipped ones.
+export const isLastGate = (s: { next?: string[] }) => (s.next ?? []).every((n) => n === "end");
+
+// Why a ready ticket at a gate: auto must not merge itself now, or null when it may. Cheap:
+// database reads and `git log`, so the daemon asks every attempt.
+export function autoBlock(db: Database, o: { dir: string; repo: string; id: number; run: Run }): string | null {
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
+  let rules: ReturnType<typeof checkReady>;
+  try { rules = checkReady(db, o); } catch (e) { return (e as Error).message; }
+  const failing = rules.find((r) => r.result === "fail");
+  if (failing) return `ready rule ${failing.rule} fails: ${failing.detail}`;
+  if (db.query("SELECT 1 FROM review_rounds WHERE ticket = ? AND closed_at IS NULL").get(o.id)) return "a review round is open";
+  const use = budgetUse(t as any, budgetCap(db, o.repo));
+  if (use.frac >= 1) return `over budget (${use.text})`;
+  const open = db.query("SELECT n, verdict FROM comments WHERE ticket = ? AND (verdict IS NULL OR verdict = 'escalate') ORDER BY n").all(o.id) as { n: number; verdict: string | null }[];
+  if (open.length) return `unresolved review comments: ${open.map((c) => `C${c.n}${c.verdict ? " (escalated)" : ""}`).join(", ")}`;
+  return null;
+}
+
+// Every tick: ready tickets whose last gate is `auto` merge themselves, by the code `m` uses.
+// The gh calls run outside any transaction; `commit` is the short one that records the result
+// (change() in the daemon). A ticket that may not merge says why in its detail and waits for you:
+// `m` still works. A failing gh is tried again after a minute.
+export function autoMerge(db: Database, o: { dir: string; repo: string; run?: Run; now?: string; commit: (fn: () => void) => void; log?: (s: string) => void }) {
+  const run = o.run ?? sh;
+  const now = o.now ?? new Date().toISOString();
+  const done: number[] = [];
+  const ready = db.query("SELECT id, stage, blueprint, detail FROM ticket_lead WHERE state = 'ready' AND location != 'cloud'").all() as { id: number; stage: string; blueprint: string; detail: string | null }[];
+  for (const t of ready) {
+    let gate: BlueprintStage | undefined;
+    try { gate = Object.entries(loadBlueprint(o.repo, t.blueprint).stages).find(([k]) => k.toLowerCase() === t.stage)?.[1] as BlueprintStage | undefined; } catch { continue; }
+    if (!gate || gate.gate !== "auto" || gate.agent || !isLastGate(gate)) continue;
+    const key = `auto_merge_at:${t.id}`;
+    const last = getMeta(db, key);
+    if (last && Date.parse(now) - Date.parse(last) < 60_000) continue;
+    setMeta(db, key, now);
+    const say = (detail: string) => {
+      if (t.detail === detail) return;
+      o.commit(() => { db.query("UPDATE tickets SET detail = ?, updated_at = ? WHERE id = ?").run(detail, now, t.id); });
+      o.log?.(`factory: #${t.id}: ${detail}`);
+    };
+    const why = autoBlock(db, { dir: o.dir, repo: o.repo, id: t.id, run });
+    if (why) { say(`auto merge waits for you: ${why}`); continue; }
+    let r: GithubMerge;
+    try { r = mergeOnGithub(db, { repo: o.repo, id: t.id, run, dir: o.dir }); }
+    catch (e) { say(`auto merge failed: ${(e as Error).message}`); continue; }
+    const note = "merged automatically (gate: auto)";
+    o.commit(() => {
+      const row = db.query("SELECT state FROM tickets WHERE id = ?").get(t.id) as { state: string } | null;
+      if (row?.state !== "ready") return; // merged on GitHub, or sent back, while gh ran
+      const res = recordMerge(db, { repo: o.repo, id: t.id, r, run, now, who: "daemon", note });
+      if (!res.failed) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)").run(t.id, note, res.merged.join(", ") || "a change outside the repo", now);
+    });
+    const failed = r.outside ? undefined : r.failed;
+    o.log?.(failed ? `factory: #${t.id}: merged ${r.outside ? "" : r.merged.map((m) => m.slug).join(", ")}, then stopped: ${failed}` : `factory: #${t.id}: ${note}`);
+    if (!failed) done.push(t.id);
+  }
+  return done;
 }
 
 // `factory merge-order <id> a/b c/d`: the plan's (or your) merge order, every repo once.
