@@ -36,7 +36,7 @@ test("⇧C commits the work with a handoff pack, pushes, and starts claude --clo
   const r = toCloud(db, { dir, repo, id: 7, run, now: "2026-11-21T11:00:00Z" });
   expect(r).toMatchObject({ stage: "spec" });
   expect(calls.find((c) => c[1] === "kill")).toEqual(["hc", "kill", "t1"]); // the local agent stopped
-  const launched = calls.at(-1)!;
+  const launched = calls.find((c) => c.includes("--cloud"))!;
   expect(launched.slice(launched.indexOf("claude"))).toEqual(["claude", "--cloud", "Continue the work described in .factory-run/7/CLOUD.md on branch factory/7-rate-limit-login.", "-n", "factory #7 Rate-limit login"]);
   expect(ticket()).toMatchObject({ state: "running", location: "cloud", detail: "in a cloud session" });
   // On the pushed branch: the work, the pack, the ticket's files.
@@ -86,4 +86,62 @@ test("questions from the cloud park the ticket; below the agreement bar, the pac
   const off = setup('name: t\nready: [evidence]\naway: { min_agreement: 0 }\n');
   toCloud(off.db, { dir: off.dir, repo: off.repo, id: 7, run: off.run, now: "x" });
   expect(pack(off)).not.toContain("push back");
+});
+
+// A run that fails git push while `down` is set, and records the order of pushes and kills.
+function flaky() {
+  const s = setup();
+  const log: string[] = [];
+  let down = true;
+  const inner = s.run;
+  const run: Run = (argv, cwd) => {
+    if (argv.includes("push")) { log.push("push"); if (down) return { code: 1, out: "could not resolve host" }; }
+    if (argv[0] === "hc" && argv[1] === "kill") log.push("kill");
+    return inner(argv, cwd);
+  };
+  return { ...s, run, log, up: () => { down = false; } };
+}
+
+test("a failed push leaves the local agent running, the ticket local, and says why", () => {
+  const { db, dir, repo, run, calls, ticket, log } = flaky();
+  writeFileSync(join(ticket().worktree, "limit.ts"), "export const MAX = 5;\n");
+  expect(() => toCloud(db, { dir, repo, id: 7, run, now: "2026-11-21T11:00:00Z" })).toThrow("git push");
+  expect(calls.some((c) => c[1] === "kill")).toBe(false);
+  expect(log).toEqual(["push"]);
+  expect(ticket()).toMatchObject({ state: "running", location: "local" });
+  expect(db.query("SELECT COUNT(*) AS n FROM sessions WHERE ticket = 7 AND ended_at IS NULL AND stage != 'cloud'").get()).toEqual({ n: 1 });
+  expect(db.query("SELECT COUNT(*) AS n FROM sessions WHERE stage = 'cloud'").get()).toEqual({ n: 0 });
+});
+
+test("the local agent is stopped only after the push, and a retry after a failure works without a second WIP commit", () => {
+  const { db, dir, repo, origin, run, ticket, log, up } = flaky();
+  const wt = ticket().worktree;
+  writeFileSync(join(wt, "limit.ts"), "export const MAX = 5;\n");
+  expect(() => toCloud(db, { dir, repo, id: 7, run, now: "2026-11-21T11:00:00Z" })).toThrow();
+  up();
+  log.length = 0;
+  expect(toCloud(db, { dir, repo, id: 7, run, now: "2026-11-21T11:05:00Z" })).toMatchObject({ stage: "spec" });
+  expect(log).toEqual(["push", "kill"]);
+  expect(ticket()).toMatchObject({ location: "cloud" });
+  const subjects = sh(["git", "--git-dir", origin, "log", "--format=%s", "factory/7-rate-limit-login"]).out.split("\n");
+  expect(subjects.filter((x) => x.startsWith("factory: hand #7"))).toHaveLength(1);
+});
+
+test("a failed fast-forward on the way back keeps the cloud session and RESULT.md, and a retry works", () => {
+  const { db, dir, repo, origin, run, ticket, calls } = setup();
+  toCloud(db, { dir, repo, id: 7, run, now: "2026-11-21T11:00:00Z" });
+  const cloud = mkdtempSync(join(tmpdir(), "cloud-"));
+  sh(["git", "clone", "-q", "-b", "factory/7-rate-limit-login", origin, cloud]);
+  writeFileSync(join(cloud, ".factory-run/7/RESULT.md"), "Stage: implement\n\n## Evidence\n- PASS npm test: ok\n\n## Questions\n");
+  for (const c of [["add", "-A"], ["-c", "user.email=c@c", "-c", "user.name=c", "commit", "-q", "-m", "cloud work"], ["push", "-q"]]) sh(["git", "-C", cloud, ...c]);
+  let breakCommit = true;
+  const bad: Run = (argv, cwd) => (breakCommit && argv.includes("commit") ? { code: 1, out: "boom" } : run(argv, cwd));
+  const kills = calls.filter((c) => c[1] === "kill").length;
+  expect(() => toLocal(db, { dir, repo, id: 7, run: bad, now: "2026-11-21T12:00:00Z" })).toThrow("git commit");
+  expect(calls.filter((c) => c[1] === "kill")).toHaveLength(kills);
+  expect(ticket().location).toBe("cloud");
+  expect(existsSync(join(ticket().worktree, ".factory-run/7/RESULT.md"))).toBe(true);
+  breakCommit = false;
+  expect(toLocal(db, { dir, repo, id: 7, run, now: "2026-11-21T12:05:00Z" })).toMatchObject({ stage: "implement" });
+  expect(ticket().location).toBe("local");
 });

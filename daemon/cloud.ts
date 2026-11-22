@@ -99,10 +99,6 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   const b = loadBlueprint(o.repo, t.blueprint);
   const stage = t.stage as string;
   const repos = ticketRepos(db, o.id);
-  // The local agent stops first, so it can't write after the snapshot.
-  const open = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
-  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
-  for (const s of open) o.run(["hc", "kill", s.terminal]);
   // The pack: HANDOFF.md and copies of the ticket's files, inside the worktree.
   const pack = join(t.worktree, runDir(o.id));
   mkdirSync(pack, { recursive: true });
@@ -115,14 +111,28 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
     ready: f.ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], floor: f.quality_floor ?? [], hardStops: f.hard_stops ?? [...STOPS], files,
     others: repos.slice(1).map((r) => r.repo), noPushbacks: gate.ok ? null : gate.why,
   }));
-  // Every repo's work in progress goes up on its branch; the pack rides in the lead's.
-  for (const r of repos) {
-    git(o.run, r.worktree!, ["add", "-A"], `git add in ${r.repo}`);
-    git(o.run, r.worktree!, ["commit", "-q", "--allow-empty", "-m", `factory: hand #${o.id} to a cloud session at ${stage}`], `git commit in ${r.repo}`);
-    git(o.run, r.worktree!, ["push", "-u", "origin", r.branch!], `git push in ${r.repo}`);
-  }
+  // Every repo's work in progress goes up on its branch while the local agent is still alive; the pack
+  // rides in the lead's. A retry commits nothing new when nothing changed, so it never duplicates the commit.
+  const snapshot = () => {
+    for (const r of repos) {
+      git(o.run, r.worktree!, ["add", "-A"], `git add in ${r.repo}`);
+      if (o.run(["git", "-C", r.worktree!, "diff", "--cached", "--quiet"]).code !== 0)
+        git(o.run, r.worktree!, ["commit", "-q", "-m", `factory: hand #${o.id} to a cloud session at ${stage}`], `git commit in ${r.repo}`);
+      git(o.run, r.worktree!, ["push", "-u", "origin", r.branch!], `git push in ${r.repo}`);
+    }
+  };
+  const dirty = () => repos.some((r) => o.run(["git", "-C", r.worktree!, "status", "--porcelain"]).out.trim() !== "");
+  snapshot();
+  // The agent may have written while the push ran; snapshot again until the tree is quiet.
+  for (let i = 0; i < 3 && dirty(); i++) snapshot();
   const argv = ["claude", "--cloud", `Continue the work described in ${runDir(o.id)}/CLOUD.md on branch ${t.branch}.`, "-n", `factory #${o.id} ${t.title}`.slice(0, 60)];
-  const l = launch(o.run, t, argv);
+  const l = launch(o.run, t, argv); // throws with the local agent still running and the ticket still local
+  // Safe now: the work is pushed and the cloud session started. Stop the local agent.
+  const open = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
+  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  for (const s of open) o.run(["hc", "kill", s.terminal]);
+  // Anything written in the last instant stays in the worktree and the local branch; push it best-effort.
+  try { if (dirty()) snapshot(); } catch {}
   db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, 'cloud', 'cloud', ?, ?, ?, ?, ?)")
     .run(o.id, l.terminal, JSON.stringify(argv), o.now, l.inSpace, t.worktree);
   db.query("UPDATE tickets SET location = 'cloud', space = ?, detail = 'in a cloud session', updated_at = ? WHERE id = ?").run(l.space, o.now, o.id);
@@ -131,6 +141,12 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
     .run(o.id, o.reason ? "daemon" : "you", `moved to the cloud at ${stage}`, o.reason ?? t.branch, o.now);
   return { terminal: l.terminal, stage };
 }
+
+// A move that failed leaves the ticket local with its agent running; say why on the ticket.
+// Written outside the move's transaction, which a failure rolls back.
+export const noteCloudFailure = (db: Database, id: number, why: string, now: string, reason?: string) =>
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
+    .run(id, `couldn't move to the cloud${reason ? ` for ${reason}` : ""}; the agent keeps running here`, why.slice(0, 300), now);
 
 // RESULT.md, as CLOUD.md asks for it.
 export function parseResult(md: string) {
@@ -161,11 +177,13 @@ export function toLocal(db: Database, o: { dir: string; repo: string; id: number
   writeFileSync(join(folder, "HANDOFF.md"), result ?? `# Back from the cloud\n\nThe cloud session wrote no RESULT.md. Read the branch's commits since "factory: hand #${o.id} to a cloud session".\n`);
   if (existsSync(join(pack, "PR.md"))) copyFileSync(join(pack, "PR.md"), join(folder, "PR.md"));
   for (const e of r.evidence) db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(o.id, e.check, e.result, `${e.detail} (cloud)`, o.now);
-  // The pack leaves the branch, so it isn't in the PR.
-  rmSync(join(t.worktree, ".factory-run"), { recursive: true, force: true });
-  git(o.run, t.worktree, ["add", "-A"], "git add");
+  // The pack leaves the branch, so it isn't in the PR. It is deleted from disk only after the commit
+  // succeeds, so a failed attempt can be retried with RESULT.md still there.
+  git(o.run, t.worktree, ["add", "-A", "--", ".", ":!.factory-run"], "git add");
+  o.run(["git", "-C", t.worktree, "rm", "-rq", "--cached", "--ignore-unmatch", ".factory-run"]);
   if (o.run(["git", "-C", t.worktree, "diff", "--cached", "--quiet"]).code !== 0)
     git(o.run, t.worktree, ["commit", "-q", "-m", `factory: #${o.id} back from the cloud`], "git commit");
+  rmSync(join(t.worktree, ".factory-run"), { recursive: true, force: true });
   const cloud = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND stage = 'cloud' AND ended_at IS NULL").all(o.id) as { terminal: string }[];
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
   for (const s of cloud) o.run(["hc", "kill", s.terminal]);

@@ -27,7 +27,7 @@ import { disagreements, examples, label, pushbackGate, runAgreement } from "./ag
 import { importRoutine, LOG_BRANCH, routineDue, routineSteps, writeRoutine } from "./routine.ts";
 import { isAway, setAway } from "./away.ts";
 import { startHold } from "./budget.ts";
-import { toCloud, toLocal } from "./cloud.ts";
+import { noteCloudFailure, toCloud, toLocal } from "./cloud.ts";
 import { bringAll, cloudPolicy, moveAll, noteGap, onSleep, onWake, wakeTick } from "./sleep.ts";
 import { powerWatcher } from "./power.ts";
 import { sessionState } from "./herdr.ts";
@@ -492,7 +492,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const id = Number(sub);
       if (!Number.isInteger(id)) throw new Error(`usage: factory ${cmd} <id>|all`);
       let r: any = null;
-      change(db, () => { r = (cmd === "cloud" ? toCloud : toLocal)(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); });
+      try { change(db, () => { r = (cmd === "cloud" ? toCloud : toLocal)(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); }); }
+      catch (e) { if (cmd === "cloud") change(db, () => noteCloudFailure(db, id, (e as Error).message, now())); throw e; }
       log(cmd === "cloud" ? `#${id}: in a cloud session from ${r.stage}; claude --cloud runs in ${r.terminal}`
         : `#${id}: back${r.parked ? ", parked on the cloud's questions" : ` at ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`}`);
       writeTicketFiles(db, p.dir, id);
