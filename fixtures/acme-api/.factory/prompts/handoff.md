@@ -8,6 +8,10 @@ You are session {{session}} of #{{ticket.id}}. The one before it {{previous}}. Y
 
 {{handoff}}
 
+## Before it ran out of room (its PreCompact snapshot)
+
+{{snapshot}}
+
 ## The current slice (SLICES.md)
 
 {{slice}}

@@ -41,6 +41,7 @@ import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBench
 import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { migrateFlowStack } from "./migrate.ts";
 import { claudeConfig, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
+import { decideSplit, followSplits, pendingParts, proposePart } from "./split.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -57,6 +58,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   send-back <id> <note…>             a ready PR goes back to its fix stage with your note (REVIEW.md)
   answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one)
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
+  split <id> add <title…> [--scope text] [--keeps-work]  propose one part of a ticket that is really several, in order
+  split <id> [approve|reject]        list a ticket's proposed parts / make them sub-issues / go on as one ticket
   block <id> <#n>                    report that a ticket waits on issue #n (it resumes when #n closes or merges)
   drop <id>                          remove a ticket's worktrees and close it; the branch and notes stay (keep = resume)
   diff <id>                          what the ticket changed, against the repo's branch
@@ -166,12 +169,14 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const by = flag(args, "by");
   const why = flag(args, "why");
   const source = flag(args, "source");
+  const scope = flag(args, "scope");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
   const start = args.includes("--start");
   const dryRun = args.includes("--dry-run");
-  const [cmd, sub, ...rest] = args.filter((a) => a !== "--all" && a !== "--json" && a !== "--start" && a !== "--dry-run");
+  const keepsWork = args.includes("--keeps-work");
+  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work"].includes(a));
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0], login: loginFlag ?? undefined });
@@ -360,7 +365,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let r: any = null;
       const open = db.query("SELECT id, terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(Number(sub)) as { id: number; terminal: string }[];
       change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
-      log(`#${sub}: ${r.questions ? `groomed, waiting on ${r.questions} answer${r.questions > 1 ? "s" : ""}` : r.groomed ? `groomed${r.started ? " and started" : ", queued"}` : r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
+      log(`#${sub}: ${r.split === "asked" ? "a split is proposed; it waits for you (factory split approve|reject)" : r.split ? `split into ${r.children.map((c: number) => `#${c}`).join(", ")}` : r.questions ? `groomed, waiting on ${r.questions} answer${r.questions > 1 ? "s" : ""}` : r.groomed ? `groomed${r.started ? " and started" : ", queued"}` : r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
       // The agent that said it's done is closed a few seconds later (it's usually the one
       // running this command, so it sees the result first). Its transcript stays in Runs.
       const ended = open.filter((s) => (db.query("SELECT ended_at FROM sessions WHERE id = ?").get(s.id) as { ended_at: string | null }).ended_at);
@@ -385,7 +390,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         r = cmd === "answer" ? answer(db, { dir: p.dir, repo: repoDir, id: Number(sub), text })
           : sendBack(db, { dir: p.dir, repo: repoDir, id: Number(sub), note: text });
       });
-      log(r.answered ? `#${sub}: answered ${r.answered.map((n: number) => `Q${n}`).join(", ")}; ${r.left ? `${r.left} open` : r.started ? "groomed and started" : "groomed, queued"}`
+      log(r.children ? `#${sub}: split into ${r.children.map((c: number) => `#${c}`).join(", ")}` : r.rejected ? `#${sub}: kept as one ticket` : r.answered ? `#${sub}: answered ${r.answered.map((n: number) => `Q${n}`).join(", ")}; ${r.left ? `${r.left} open` : r.started ? "groomed and started" : "groomed, queued"}`
         : `#${sub}: back to ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
     } else if (cmd === "diff") {
       const repoDir = needLead(db).path;
@@ -394,6 +399,25 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let r: any = null;
       change(db, () => { r = pause(db, { id: Number(sub) }); });
       log(`#${sub}: paused at ${r.stage}${r.killed.length ? `; stopped ${r.killed.join(", ")}` : ""}`);
+    } else if (cmd === "split") {
+      const id = Number(sub);
+      const [what, ...words] = rest;
+      if (!Number.isInteger(id)) throw new Error("usage: factory split <id> add <title…> [--scope text] [--keeps-work] | approve | reject");
+      if (what === "add") {
+        let n = 0;
+        change(db, () => { n = proposePart(db, { id, title: words.join(" "), scope, keepsWork, now: now() }); });
+        log(`#${id}: part ${n} proposed; it's decided when the stage ends`);
+      } else if (what === "approve" || what === "reject") {
+        let r: any = null;
+        change(db, () => { r = decideSplit(db, { dir: p.dir, repo: needLead(db).path, id, approve: what === "approve", run: sh, now: now() }); });
+        log(r.children ? `#${id}: split into ${r.children.map((c: number) => `#${c}`).join(", ")}` : `#${id}: kept as one ticket`);
+        for (const c of r.children ?? []) writeTicketFiles(db, p.dir, c);
+      } else if (!what) {
+        const parts = pendingParts(db, id);
+        for (const x of parts) log(`${x.n}. ${x.title}${x.scope ? ` — ${x.scope}` : ""}${x.keeps_work ? " (keeps the work)" : ""}`);
+        if (!parts.length) log(`#${id}: no split proposed`);
+        return;
+      } else throw new Error("usage: factory split <id> add <title…> [--scope text] [--keeps-work] | approve | reject");
     } else if (cmd === "block") {
       const by = Number((rest[0] ?? "").replace(/^#/, ""));
       if (!Number.isInteger(by) || by < 1) throw new Error("usage: factory block <id> <#n>");
@@ -697,6 +721,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     try { change(db, () => { for (const id of findReverts(db, { repo: lead.slug, run, now: nowIso })) log(`factory: #${id}'s PR was reverted`); }); }
     catch (e) { log(`factory: checking reverts: ${(e as Error).message}`); }
   }
+  // Split tickets: a part goes on once the one before it is done; a parent closes after its last part.
+  try { change(db, () => followSplits(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log })); }
+  catch (e) { log(`factory: following splits: ${(e as Error).message}`); }
   // Groomed tickets waiting for room: one starts as another stops running.
   try {
     let started: number[] = [];

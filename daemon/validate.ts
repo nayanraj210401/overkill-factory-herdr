@@ -10,14 +10,16 @@ type Rule =
   | { enum: string[] }
   | { object: Record<string, Rule>; required?: string[]; open?: boolean }
   | { map: Rule }
-  | { list: Rule };
+  | { list: Rule }
+  | { either: [Rule, Rule] }; // the first for a plain value, the second for a map
 
 const str = "string" as const, num = "number" as const, strs = "strings" as const;
 const open = { object: {}, open: true };
 const gate = { enum: ["human", "auto"] };
 // away: in factory.yaml and in the account's config.yaml (daemon/away.ts).
 const AWAY: Rule = { object: { blueprints: strs, budget: str, review_rounds: num, never: strs, min_agreement: num } };
-const LEARN_TARGETS =["cost_per_pr", "time_to_pr", "interactions_per_pr", "review_rounds_per_pr"];
+const TICKET_SOURCE = { enum: ["github", "linear", "local"] };
+const LEARN_TARGETS = ["cost_per_pr", "time_to_pr", "interactions_per_pr", "review_rounds_per_pr"];
 
 const STAGE: Rule = {
   object: {
@@ -30,7 +32,7 @@ export const KINDS: Record<string, Rule> = {
   factory: {
     required: ["name"],
     object: {
-      name: str, repos: strs, cross_check: str, tickets: { enum: ["github", "linear", "local"] },
+      name: str, repos: strs, cross_check: str, tickets: { either: [TICKET_SOURCE, { object: { source: TICKET_SOURCE, split: gate } }] },
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
@@ -116,6 +118,7 @@ const typeName = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "a li
 function check(v: unknown, rule: Rule, at: string, errors: string[]) {
   const bad = (want: string) => errors.push(`${at}: expected ${want}, got ${typeName(v)}`);
   if (rule === "any") return;
+  if (typeof rule === "object" && "either" in rule) return check(v, rule.either[typeof v === "object" && v !== null && !Array.isArray(v) ? 1 : 0], at, errors);
   if (rule === "string") return typeof v === "string" || bad("text");
   if (rule === "number") return typeof v === "number" || bad("a number");
   if (rule === "boolean") return typeof v === "boolean" || bad("true or false");

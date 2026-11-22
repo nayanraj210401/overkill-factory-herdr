@@ -7,7 +7,7 @@ import { buildStatus } from "./status.ts";
 import { sh, startTicket, type Run } from "./runner.ts";
 import { transcriptDir, type Use } from "./usage.ts";
 import { CEILING, contextFill, contextWindow, handoffAt, handoffStep, missingSections, watchContext } from "./handoff.ts";
-import { flagFile, refusal, withHandoffHook } from "./handoff-hook.ts";
+import { flagFile, refusal, snapshotFile, snapshotOf, withHandoffHook } from "./handoff-hook.ts";
 import { validateStatus } from "../lib/status.js";
 
 const snap = JSON.parse(readFileSync(join(import.meta.dir, "briefs.snap.json"), "utf8")) as Record<string, string>;
@@ -211,6 +211,17 @@ test("at the 80% ceiling the session is stopped without a handoff and the brief 
   expect(existsSync(folder)).toBe(true);
 });
 
+test("a session building one slice (per: slice) hands that slice on, even one SLICES.md marks done", () => {
+  const { db, calls, folder, fill, tick } = setup();
+  writeFileSync(join(folder, "SLICES.md"), "# Slices\n\n## 1. The limiter (done)\nx\n\n## 2. The 429 response\ny\n");
+  db.query("UPDATE sessions SET slice = '#1'").run();
+  fill(170_000);
+  tick("2026-11-21T10:40:00Z");
+  const brief = calls.findLast((c) => c[1] === "run")!.at(-1)!;
+  expect(brief.slice(brief.indexOf("## The current slice"))).toContain("1. The limiter");
+  expect(db.query("SELECT slice FROM sessions ORDER BY id").all()).toEqual([{ slice: "#1" }, { slice: "#1" }]);
+});
+
 test("the handoff threshold is the one the ticket started with: 80% in its snapshot means 62% doesn't flag it", () => {
   const { dir, db, fill, tick } = setup();
   db.query("UPDATE tickets SET settings = ? WHERE id = 412").run('{"budget.handoff_at_context":"80%"}');
@@ -226,4 +237,53 @@ test("an agent runs unattended: acceptEdits, and an allowlist with the factory C
   const allow: string[] = JSON.parse(readFileSync(argv[argv.indexOf("--settings") + 1], "utf8")).permissions.allow;
   for (const a of ["Bash(factory:*)", "Bash(bun test)", "Bash(git commit:*)", "Bash(gh issue view:*)", "Read", "Edit"]) expect(allow).toContain(a);
   expect(allow.some((a) => /push|bypass/.test(a))).toBe(false);
+});
+
+// A transcript as Claude Code writes it: assistant messages with text and tool calls.
+const TRANSCRIPT = [
+  { type: "user", message: { content: "go" } },
+  { type: "assistant", message: { content: [{ type: "text", text: "Adding the limiter." }, { type: "tool_use", name: "Edit", input: { file_path: "/w/src/limiter.ts" } }] } },
+  { type: "assistant", message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "/w/src/login.ts" } }, { type: "tool_use", name: "Write", input: { file_path: "/w/src/login.ts" } }] } },
+  { type: "assistant", message: { content: [{ type: "text", text: "Next: return 429 from login." }] } },
+].map((e) => JSON.stringify(e)).join("\n") + "\n";
+
+test("the PreCompact snapshot: the files the last edits touched, newest first, and the last words", () => {
+  const md = snapshotOf(TRANSCRIPT + "not json\n", "auto", "2026-11-21T10:40:00Z");
+  expect(md).toContain("## Files it was changing\n\n- /w/src/login.ts\n- /w/src/limiter.ts\n");
+  expect(md).toContain("Adding the limiter.\n\n---\n\nNext: return 429 from login.");
+  expect(snapshotOf("", "manual", "x")).toContain("## Files it was changing\n\nnone");
+});
+
+test("the PreCompact hook, as Claude Code runs it from the settings file, writes the snapshot and never blocks", () => {
+  const dir = mkdtempSync(join(tmpdir(), "hook-"));
+  const argv = withHandoffHook(["claude", "go"], dir, 412);
+  const command = JSON.parse(readFileSync(argv[4], "utf8")).hooks.PreCompact[0].hooks[0].command;
+  const transcript = join(dir, "t.jsonl");
+  writeFileSync(transcript, TRANSCRIPT);
+  const call = (input: string) => Bun.spawnSync(["sh", "-c", command], { stdin: new TextEncoder().encode(input), env: process.env });
+  expect(call("garbage").exitCode).toBe(0);
+  expect(existsSync(snapshotFile(dir, 412))).toBe(false);
+  expect(call(JSON.stringify({ hook_event_name: "PreCompact", trigger: "auto", transcript_path: transcript })).exitCode).toBe(0);
+  expect(readFileSync(snapshotFile(dir, 412), "utf8")).toContain("compact this session's context (auto)");
+  withHandoffHook(["claude", "go"], dir, 412); // a new session starts with no snapshot
+  expect(existsSync(snapshotFile(dir, 412))).toBe(false);
+});
+
+test("a session Claude Code starts compacting below the ceiling is stopped, and its snapshot goes into the next brief", () => {
+  const { dir, db, calls, folder, fill, tick } = setup();
+  fill(90_000); // 45%: the transcript says nothing is wrong
+  writeFileSync(snapshotFile(dir, 412), snapshotOf(TRANSCRIPT, "auto", "2026-11-21T10:39:00Z"));
+  tick("2026-11-21T10:40:00Z");
+  expect(calls.some((c) => c[1] === "kill" && c[2] === "t11")).toBe(true);
+  expect(db.query("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL").get()).toEqual({ n: 1 });
+  const brief = calls.findLast((c) => c[1] === "run")!.at(-1)!;
+  expect(brief).toContain("Claude Code began compacting its context");
+  expect(brief).toMatch(/last commit, [0-9a-f]+ init/);
+  expect(brief).toContain("## Before it ran out of room (its PreCompact snapshot)");
+  expect(brief).toContain("- /w/src/login.ts");
+  expect(existsSync(snapshotFile(dir, 412))).toBe(false); // read, and kept beside the session's handoffs
+  expect(readFileSync(join(folder, "PRECOMPACT.session-1.md"), "utf8")).toContain("Next: return 429 from login.");
+  expect((db.query("SELECT why FROM decisions WHERE what = 'started session 2'").get() as any).why).toContain("PreCompact snapshot");
+  tick("2026-11-21T10:41:00Z"); // the new session isn't stopped again
+  expect(db.query("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 2 });
 });
