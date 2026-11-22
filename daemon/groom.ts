@@ -6,6 +6,7 @@
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { BLUEPRINT } from "./maintainer.ts";
 import { join } from "node:path";
 import { enterStage } from "./ticket.ts";
 import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
@@ -25,7 +26,8 @@ type Question = { n: number; kind: "product" | "engineering"; text: string; aske
 export function grooming(repo: string) {
   const g = readFactory(repo).grooming ?? {};
   const dir = join(repo, ".factory", "blueprints");
-  const all = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".yaml")).map((f) => f.slice(0, -5)).sort() : [];
+  // The maintainer's blueprint (maintainer.ts) takes requests from Overwatch, never a groomed ticket.
+  const all = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".yaml")).map((f) => f.slice(0, -5)).filter((b) => b !== BLUEPRINT).sort() : [];
   return {
     agent: g.agent ?? "triager",
     blueprints: g.blueprints?.filter((b) => all.includes(b)) ?? all,

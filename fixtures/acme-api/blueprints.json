@@ -172,6 +172,67 @@
       ]
     },
     {
+      "name": "factory",
+      "start": "maintain",
+      "orchestrator": null,
+      "error": null,
+      "grooming_runs": 0,
+      "stages": [
+        {
+          "id": "maintain",
+          "agent": "maintainer",
+          "role": "maintain",
+          "check": null,
+          "next": [
+            "check"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "check",
+          "agent": null,
+          "role": null,
+          "check": "factory",
+          "next": [
+            "pr"
+          ],
+          "on_fail": "maintain",
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "pr",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "merge"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": "ready",
+          "runs": 0
+        },
+        {
+          "id": "merge",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "end"
+          ],
+          "on_fail": null,
+          "gate": "human",
+          "requires": null,
+          "runs": 0
+        }
+      ]
+    },
+    {
       "name": "feature",
       "start": "spec",
       "orchestrator": "foreman",

@@ -178,7 +178,7 @@ export function writeSetup(o: { repo: string; name: string; slug: string; basics
     mkdirSync(dir, { recursive: true });
     for (const sub of ["blueprints", "agents", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true });
     const blueprints = readdirSync(join(dir, "blueprints")).filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""))
-      .filter((b) => !triggered(DEFAULTS).includes(b));
+      .filter((b) => !triggered(DEFAULTS).includes(b) && b !== "factory"); // the maintainer's, never triage's pick
     writeFileSync(join(dir, "factory.yaml"), factoryYaml({ name: o.name, slug: o.slug, blueprints, basics: o.basics, floor: detectFloor(wt) }));
     const results = validateDir(dir);
     const bad = results.filter((r) => r.errors.length);

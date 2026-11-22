@@ -18,6 +18,7 @@ import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateAccount, validateDir } from "./validate.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
+import { request } from "./maintainer.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
 import { judge } from "./comments.ts";
@@ -49,6 +50,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
+  request <the change…>              a change to the factory itself (.factory/): the maintainer makes it and it comes back as a PR
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
   repos <id> owner/name…             the repos a ticket that hasn't started works in (the lead is always one)
@@ -317,6 +319,14 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let voter = "";
       change(db, () => { voter = recordVerdict(db, { id: Number(sub), kind, result: r, detail: detail.join(" ") || null, by, now: now() }); });
       log(`#${sub}: ${kind} ${r} from ${voter}`);
+    } else if (cmd === "request") {
+      // A change to the factory itself, for the maintainer (maintainer.ts): it comes back as a PR.
+      const lead = needLead(db);
+      let r: any = null;
+      change(db, () => { r = request(db, { text: [sub, ...rest].filter(Boolean).join(" "), repo: lead.slug, run: sh, now: now() }); });
+      log(`#${r.id} ${r.title}: a request for the maintainer; it starts when a slot is free, and the change comes back as a PR for you`);
+      writeStatus(db, p.status);
+      writeTicketFiles(db, p.dir, r.id);
     } else if (cmd === "new") {
       const text = [sub, ...rest].filter(Boolean).join(" ");
       const lead = needLead(db);
