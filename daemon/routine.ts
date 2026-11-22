@@ -18,17 +18,18 @@ import { writeIfChanged } from "./files.ts";
 import { awayPolicy } from "./away.ts";
 import { pushbackLimit, storeComments, VERDICTS } from "./comments.ts";
 import { openRound } from "./round.ts";
+import { pushbackGate } from "./agreement.ts";
 import { getMeta, setMeta, ticketRepos } from "./db.ts";
 import { readFactory, reviewBack, type Run } from "./runner.ts";
 
 export const LOG_BRANCH = "factory/routine-log";
 export const LOG_FILE = "routine/log.jsonl";
 
-// While away, a pushback needs the babysitter's agreement with you. Until the agreement
-// benchmark lands (PR #84, daemon/agreement.ts pushbackGate), setting away.min_agreement
-// means no pushbacks, as `factory comment` does today.
-export function cloudPushbacks(repo: string): string | null {
-  return awayPolicy(repo).min_agreement != null ? "away.min_agreement is set and the babysitter's agreement with the person isn't measured yet" : null;
+// While away, a pushback needs the babysitter's agreement with you (agreement.ts), the
+// same gate the local babysitter uses.
+export function cloudPushbacks(db: Database, repo: string): string | null {
+  const gate = pushbackGate(db, repo);
+  return gate.ok ? null : gate.why;
 }
 
 type Watched = { ticket: number; repo: string; pr: number; branch: string | null; pushbacks: { thread: string; n: number }[] };
@@ -44,7 +45,7 @@ export function routineBrief(db: Database, o: { repo: string; slug: string; me: 
   const f = readFactory(o.repo) as any;
   const away = awayPolicy(o.repo);
   const limit = pushbackLimit(f.review);
-  const noPushbacks = cloudPushbacks(o.repo);
+  const noPushbacks = cloudPushbacks(db, o.repo);
   const floor: string[] = f.quality_floor ?? [];
   const watched = watchedPrs(db);
   return `# Factory PR watch for ${o.slug}

@@ -63,14 +63,14 @@ test("the brief carries the watched PRs, the verdict rules, the away policy and 
   expect(md).toContain("- acme/api#42 (ticket #7, branch `factory/7-rate-limit-login`)");
   expect(md).toContain("You act as @pat on GitHub");
   expect(md).toContain("a thread that already has 3 pushbacks");
-  expect(md).toContain("**Not allowed now** (away.min_agreement is set");
+  expect(md).toContain("**Not allowed now** (the judge (");  // no agreement run yet: the gate is closed
   expect(md).toContain("Run the quality floor before you push: `true`");
   expect(md).toContain("Never change files matching `src/auth/**`");
   expect(md).toContain("at most 2 runs with comments");
   expect(md).toContain(`"verdict":"fix|pushback|escalate"`);
   expect(md).toContain("Never open, close, merge, or mark a PR ready");
-  // Without min_agreement, pushbacks follow the normal rules.
-  const t = setup();
+  // With the gate off (min_agreement: 0), pushbacks follow the normal rules.
+  const t = setup("away: { min_agreement: 0 }\n");
   expect(routineBrief(t.db, { repo: t.repo, slug: "acme/api", me: "pat", now: "x" })).not.toContain("Not allowed now");
   expect(routineSteps({ path: "/f/ROUTINE.md", slug: "acme/api", name: "t" }).join("\n")).toContain("factory routine on --name t");
 });
