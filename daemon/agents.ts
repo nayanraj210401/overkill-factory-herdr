@@ -1,5 +1,7 @@
 // Agent files, in two tiers (plan: The agents). Repo agents (triage, spec, planner,
-// builder, reviewer…) live in each repo's .factory/agents/ and can differ per repo. The
+// builder, reviewer…) live in each repo's .factory/agents/ and can differ per repo: a
+// stage's agent loads from the repo it works in, then the lead repo, then the defaults
+// shipped in fixtures/acme-api/.factory/agents/ (what setup copies into a repo). The
 // factory agents (Overwatch, babysitter, maintainer, learner) are one set for every repo:
 // <FACTORY_HOME>/agents/<name>.md, else the default shipped in this repo's agents/. A
 // repo's own copy of a factory agent is never read; `factory validate` warns about it.
@@ -8,24 +10,42 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { validateFile } from "./validate.ts";
 import type { Database } from "bun:sqlite";
-import { leadRepo } from "./db.ts";
+import { leadRepo, ticketRepos } from "./db.ts";
 
 export const FACTORY_AGENTS = ["overwatch", "babysitter", "maintainer", "learner"] as const;
 export type FactoryAgent = (typeof FACTORY_AGENTS)[number];
 export const isFactoryAgent = (name: string): name is FactoryAgent => (FACTORY_AGENTS as readonly string[]).includes(name);
 
 export const SHIPPED_AGENTS = join(import.meta.dir, "../agents");
+export const SHIPPED_REPO_AGENTS = join(import.meta.dir, "../fixtures/acme-api/.factory/agents");
 export const factoryAgentsDir = (home = process.env.FACTORY_HOME ?? join(homedir(), ".factory")) => join(home, "agents");
 
+// Where a repo agent is looked for, in order. One path, or several: the repo the stage
+// works in first, then the lead repo (agentRepos). A null or repeated entry is skipped.
+export type AgentRepos = string | null | (string | null | undefined)[];
+
 // The file an agent loads from, and how to name it in an error; null when there is none.
-export function agentFile(repo: string | null, name: string): { file: string; label: string } | null {
+export function agentFile(repos: AgentRepos, name: string): { file: string; label: string } | null {
   if (isFactoryAgent(name)) {
     const own = join(factoryAgentsDir(), `${name}.md`);
     if (existsSync(own)) return { file: own, label: `~/.factory/agents/${name}.md` };
     return { file: join(SHIPPED_AGENTS, `${name}.md`), label: `agents/${name}.md (shipped)` };
   }
-  const file = repo ? join(repo, ".factory", "agents", `${name}.md`) : null;
-  return file && existsSync(file) ? { file, label: `.factory/agents/${name}.md` } : null;
+  const list = [...new Set((Array.isArray(repos) ? repos : [repos]).filter((r): r is string => !!r))];
+  for (const [i, repo] of list.entries()) {
+    const file = join(repo, ".factory", "agents", `${name}.md`);
+    if (existsSync(file)) return { file, label: i === 0 ? `.factory/agents/${name}.md` : `${file} (the lead repo's)` };
+  }
+  const shipped = join(SHIPPED_REPO_AGENTS, `${name}.md`);
+  return existsSync(shipped) ? { file: shipped, label: `.factory/agents/${name}.md (shipped)` } : null;
+}
+
+// The repos a ticket's stages load their agents from (plan: The agents). Every stage of a
+// ticket runs in one session opened in its own lead repo's worktree, the repo it works in:
+// that repo's .factory/agents/ first, then the factory's lead repo's (`lead`). A cross-repo
+// ticket's other repos are worked in from that session; their agent files don't apply.
+export function agentRepos(db: Database, ticket: number, lead: string) {
+  try { return [ticketRepos(db, ticket)[0]?.path ?? null, lead]; } catch { return [lead]; } // no repo rows: the lead
 }
 
 export type Agent = Record<string, any> & { prompt: string; role?: string; territory?: string };
@@ -35,9 +55,9 @@ export function parseAgent(text: string): Agent {
   return { ...(Bun.YAML.parse(m[1]) as Record<string, any>), prompt: m[2].trim() };
 }
 
-// The agent `name` as `repo` runs it, checked; null when the repo has no such agent.
-export function loadAgent(repo: string | null, name: string): Agent | null {
-  const at = agentFile(repo, name);
+// The agent `name` as `repos` run it, checked; null when neither they nor the defaults have it.
+export function loadAgent(repos: AgentRepos, name: string): Agent | null {
+  const at = agentFile(repos, name);
   if (!at) return null;
   const text = readFileSync(at.file, "utf8");
   const errors = validateFile(`agents/${name}.md`, text);
@@ -119,8 +139,8 @@ export function neighbourMap(repos: { slug: string; path: string }[]) {
   return lines.join("\n");
 }
 
-// The map in one factory's briefs: the factory agents and its lead repo's agents, whose
-// .factory/agents/ every ticket's stages run from.
+// The map in one factory's briefs: the factory agents and its lead repo's agents. It's the
+// same for every ticket, even one that works in another repo, so it stays cached.
 export const factoryMap = (db: Database) => {
   const lead = leadRepo(db);
   return neighbourMap(lead ? [lead] : []);

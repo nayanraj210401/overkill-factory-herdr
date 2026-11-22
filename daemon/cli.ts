@@ -5,7 +5,7 @@
 import { claudeChoice } from "./claude-bin.ts";
 import { homedir } from "node:os";
 import { writeIfChanged } from "./files.ts";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { recordVerdict } from "./ready.ts";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -240,6 +240,17 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
     // The factory agents, one set for every repo, are checked with the account config.
     if (!sub) for (const f of factoryAgentFiles()) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`agents/${basename(f)}`, readFileSync(f, "utf8")) });
+    // Every other repo of the factory: its own repo agents, which its tickets' stages run (agents.ts).
+    if (!sub && existsSync(p.db)) {
+      const db = open(p.db);
+      try {
+        for (const r of listRepos(db)) {
+          const dir = join(r.path, ".factory");
+          if (!existsSync(join(dir, "agents")) || (existsSync(".factory") && realpathSync(dir) === realpathSync(".factory"))) continue;
+          for (const x of validateDir(dir)) if (x.path.startsWith("agents/")) results.push({ ...x, path: `${r.slug} .factory/${x.path}` });
+        }
+      } finally { db.close(); }
+    }
     if (json) return log(JSON.stringify(results));
     for (const r of results as { path: string; errors: string[]; warnings?: string[] }[])
       log((r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `${r.warnings?.length ? "!" : "✓"} ${r.path}`) + (r.warnings ?? []).map((w) => `\n    ${w}`).join(""));
