@@ -13,7 +13,7 @@ import { capsOf, intervalOf, isDue, readTriggers, runningByTrigger } from "./tri
 import { buildStatus, writeStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
 import { parseTokens } from "../lib/model.js";
-import { service } from "./service.ts";
+import { service, servicePid } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateDir } from "./validate.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
@@ -92,7 +92,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   validate [dir] [--json]            check .factory/ files (default ./.factory)
   refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
   status                             write status.json and print a summary
-  run [--interval seconds] [--all]   the daemon: keep status.json fresh (--all: every factory)
+  run [--interval seconds] [--all] [--force]  the daemon: keep status.json fresh (--all: every factory); refuses while the service runs it
   service install|uninstall|restart|status [--json]  keep \`factory run --all\` alive with launchd
 data: $FACTORY_HOME (default ~/.factory)/<name>/`;
 
@@ -176,6 +176,12 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     const bad = results.filter((r) => r.errors.length).length;
     if (bad) throw new Error(`${bad} of ${results.length} files have problems`);
     return;
+  }
+  if (cmd === "run") {
+    // The service is the daemon; a second one, by hand, doubles every tick. --force for debugging.
+    const pid = servicePid({ factoryHome: factoryHome() });
+    if (pid && pid !== process.pid && !args.includes("--force"))
+      throw new Error(`the factory service already runs the daemon (pid ${pid}) for ${factoryHome()}; use factory service restart, or factory run --force to run a second one anyway`);
   }
   if (cmd === "run" && all) return runAll(interval, log);
   if (cmd === "bench") return bench(p, args.filter((a) => !a.startsWith("--"))[1], args.includes("--dry-run"), log);

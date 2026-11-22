@@ -47,3 +47,9 @@ else
   echo "keys.json left alone (run with --keys to merge the factory keys)"
 fi
 echo "synced into $home"
+
+# The service runs this checkout's daemon: restart it so it runs the same code the mods
+# just got, not what it loaded at its last start.
+if [[ "$home" == "$HOME/.config/herdr-app" ]] && launchctl print "gui/$(id -u)/dev.overkill.factory" >/dev/null 2>&1; then
+  bun daemon/cli.ts service restart
+fi

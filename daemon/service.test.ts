@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { plist, selfArgs, service } from "./service.ts";
+import { plist, selfArgs, service, servicePid } from "./service.ts";
 import { factories } from "./cli.ts";
 
 test("the plist runs the daemon at login, keeps it alive, and carries PATH", () => {
@@ -62,4 +62,18 @@ test("status --json is what the window reads; restart kickstarts the job", () =>
   service("restart", { ...o, run: (a) => (calls.push(a), { code: 0, out: "" }) });
   expect(calls[0]).toEqual(["kickstart", "-k", "gui/501/x.test"]);
   expect(() => service("restart", { ...o, run: () => ({ code: 113, out: "Could not find service" }) })).toThrow(/factory service install/);
+});
+
+test("servicePid: the running service's pid when it serves this FACTORY_HOME, else null", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agents-"));
+  const home = mkdtempSync(join(tmpdir(), "fh-"));
+  let out = "state = running\npid = 42\n";
+  const run = () => ({ code: 0, out });
+  const o = { factoryHome: home, label: "x.test", agentsDir: dir, run, uid: 501 };
+  expect(servicePid(o)).toBe(null); // not installed
+  service("install", { ...o, log: () => {} });
+  expect(servicePid(o)).toBe(42);
+  expect(servicePid({ ...o, factoryHome: mkdtempSync(join(tmpdir(), "other-")) })).toBe(null); // another home, e.g. tests
+  out = "state = not running\n";
+  expect(servicePid(o)).toBe(null);
 });
