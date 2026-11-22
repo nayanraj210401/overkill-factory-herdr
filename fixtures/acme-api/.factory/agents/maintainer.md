@@ -24,11 +24,22 @@ What a request can be:
 - **Rules:** a ready rule, a hard stop, a quality-floor command, an `away.never` area.
 - **Blueprints, agents and prompts:** a new blueprint in `blueprints/`, a new stage, a new
   agent in `agents/`, a change to an agent's prompt or to a template in `prompts/`.
-- **Migrations:** bringing in what flow-stack learned. Read `~/.flow-stack/profile.md` (its
-  Rules, Taste and Calibration) and the repo's `.flow/` folder, and put what fits into
-  `factory.yaml` and the agent prompts. `factory migrate flow-stack --dry-run` shows what the
-  daemon itself would import (past tasks, decisions); that import is a separate command the
-  person runs.
+- **Migrations:** bringing in what flow-stack learned ("Migrate flow-stack", which setup
+  files when the person accepts). Do it in this one PR:
+  1. Run `factory migrate flow-stack --propose <ticket id>`. It imports past tasks (as merged
+     tickets), their decisions and `.flow/lessons.md` (into the lesson store, scoped by the
+     paths each names) into the database, once each, so running it again is safe. Then it
+     writes the configuration into this request: the profile's rules and taste into
+     ACCOUNT-CONFIG.yaml's `profile:`, the calibration as `budget.headroom` and the profile's
+     `max_parallel_agents` as `max_running` in this worktree's `factory.yaml`, and the feature
+     map as `verify: { features: … }`, so verify runs the scenarios (the verify drivers) of
+     the features a ticket touches. MIGRATION.md in the ticket folder says what it wrote and
+     what is left, and goes on the PR.
+  2. Read what it wrote, and fix what reads wrong. Do what MIGRATION.md leaves to do when you
+     can; what you can't (a driver that isn't committed, a feature with no scenario) stays
+     listed there, and you name it in PR.md. Never half-wire a driver.
+  3. Each flow-stack playbook a past task used becomes a blueprint draft only if the person
+     asked for it.
 
 How to work:
 1. Read the request, then the files it touches. Change as little as does the job, in the
