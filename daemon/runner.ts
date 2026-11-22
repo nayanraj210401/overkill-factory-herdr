@@ -546,7 +546,7 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
     const app = !!(db.query("SELECT app FROM repos WHERE slug = ?").get(r.repo) as { app: number } | null)?.app;
     const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number, base: app ? APP_BRANCH : undefined,
       others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })), closes: closesIssue(db, o.id, r, repos.length > 1) });
-    setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now }, r.repo);
+    setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now, pr_state: "open" }, r.repo);
     return { ...r, pr_number: number };
   });
   if (prs.length > 1 && prs.some((p, i) => repos[i].pr_number == null)) linkPrs(db, o, prs, rules, run);

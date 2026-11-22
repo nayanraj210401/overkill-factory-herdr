@@ -24,8 +24,8 @@ test("migration 11 moves a one-repo factory's repo and each ticket's work to the
   const db = open(path);
   expect(listRepos(db)).toEqual([{ slug: "acme/api", path: "/src/api", lead: true }]);
   expect(db.query("SELECT * FROM ticket_repos ORDER BY ticket").all()).toEqual([
-    { ticket: 1, repo: "acme/api", lead: 1, worktree: null, branch: "factory/1-a", pr_number: 41, pr_watched: 0, pr_checked_at: "2026-11-20T09:00:00Z", merged_at: "2026-11-20T10:00:00Z", merge_pos: null },
-    { ticket: 2, repo: "acme/api", lead: 1, worktree: "/wt/2", branch: "factory/2-b", pr_number: 42, pr_watched: 1, pr_checked_at: "2026-11-21T09:00:00Z", merged_at: null, merge_pos: null },
+    { ticket: 1, repo: "acme/api", lead: 1, worktree: null, branch: "factory/1-a", pr_number: 41, pr_watched: 0, pr_checked_at: "2026-11-20T09:00:00Z", merged_at: "2026-11-20T10:00:00Z", merge_pos: null, pr_state: null },
+    { ticket: 2, repo: "acme/api", lead: 1, worktree: "/wt/2", branch: "factory/2-b", pr_number: 42, pr_watched: 1, pr_checked_at: "2026-11-21T09:00:00Z", merged_at: null, merge_pos: null, pr_state: null },
   ]);
   // The one-repo columns and meta keys are gone; the view reads as the old row did.
   const cols = (db.query("PRAGMA table_info(tickets)").all() as { name: string }[]).map((c) => c.name);
@@ -35,7 +35,7 @@ test("migration 11 moves a one-repo factory's repo and each ticket's work to the
     { id: 1, worktree: null, pr_number: 41, pr_watched: 0 }, { id: 2, worktree: "/wt/2", pr_number: 42, pr_watched: 1 }, { id: 3, worktree: null, pr_number: null, pr_watched: 0 },
   ]);
   expect(buildStatus(db).factory.repo).toBe("acme/api");
-  expect(buildStatus(db).tickets.find((t: any) => t.id === 2)!.pr).toEqual({ number: 42, watched: true, checked_at: "2026-11-21T09:00:00Z" });
+  expect(buildStatus(db).tickets.find((t: any) => t.id === 2)!.pr).toEqual({ number: 42, watched: true, checked_at: "2026-11-21T09:00:00Z", url: "https://github.com/acme/api/pull/42", state: "open" });
 });
 
 test("a ticket's first work row is made in the lead repo; the lead can't move once tickets worked in it", () => {
@@ -99,8 +99,8 @@ test("status.json lists the factory's repos and each ticket's, lead first; one n
   expect(validateStatus(s)).toEqual([]);
   expect(s.factory).toMatchObject({ repo: "acme/api", repos: ["acme/api", "acme/web"] });
   expect(s.tickets.map((t: any) => t.repos)).toEqual([
-    [{ slug: "acme/api", lead: true, pr: { number: 5, watched: true, checked_at: null }, worktree: "/wt/api", branch: null, merged_at: null, merge: 2 },
-     { slug: "acme/web", lead: false, pr: { number: 6, watched: false, checked_at: null }, worktree: "/wt/web", branch: null, merged_at: null, merge: 1 }],
+    [{ slug: "acme/api", lead: true, pr: { number: 5, watched: true, checked_at: null, url: "https://github.com/acme/api/pull/5", state: "open" }, worktree: "/wt/api", branch: null, merged_at: null, merge: 2 },
+     { slug: "acme/web", lead: false, pr: { number: 6, watched: false, checked_at: null, url: "https://github.com/acme/web/pull/6", state: "open" }, worktree: "/wt/web", branch: null, merged_at: null, merge: 1 }],
     [{ slug: "acme/api", lead: true, pr: null, worktree: null, branch: null, merged_at: null, merge: 1 }],
   ]);
 });

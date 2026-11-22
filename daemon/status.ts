@@ -20,7 +20,13 @@ type Row = Record<string, any>;
 
 const HEARTBEAT_MS = 15_000;
 
-const prOf = (r: Row) => (r.pr_number == null ? null : { number: r.pr_number, watched: !!r.pr_watched, checked_at: r.pr_checked_at });
+// A ticket's PR in one repo. The state is what GitHub last said, unless the ticket's own end settles it:
+// merged is merged, and a closed ticket's PR is closed. The url is built, never asked of gh.
+export const prOf = (r: Row, slug: string, ticket: string) => (r.pr_number == null ? null : {
+  number: r.pr_number, watched: !!r.pr_watched, checked_at: r.pr_checked_at,
+  url: `https://github.com/${slug}/pull/${r.pr_number}`,
+  state: ticket === "merged" || r.merged_at ? "merged" : ticket === "closed" ? "closed" : r.pr_state ?? "open",
+});
 
 export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: number } | null) {
   return {
@@ -30,8 +36,8 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
     budget: { input: r.budget_in, output: r.budget_out },
     usd: r.usd, where: r.location,
     warning: r.state === "running" && budgetUse(r as any, cap).frac >= 0.8 ? `${Math.round(budgetUse(r as any, cap).frac * 100)}% of its token budget used` : null,
-    pr: prOf(r),
-    ...(repos ? { repos: repos.map((x) => ({ slug: x.repo, lead: !!x.lead, pr: prOf(x), worktree: x.worktree ?? null, branch: x.branch ?? null,
+    pr: prOf({ ...r, ...repos?.find((x) => x.lead) }, r.repo ?? repos?.find((x) => x.lead)?.repo, r.state),
+    ...(repos ? { repos: repos.map((x) => ({ slug: x.repo, lead: !!x.lead, pr: prOf(x, x.repo, r.state), worktree: x.worktree ?? null, branch: x.branch ?? null,
       merged_at: x.merged_at ?? null, merge: mergeOrder(repos as any).indexOf(x) + 1 })) } : {}),
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,

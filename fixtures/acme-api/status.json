@@ -165,7 +165,7 @@
         {
           "slug": "acme/api",
           "lead": true,
-          "pr": null,
+          "pr": { "number": 520, "watched": false, "checked_at": null, "url": "https://github.com/acme/api/pull/520", "state": "draft" },
           "worktree": "~/.herdr/worktrees/acme-api/factory-412-rate-limit-login",
           "branch": "factory/412-rate-limit-login",
           "merged_at": null,
@@ -174,7 +174,7 @@
         {
           "slug": "acme/web",
           "lead": false,
-          "pr": null,
+          "pr": { "number": 131, "watched": false, "checked_at": null, "url": "https://github.com/acme/web/pull/131", "state": "open" },
           "worktree": "~/.herdr/worktrees/acme-web/factory-412-rate-limit-login",
           "branch": "factory/412-rate-limit-login",
           "merged_at": null,
@@ -226,7 +226,9 @@
       "pr": {
         "number": 511,
         "watched": true,
-        "checked_at": "2026-11-21T09:58:00Z"
+        "checked_at": "2026-11-21T09:58:00Z",
+        "url": "https://github.com/acme/api/pull/511",
+        "state": "open"
       },
       "blocked_by": null,
       "needs": null
@@ -340,7 +342,9 @@
       "pr": {
         "number": 498,
         "watched": false,
-        "checked_at": null
+        "checked_at": null,
+        "url": "https://github.com/acme/api/pull/498",
+        "state": "merged"
       },
       "blocked_by": null,
       "needs": null
