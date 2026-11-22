@@ -3,7 +3,8 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
-import { advance, loadAgent, loadBlueprint, mergeTicket, sh, startTicket, type Run } from "./runner.ts";
+import { advance, loadBlueprint, mergeTicket, sh, startTicket, type Run } from "./runner.ts";
+import { loadAgent } from "./agents.ts";
 import { ACCOUNT_PROPOSAL, applyMerged, proposeAccount, request } from "./maintainer.ts";
 import { learnerSuggest, promoteOverrides } from "./learner.ts";
 import { addLesson, setOverride } from "./learn.ts";
@@ -14,14 +15,13 @@ import { getMeta } from "./db.ts";
 // After the worktree commits the tests make: the ready rules reject evidence older than the last commit.
 const now = new Date(Date.now() + 60_000).toISOString();
 
-// A factory whose .factory/ has no maintainer files of its own: the shipped ones apply.
+// A factory whose .factory/ has no factory blueprint of its own: the shipped one applies (the maintainer agent is a factory agent).
 function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "home-")); // the account config lives here, never in ~/.factory
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
   cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
   rmSync(join(repo, ".factory/blueprints/factory.yaml"));
-  rmSync(join(repo, ".factory/agents/maintainer.md"));
   writeFileSync(join(repo, ".factory/factory.yaml"), factoryYaml);
   writeFileSync(join(repo, "app.ts"), "export {};\n");
   const origin = mkdtempSync(join(tmpdir(), "origin-"));

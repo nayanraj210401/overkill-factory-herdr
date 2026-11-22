@@ -1,5 +1,6 @@
 ---
 role: plan
+territory: "SLICES.md for its ticket: the work in verifiable steps"
 model: claude-opus-5-5
 context: [INTENT.md]
 ---

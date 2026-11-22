@@ -6,7 +6,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { getMeta } from "./db.ts";
 import { compact, parseTokens } from "../lib/model.js";
-import { readFactory } from "./runner.ts";
+import { loadBlueprint, readFactory } from "./runner.ts";
 import { planKnown, planMeters } from "./metrics.ts";
 import { readAccount } from "./account.ts";
 
@@ -95,14 +95,65 @@ export function budgetUse(t: { tokens_in: number; tokens_out: number; budget_in:
   return { frac, text: `${compact(t.tokens_in)}/${compact(bin)} in, ${compact(t.tokens_out)}/${compact(bout)} out` };
 }
 
-// Grooming's estimate: what past merged tickets on this blueprint used, on average,
-// times headroom. No history falls back to budget.per_ticket; none of that, no change.
-export function estimateBudget(db: Database, repo: string, blueprint: string): Tokens | null {
-  const r = db.query("SELECT COUNT(*) AS n, AVG(tokens_in) AS i, AVG(tokens_out) AS o FROM tickets WHERE state = 'merged' AND blueprint = ? AND tokens_in > 0")
-    .get(blueprint) as { n: number; i: number | null; o: number | null };
-  if (r.n) { const h = headroom(repo); return { input: Math.round(r.i! * h), output: Math.round((r.o ?? 0) * h) }; }
+// Grooming's estimate (plan: Budgets). With fewer than MIN_HISTORY merged tickets on the
+// blueprint there is nothing to estimate from, so budget.per_ticket stands. With enough, the
+// budget is the p80 of those tickets, input and output apart, times headroom. Either way it
+// never drops below the floor: budget.floor (default 50%) of per_ticket, or a minimum per
+// stage run (a per: slice stage counts SLICE_RUNS runs), whichever is larger.
+export const MIN_HISTORY = 5;
+export const SLICE_RUNS = 3;
+export const STAGE_MIN: Tokens = { input: 150_000, output: 8_000 };
+const FLOOR_SHARE = 0.5;
+
+// budget.floor as a share: "50%" or 0.5.
+export function floorShare(repo: string) {
+  const v = section(repo, "budget").floor;
+  const n = parseFloat(String(v));
+  if (v == null || !(n >= 0)) return FLOOR_SHARE;
+  return String(v).includes("%") || n > 1 ? n / 100 : n;
+}
+
+// The value p of the way up the sorted list, interpolating between neighbours.
+export function percentile(xs: number[], p: number) {
+  const s = [...xs].sort((a, b) => a - b);
+  const at = (s.length - 1) * p;
+  const lo = Math.floor(at);
+  return s[lo] + (s[Math.min(lo + 1, s.length - 1)] - s[lo]) * (at - lo);
+}
+
+function stageRuns(repo: string, blueprint: string) {
+  try {
+    const stages = Object.values(loadBlueprint(repo, blueprint).stages);
+    return stages.reduce((n, s) => n + (s.per === "slice" ? SLICE_RUNS : 1), 0);
+  } catch { return 0; }
+}
+
+export type Estimate = Tokens & { why: string };
+
+export function estimateBudget(db: Database, repo: string, blueprint: string): Estimate | null {
+  const rows = db.query("SELECT tokens_in AS i, tokens_out AS o FROM tickets WHERE state = 'merged' AND blueprint = ? AND tokens_in > 0")
+    .all(blueprint) as { i: number; o: number }[];
   const own = capOf(section(repo, "budget").per_ticket);
-  return own && Number.isFinite(own.input) && Number.isFinite(own.output) ? own : null;
+  const base = own && Number.isFinite(own.input) && Number.isFinite(own.output) ? own : null;
+  const share = floorShare(repo);
+  const runs = stageRuns(repo, blueprint);
+  const floor: Tokens = {
+    input: Math.max((base?.input ?? 0) * share, STAGE_MIN.input * runs),
+    output: Math.max((base?.output ?? 0) * share, STAGE_MIN.output * runs),
+  };
+  const lift = (t: Tokens) => ({ input: Math.round(Math.max(t.input, floor.input)), output: Math.round(Math.max(t.output, floor.output)) });
+  const fl = `floor ${compact(floor.input)} in, ${compact(floor.output)} out`;
+  if (rows.length < MIN_HISTORY) {
+    const n = rows.length;
+    const why = `only ${n} past ${blueprint} ticket${n === 1 ? "" : "s"}, need ${MIN_HISTORY}`;
+    if (!base) return runs ? { ...lift({ input: 0, output: 0 }), why: `${why}; no budget.per_ticket, ${fl}` } : null;
+    return { ...lift(base), why: `default: ${why}` };
+  }
+  const h = headroom(repo);
+  const est = { input: percentile(rows.map((r) => r.i), 0.8) * h, output: percentile(rows.map((r) => r.o), 0.8) * h };
+  const got = lift(est);
+  const lifted = got.input > Math.round(est.input) || got.output > Math.round(est.output);
+  return { ...got, why: `p80 of ${rows.length} past ${blueprint} tickets × ${h}${lifted ? `, ${fl}` : ""}` };
 }
 
 // review.round_budget: what one review round may use, as a share of the ticket's budget

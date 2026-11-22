@@ -18,7 +18,8 @@
 import type { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { accountFile, factoryAgentsDir } from "./account.ts";
+import { accountFile } from "./account.ts";
+import { factoryAgentsDir, FACTORY_AGENTS, isFactoryAgent, SHIPPED_AGENTS } from "./agents.ts";
 import { listRepos, setMeta, type Repo } from "./db.ts";
 import { newTicket } from "./intake.ts";
 import type { Run } from "./runner.ts";
@@ -213,8 +214,6 @@ export const ACCOUNT_PROPOSAL = "ACCOUNT-CONFIG.yaml";
 export const ACCOUNT_DIFF = "ACCOUNT-CONFIG.md";
 export const AGENTS_PROPOSAL = "FACTORY-AGENTS";
 export const AGENTS_DIFF = "FACTORY-AGENTS.md";
-const SHIPPED_AGENTS = join(import.meta.dir, "../fixtures/acme-api/.factory/agents");
-export const FACTORY_AGENTS = ["overwatch", "babysitter", "maintainer", "learner"];
 
 type Outside = { label: string; target: string; proposal: string; checked: string; base: string; applied: string; stale: string; validate: (text: string) => string[] };
 
@@ -306,11 +305,12 @@ export function proposeAccount(dir: string, id: number, file = accountFile()) {
 
 // `factory agents propose <id> <name>`: the factory agent as it is (or as shipped), to edit.
 export function proposeFactoryAgent(dir: string, id: number, name: string, agents = factoryAgentsDir()) {
-  if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new Error(`"${name}" isn't an agent name (lowercase letters, digits and dashes)`);
+  // A repo agent is a file in the repo's .factory/agents/, changed in the worktree instead.
+  if (!isFactoryAgent(name)) throw new Error(`${name} isn't a factory agent (${FACTORY_AGENTS.join(", ")}); a repo agent is .factory/agents/${name}.md in the worktree`);
   const out = join(folderOf(dir, id), AGENTS_PROPOSAL, `${name}.md`);
   if (existsSync(out)) return out;
-  const own = join(agents, `${name}.md`), shipped = join(SHIPPED_AGENTS, `${name}.md`);
-  write(out, existsSync(own) ? readFileSync(own, "utf8") : existsSync(shipped) ? readFileSync(shipped, "utf8") : `---\nrole: maintain\n---\nThe ${name} agent's prompt.\n`);
+  const own = join(agents, `${name}.md`);
+  write(out, readFileSync(existsSync(own) ? own : join(SHIPPED_AGENTS, `${name}.md`), "utf8"));
   return out;
 }
 

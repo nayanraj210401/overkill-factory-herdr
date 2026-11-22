@@ -157,9 +157,9 @@ test("a factory agent is edited as a copy in the ticket's folder, checked, and w
   startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
   const copy = proposeFactoryAgent(s.dir, id, "maintainer");
   expect(readFileSync(copy, "utf8")).toBe("---\nrole: maintain\n---\nMine.\n");
-  expect(readFileSync(proposeFactoryAgent(s.dir, id, "learner"), "utf8")).toContain("The learner agent's prompt");
+  expect(readFileSync(proposeFactoryAgent(s.dir, id, "learner"), "utf8")).toContain("You are the learner"); // none of yours: the shipped default
   rmSync(join(s.dir, "tickets", String(id), "FACTORY-AGENTS", "learner.md"));
-  expect(() => proposeFactoryAgent(s.dir, id, "../x")).toThrow(/isn't an agent name/);
+  expect(() => proposeFactoryAgent(s.dir, id, "reviewer")).toThrow("reviewer isn't a factory agent (overwatch, babysitter, maintainer, learner); a repo agent is .factory/agents/reviewer.md in the worktree");
   writeFileSync(copy, "---\nrole: maintain\n---\nMine. Say in PR.md what you checked.\n");
   s.finish(id);
   expect(s.last(id, "factory agents")).toMatchObject({ result: "PASS" });
@@ -225,7 +225,7 @@ test("a look request is a PR to the factory app's develop: its own worktree, onl
     expect(create.slice(create.indexOf("--base"), create.indexOf("--base") + 2)).toEqual(["--base", "develop"]);
     expect(s.ticket(id)).toMatchObject({ stage: "merge", state: "ready", pr_number: 9 });
     // It never deploys: nothing ran sync.sh or wrote into a Herdr home.
-    expect(s.calls.some((c) => c.join(" ").includes("sync.sh"))).toBe(false);
+    expect(s.calls.filter((c) => c[0] !== "hc" && c.join(" ").includes("sync.sh"))).toEqual([]); // the brief says not to; the agent session is hc run
   } finally {
     delete process.env.FACTORY_APP_REPO;
   }

@@ -81,14 +81,21 @@ test("a running ticket at its budget parks at the stage boundary; at 80% status.
   expect(ticket(7).needs_text).toBe("Budget used up (1k/1k in, 0/100 out). Raise the budget or drop the ticket");
 });
 
+const merged = (db: any, add: any, id: number, i: number, o: number, bp = "feature", state = "merged") => {
+  add(id, bp);
+  db.query("UPDATE tickets SET state = ?, tokens_in = ?, tokens_out = ? WHERE id = ?").run(state, i, o, id);
+};
+
 test("grooming sets the budget from merged tickets on the blueprint times headroom, else per_ticket", () => {
-  const { db, dir, repo, run, add } = setup("max_running: 0\nbudget:\n  per_ticket: { input: 2M, output: 80k }\n  headroom: 2\n");
-  expect(estimateBudget(db, repo, "feature")).toEqual({ input: 2e6, output: 80e3 }); // no history
-  for (const [id, i, o, bp] of [[1, 1000, 100, "feature"], [2, 3000, 300, "feature"], [3, 99999, 9999, "chore"]] as const) {
-    add(id, bp);
-    db.query("UPDATE tickets SET state = 'merged', tokens_in = ?, tokens_out = ? WHERE id = ?").run(i, o, id);
-  }
-  expect(estimateBudget(db, repo, "feature")).toEqual({ input: 4000, output: 400 });
+  const { db, dir, repo, run, add } = setup("max_running: 0\nbudget:\n  per_ticket: { input: 2M, output: 80k }\n  headroom: 2\n  floor: 0\n");
+  expect(estimateBudget(db, repo, "feature")).toMatchObject({ input: 2e6, output: 80e3 }); // no history
+  // feature has 10 stage runs (implement counts 3): the stage floor is 1.5M in, 80k out.
+  for (const id of [1, 2, 3, 4]) merged(db, add, id, id * 1000, id * 100);
+  merged(db, add, 5, 99999, 9999, "chore");
+  expect(estimateBudget(db, repo, "feature")).toMatchObject({ input: 2e6, output: 80e3, why: "default: only 4 past feature tickets, need 5" });
+  merged(db, add, 6, 5000, 500);
+  const e = estimateBudget(db, repo, "feature")!;
+  expect(e.why).toContain("p80 of 5 past feature tickets × 2");
   // The groomed step applies it, unless you set the budget yourself while it was groomed.
   add(10); add(11);
   db.query("UPDATE tickets SET state = 'grooming' WHERE id IN (10, 11)").run();
@@ -99,8 +106,32 @@ test("grooming sets the budget from merged tickets on the blueprint times headro
     advance(db, { dir, repo, id, run, now });
   }
   const budget = (id: number) => db.query("SELECT budget_in, budget_out FROM tickets WHERE id = ?").get(id);
-  expect(budget(10)).toEqual({ budget_in: 4000, budget_out: 400 });
+  expect(budget(10)).toMatchObject({ budget_in: e.input, budget_out: e.output });
+  expect(db.query("SELECT why FROM decisions WHERE ticket = 10 AND what LIKE 'set the budget to %'").get()).toEqual({ why: e.why });
   expect(budget(11)).toEqual({ budget_in: 3_000_000, budget_out: 150_000 });
+});
+
+test("a tiny past ticket never drags the budget under the floor; per-slice stages raise it", () => {
+  const { db, repo, add } = setup("budget:\n  per_ticket: { input: 3M, output: 150k }\n  headroom: 1.5\n");
+  for (const id of [1, 2, 3, 4, 5, 6]) merged(db, add, id, 20_000, 1_000);
+  merged(db, add, 7, 20_000, 1_000, "feature", "parked"); // never reached a PR: not counted
+  const e = estimateBudget(db, repo, "feature")!;
+  expect(e).toMatchObject({ input: 1_500_000, output: 80_000 }); // 50% of per_ticket is 1.5M/75k; 10 stage runs need 80k out
+  expect(e.why).toBe("p80 of 6 past feature tickets × 1.5, floor 1.5M in, 80k out");
+  // Few tickets: the default, as is.
+  expect(estimateBudget(db, repo, "chore")).toMatchObject({ input: 3e6, output: 150e3, why: "default: only 0 past chore tickets, need 5" });
+  // A small per_ticket: the per-stage minimum times the stage runs (slices count 3) is the floor.
+  const small = setup("budget:\n  per_ticket: { input: 100k, output: 10k }\n");
+  const s = estimateBudget(small.db, small.repo, "feature")!;
+  expect(s.input).toBe(150_000 * 10);
+  expect(s.output).toBe(8_000 * 10);
+});
+
+test("enough history: p80 of input and output apart, times headroom", () => {
+  const { db, repo, add } = setup("budget:\n  per_ticket: { input: 1M, output: 20k }\n  headroom: 1.5\n  floor: 10%\n");
+  for (const [id, i] of [[1, 1e6], [2, 2e6], [3, 3e6], [4, 4e6], [5, 20e6]]) merged(db, add, id, i, i / 10, "chore");
+  // p80 of 1M..20M input is 7.2M (interpolated), of 100k..2M output 720k; the mean would be 6M.
+  expect(estimateBudget(db, repo, "chore")).toMatchObject({ input: 10_800_000, output: 1_080_000, why: "p80 of 5 past chore tickets × 1.5" });
 });
 
 test("factory.yaml's budget and plan keys validate; a typo is an error", () => {
@@ -108,5 +139,7 @@ test("factory.yaml's budget and plan keys validate; a typo is an error", () => {
   cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
   const check = (yaml: string) => { writeFileSync(join(repo, ".factory/factory.yaml"), `name: t\n${yaml}`); return validateDir(join(repo, ".factory")).flatMap((f) => f.errors.map((e) => `${f.path}: ${e}`)); };
   expect(check("budget:\n  per_ticket: { input: 3M, output: 150k }\n  headroom: 1.5\n  per_day: { input: 40M, output: 2M }\nplan:\n  pause_at: 85%\n")).toEqual([]);
+  expect(check("budget:\n  floor: 50%\n")).toEqual([]);
+  expect(check("budget:\n  floor: lots\n").join("\n")).toContain("budget.floor");
   expect(check("budget:\n  perday: { input: 1M }\n").join("\n")).toContain("perday");
 });

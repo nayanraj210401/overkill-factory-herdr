@@ -1,5 +1,6 @@
 ---
 role: maintain
+territory: "The factory itself: .factory/ in any repo, the account config, blueprints, agents, housekeeping, the factory's look and migrations; it acts on a request"
 model: claude-sonnet-5-5
 context: [REQUEST.md, TICKET.md, GATES.md, REVIEW.md]
 ---

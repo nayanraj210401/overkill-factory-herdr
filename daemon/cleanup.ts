@@ -19,7 +19,8 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
-import { accountFile, factoryAgentsDir } from "./account.ts";
+import { accountFile } from "./account.ts";
+import { factoryAgentsDir } from "./agents.ts";
 import { closeSpace, worktreeRoot } from "./herdr.ts";
 import type { Run } from "./runner.ts";
 

@@ -17,6 +17,7 @@ import { parseTokens } from "../lib/model.js";
 import { service, servicePid } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateAccount, validateDir, validateFile } from "./validate.ts";
+import { factoryAgentFiles, factoryAgentsDir, installFactoryAgents } from "./agents.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { applyMerged, isKind, proposeAccount, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
@@ -226,8 +227,11 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       : agentLike ? [{ path: sub, errors: validateFile(`agents/${basename(sub)}`, readFileSync(sub, "utf8")) }]
       : validateDir(sub ?? ".factory");
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
+    // The factory agents, one set for every repo, are checked with the account config.
+    if (!sub) for (const f of factoryAgentFiles()) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`agents/${basename(f)}`, readFileSync(f, "utf8")) });
     if (json) return log(JSON.stringify(results));
-    for (const r of results) log(r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `✓ ${r.path}`);
+    for (const r of results as { path: string; errors: string[]; warnings?: string[] }[])
+      log((r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `${r.warnings?.length ? "!" : "✓"} ${r.path}`) + (r.warnings ?? []).map((w) => `\n    ${w}`).join(""));
     const bad = results.filter((r) => r.errors.length).length;
     if (bad) throw new Error(`${bad} of ${results.length} files have problems`);
     return;
@@ -248,6 +252,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     if (cmd === "init") {
       const path = resolve(repoPath ?? ".");
       change(db, () => { setMeta(db, "name", name); setRepo(db, { slug: repo !== "unknown" ? repo : originSlug(path) ?? repo, path, lead: true }); });
+      const agents = installFactoryAgents();
+      if (agents.length) log(`the factory agents (${agents.join(", ")}) are in ${factoryAgentsDir().replace(homedir(), "~")}/, one set for every repo`);
     } else if (cmd === "setup") {
       const lead = needLead(db);
       if (sub === "skip" || sub === "unskip") {
@@ -279,6 +285,9 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         return;
       } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | trust | migrate | write [--budget …]]");
       else {
+        // The factory agents, once: a file already there is never overwritten.
+        const agents = installFactoryAgents();
+        if (agents.length && !json) log(`wrote the factory agents (${agents.join(", ")}) to ${factoryAgentsDir().replace(homedir(), "~")}/`);
         const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db), migration: migrationRequest(db) });
         log(json ? JSON.stringify({ steps }) : showSteps(steps));
         return;
