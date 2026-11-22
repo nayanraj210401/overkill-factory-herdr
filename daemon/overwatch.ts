@@ -4,7 +4,7 @@
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { getMeta, leadRepo, setMeta } from "./db.ts";
+import { getMeta, leadRepo, listRepos, setMeta } from "./db.ts";
 import { argvFor, loadAgent, type Run } from "./runner.ts";
 import { withFactory } from "./herdr.ts";
 import { loadPrompt, render } from "./prompts.ts";
@@ -30,7 +30,9 @@ export function overwatch(db: Database, o: { name: string; dir: string; run: Run
   const agent = repo ? loadAgent(repo, "overwatch") : null;
   const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, overwatchBrief({ name: o.name, dir: o.dir, repo }));
   // Auto mode, like every factory agent: it still asks before acting (its brief), never at a permission prompt.
-  if (argv[0] === "claude") argv.splice(1, 0, "--permission-mode", "auto");
+  // skipAutoPermissionPrompt: registering the repo was the consent to auto mode (handoff-hook.ts).
+  // --add-dir: it reads the repos' .factory/ too, and Claude Code asks before leaving its working directories.
+  if (argv[0] === "claude") argv.splice(1, 0, "--permission-mode", "auto", "--settings", JSON.stringify({ skipAutoPermissionPrompt: true }), ...listRepos(db).flatMap((r) => ["--add-dir", r.path]));
   const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f-overwatch-${o.name}`.slice(0, 32),
     "--cwd", o.dir, "--label", "factory.overwatch=1", ...withFactory(argv, o.dir)]);
   if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);

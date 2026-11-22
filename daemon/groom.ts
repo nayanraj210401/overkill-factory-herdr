@@ -78,7 +78,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
     triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));
   // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
-  const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? []), o.dir);
+  const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir);
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
   // later), so you can watch the triage agent and answer it. No window: a background terminal.
   const made = openAgent(o.run, { folder, space: t.space ?? null, name: "groom", argv: cmd });

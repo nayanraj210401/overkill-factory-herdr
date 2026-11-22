@@ -193,7 +193,7 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
   if (existsSync(snap)) renameSync(snap, join(o.folder, `PRECOMPACT.session-${n - 1}.md`));
   const agent = s.agent ? loadAgent(o.repo, s.agent) : null;
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
-  const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? []);
+  const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? [], [o.folder, ...ticketRepos(db, s.ticket).flatMap((r) => r.worktree ?? [])]);
   const cmd = withFactory(argv, o.dir);
   run(["hc", "kill", s.terminal]);
   db.query("UPDATE sessions SET ended_at = ? WHERE id = ?").run(o.now, s.id);
