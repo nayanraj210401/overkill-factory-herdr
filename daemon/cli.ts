@@ -94,7 +94,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
   status                             write status.json and print a summary
   run [--interval seconds] [--all] [--force]  the daemon: keep status.json fresh (--all: every factory); refuses while the service runs it
-  service install|uninstall|restart|status [--json]  keep \`factory run --all\` alive with launchd
+  service install|uninstall|start|restart|status [--json]  keep \`factory run --all\` alive with launchd
+  service login on|off               whether the daemon starts at login (off: it runs until you log out; factory service start)
 data: $FACTORY_HOME (default ~/.factory)/<name>/`;
 
 // field name → column, and how to read the value.
@@ -169,7 +170,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const [cmd, sub, ...rest] = args.filter((a) => a !== "--all" && a !== "--json" && a !== "--start" && a !== "--dry-run");
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
-  if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json });
+  if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0] });
   if (cmd === "validate") {
     const results = validateDir(sub ?? ".factory");
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });

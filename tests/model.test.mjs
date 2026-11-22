@@ -124,6 +124,15 @@ test("the Daemon bar offers what each state allows", async () => {
   assert.equal(up.text, "Running · pid 42 · starts at login");
   assert.deepEqual(up.actions, ["restart", "uninstall", "logs"]);
   assert.equal(daemonView({ installed: true, state: "spawn scheduled", pid: null }).tone, "blocked");
+  // Start at login: the checkbox's state, and what an off service shows
+  assert.equal(up.atLogin, true); // an older CLI with no at_login always started at login
+  assert.equal(daemonView({ installed: false, state: "absent", pid: null }).atLogin, null);
+  const off = daemonView({ installed: true, state: "running", pid: 42, at_login: false });
+  assert.equal(off.text, "Running · pid 42");
+  assert.equal(off.atLogin, false);
+  const stopped = daemonView({ installed: true, state: "not running", pid: null, at_login: false });
+  assert.equal(stopped.text, "Stopped · it doesn't start at login");
+  assert.deepEqual(stopped.actions, ["start", "uninstall", "logs"]);
 });
 
 test("parseTokens reads what compact writes, and what people type", () => {
