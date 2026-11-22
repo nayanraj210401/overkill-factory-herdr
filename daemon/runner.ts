@@ -320,11 +320,13 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   // The stage's agent proposed a split: it stops for you, or the parts are made now.
   const split = o.failed ? null : splitGate(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
   if (split) return { ...split, stage: at };
+  // Past the stop, a gate can only have failed the stage: a park returned above.
+  const gateFailed = gate && "failed" in gate ? gate.failed : null;
   const verdict = o.failed || gate ? null : stageVerdict(db, { dir: o.dir, repo: o.repo, id: o.id, stage: at, s: b.stages[at], now });
   // per: slice: a slice is built; the next one gets a fresh session in the same stage.
-  if (!o.failed && !gate?.failed && !verdict?.failed && b.stages[at]?.per === "slice" && finishSlice(db, { dir: o.dir, id: o.id, stage: at, now }))
+  if (!o.failed && !gateFailed && !verdict?.failed && b.stages[at]?.per === "slice" && finishSlice(db, { dir: o.dir, id: o.id, stage: at, now }))
     return { terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, blueprint: b, stage: at }), stage: at };
-  return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? gate?.failed ?? verdict?.failed ?? null }));
+  return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? gateFailed ?? verdict?.failed ?? null }));
 }
 
 function follow(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; b: Blueprint; t: Record<string, any>; at: string; failed: string | null; opened?: boolean }) {
