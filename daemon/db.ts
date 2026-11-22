@@ -216,6 +216,14 @@ export const MIGRATIONS = [
    ALTER TABLE repos ADD COLUMN app INTEGER NOT NULL DEFAULT 0;`,
   // What GitHub last said of each PR (open, draft, merged, closed), for the window's PR links; null before the first look.
   `ALTER TABLE ticket_repos ADD COLUMN pr_state TEXT CHECK (pr_state IN ('open', 'draft', 'merged', 'closed'));`,
+  // Agents ask each other (factory ask): who asked whom, what and why, the ticket it is about,
+  // and for the maintainer the request it filed. A note is delivered (typed into Overwatch's
+  // terminal, or given to the learner's or babysitter's next run) and later marked done.
+  `CREATE TABLE asks (
+     id INTEGER PRIMARY KEY, from_agent TEXT NOT NULL, to_agent TEXT NOT NULL, text TEXT NOT NULL, why TEXT,
+     about INTEGER, request INTEGER REFERENCES tickets(id), at TEXT NOT NULL, delivered_at TEXT, done_at TEXT
+   );
+   CREATE INDEX asks_open ON asks(to_agent) WHERE done_at IS NULL;`,
 ];
 
 export function open(path: string): Database {

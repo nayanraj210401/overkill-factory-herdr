@@ -1,3 +1,5 @@
+{{neighbours}}
+
 Ticket #{{ticket.id}}: {{ticket.title}}. You groom it: decide how it should be built and what must be asked before anyone starts. Change no files in the repo.
 
 {{issue}}

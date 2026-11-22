@@ -9,11 +9,12 @@ export const BUILT_IN_PROMPTS = join(import.meta.dir, "../fixtures/acme-api/.fac
 
 const TICKET = ["ticket.id", "ticket.title"];
 // What each template may name. Any other prompts/<name>.md (a stage's `prompt:`) is a stage template.
+// Every template may name {{neighbours}}, the map of the factory's agents (agents.ts).
 export const PLACEHOLDERS: Record<string, string[]> = {
-  groom: [...TICKET, "repo", "slug", "folder", "blueprints", "agent.prompt", "repos", "issue"],
-  stage: [...TICKET, "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "fix_brief", "slice", "shared", "publish"],
-  handoff: [...TICKET, "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot", "publish_handoff"],
-  overwatch: ["name", "dir", "repo", "repo_line"],
+  groom: [...TICKET, "neighbours", "repo", "slug", "folder", "blueprints", "agent.prompt", "repos", "issue"],
+  stage: [...TICKET, "neighbours", "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "fix_brief", "slice", "shared", "publish"],
+  handoff: [...TICKET, "neighbours", "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot", "publish_handoff"],
+  overwatch: ["neighbours", "agent.prompt", "home", "factories"],
 };
 export const placeholdersFor = (name: string) => PLACEHOLDERS[name] ?? PLACEHOLDERS.stage;
 
@@ -47,15 +48,17 @@ export function render(template: string, vars: Record<string, string | null | un
 
 // The factory's own prompts/<name>.md, else the built-in. A file with a bad placeholder or a
 // name with neither file is an error, so a typo fails loudly instead of sending a broken brief.
+// A template that doesn't place {{neighbours}} gets it first: every brief carries the map.
 export function loadPrompt(repo: string | null | undefined, name: string) {
+  const withMap = (text: string) => (/\{\{\s*neighbours\s*\}\}/.test(text) ? text : `{{neighbours}}\n\n${text}`);
   const own = repo ? join(repo, ".factory", "prompts", `${name}.md`) : null;
   if (own && existsSync(own)) {
     const text = readFileSync(own, "utf8");
     const errors = templateErrors(name, text);
     if (errors.length) throw new Error(`.factory/prompts/${name}.md: ${errors[0]}`);
-    return text;
+    return withMap(text);
   }
   const built = join(BUILT_IN_PROMPTS, `${name}.md`);
-  if (existsSync(built)) return readFileSync(built, "utf8");
+  if (existsSync(built)) return withMap(readFileSync(built, "utf8"));
   throw new Error(`no prompt template "${name}": there is no .factory/prompts/${name}.md`);
 }

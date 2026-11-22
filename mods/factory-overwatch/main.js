@@ -5,7 +5,8 @@ import { cliCommand } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { root, status } from "./lib/store.js";
 
-// Overwatch: the factory's own agent. This mod is the strip above the page; the live
+// Overwatch: one agent for every factory (daemon/overwatch.ts), so every factory's page shows
+// the same terminal. This mod is the strip above the page; the live
 // terminal under it is the layout's `{ agent: "focused" }` block, so the strip starts
 // overwatch (or finds the one running) and focuses it. It reads the factory's state files
 // and acts only through the factory CLI (docs/layouts/04-overwatch.png).
@@ -56,7 +57,7 @@ export default class FactoryOverwatch extends View {
     if (!sample && this.state !== "starting" && Date.now() - this.at > RECHECK) this.open(cx);
     const note = sample ? "This is sample data: start a factory (factory init) to talk to its overwatch."
       : this.state === "failed" ? this.error
-      : this.state === "ready" ? "Ask what's blocked, or to start, pause or reorder tickets. A change to the factory itself comes back as a request for you, never an edit."
+      : this.state === "ready" ? "One Overwatch for every factory. Ask what's blocked, or to start, pause or reorder tickets. A change to the factory itself comes back as a request for you, never an edit."
       : "Starting overwatch…";
     return h_flex().size_full().px(16).items_center().gap(12).text_size(13).bg(t.background)
       .child(div().font_semibold().text_color(t.foreground).child("Overwatch"))

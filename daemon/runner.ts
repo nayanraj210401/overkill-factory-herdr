@@ -29,13 +29,15 @@ import { checkCleanup } from "./cleanup.ts";
 import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
 import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from "./artifacts.ts";
-import { loadAgent } from "./agents.ts";
+import { factoryMap, loadAgent } from "./agents.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
   // Tests stub claude; one that forgot must never start the user's real Claude.
   // Tests never reach real agents or GitHub: a stub that falls through to sh gets a failure.
   if (["claude", "codex", "gh"].includes(argv[0]) && process.env.FACTORY_TEST_SANDBOX) return { code: 1, out: `${argv[0]} is stubbed in tests` };
+  // Nor start a real terminal: a test that reaches `hc run` through sh would leave a live agent behind.
+  if (argv[0] === "hc" && argv[1] === "run" && process.env.FACTORY_TEST_SANDBOX) return { code: 1, out: "hc run is stubbed in tests" };
   const r = Bun.spawnSync(resolveClaude(argv), { cwd }); // the one claude every session runs (claude-bin.ts)
   return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() };
 };
@@ -81,9 +83,11 @@ export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").r
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
 // `share`: the claude.ai links and the publish step for the stage's output (artifacts.ts); "" when sharing is off.
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}) {
+// `neighbours`: the map of the factory's agents (agents.ts), first in the brief.
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "") {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return render(template, {
+    neighbours,
     "ticket.id": String(t.id),
     "ticket.title": t.title,
     stage,
@@ -202,8 +206,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
   const share = shareFor(db, { repo: o.repo, id: o.id, folder, output: s.output });
-  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share)), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
-  const cmd = withFactory(argv, o.dir); // sessions keep the agent's own argv
+  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db))), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
+  const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id }); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   // The ticket's first worktree stage: the other repos' shell tabs join its space with it.

@@ -31,7 +31,9 @@ should be a lint rule or a test, a new stage, or making an override permanent.
 
 - **The maintainer** writes every change. Each proposal you return becomes a maintainer
   request from the learner, with your evidence in its REQUEST.md. Outside a run,
-  `factory learn suggest "<the change>" --why "<evidence>"` files one the same way.
+  `factory ask maintainer "<the change>" --why "<evidence>"` (or `factory learn suggest`) files one the same way.
+- **Notes for you:** anyone can ask you something (`factory ask learner`). Those notes come
+  after the digest; answer one with a proposal when the numbers support it.
 - **Overwatch** shows the person your requests under Config's Pending changes. You don't
   need to tell it.
 - **The babysitter** owns review comments. When a comment keeps coming back, turn it into
