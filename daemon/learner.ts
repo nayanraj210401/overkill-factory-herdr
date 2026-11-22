@@ -16,7 +16,7 @@ import { request } from "./maintainer.ts";
 import { interactionsBefore, planKnown, planMeters } from "./metrics.ts";
 import { readFactory, type Run } from "./runner.ts";
 import { factoryMap, loadAgent } from "./agents.ts";
-import { accountDayCap, dayCap, tokensToday } from "./budget.ts";
+import { accountDayCap, dayCap, learningUsage, tokensToday } from "./budget.ts";
 import { pinModel } from "./models.ts";
 import { parseTokens } from "../lib/model.js";
 
@@ -138,10 +138,16 @@ export function learningCap(repo: string): Tokens | null {
   return input || output ? { input: input || Infinity, output: output || Infinity } : null;
 }
 
-// What learner runs spent today (UTC day, as tokensToday counts).
-export function learningSpent(db: Database, now: Date): Tokens {
-  const r = db.query("SELECT SUM(tokens_in) AS i, SUM(tokens_out) AS o FROM learner_runs WHERE started_at >= ?").get(now.toISOString().slice(0, 10)) as { i: number | null; o: number | null };
-  return { input: r.i ?? 0, output: r.o ?? 0 };
+// What learning spent today: learner runs and benchmarks together (budget.ts).
+export const learningSpent = learningUsage;
+
+// Why learning may spend no more today, or null: budget.learning used (with `need`, a run's estimated input).
+export function learningHold(db: Database, repo: string, now: Date, need = 0): string | null {
+  const cap = learningCap(repo);
+  if (!cap) return null;
+  const spent = learningSpent(db, now);
+  if (spent.input + Math.max(need, 1) > cap.input || spent.output >= cap.output) return `budget.learning is spent for today (${Math.round(spent.input)}/${Math.round(cap.input)} in, ${Math.round(spent.output)}/${Math.round(cap.output)} out)`;
+  return null;
 }
 
 // Work tickets (not the maintainer's requests) that merged.
@@ -168,12 +174,7 @@ export function learnerHold(db: Database, repo: string, now: Date, need = 0): st
     const f = Math.max(used.input / day.input, used.output / day.output);
     if (f >= pause) return `the day's budget is at ${pct(f)}, past learn.pause_above ${pct(pause)}`;
   }
-  const cap = learningCap(repo);
-  if (cap) {
-    const spent = learningSpent(db, now);
-    if (spent.input + need > cap.input || spent.output >= cap.output) return `budget.learning is spent for today (${Math.round(spent.input)}/${Math.round(cap.input)} in, ${Math.round(spent.output)}/${Math.round(cap.output)} out)`;
-  }
-  return null;
+  return learningHold(db, repo, now, need);
 }
 
 type LastRun = { started_at: string; status: string; merged: number } | null;

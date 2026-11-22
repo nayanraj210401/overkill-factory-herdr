@@ -140,6 +140,14 @@ export function buildMetrics(db: Database, now = new Date(), tokenCap: number | 
     const tokens = db.query(`SELECT substr(at, 1, 10) AS day, SUM(input + cache_write_5m + cache_write_1h) AS n FROM usage WHERE at >= ? GROUP BY day`).all(from.toISOString()) as { day: string; n: number }[];
     const byStage = db.query(`SELECT COALESCE(s.stage, 'other') AS k, SUM(u.usd) AS usd FROM usage u LEFT JOIN sessions s ON s.id = u.session WHERE u.at >= ? GROUP BY k ORDER BY usd DESC`).all(from.toISOString()) as { k: string; usd: number }[];
     const byModel = db.query(`SELECT model AS k, SUM(usd) AS usd FROM usage WHERE at >= ? GROUP BY k ORDER BY usd DESC`).all(from.toISOString()) as { k: string; usd: number }[];
+    // Learning apart from work: the learner's runs and benchmark runs (budget.learning's two spenders).
+    const learn = (col: string) => {
+      const out = new Map<string, number>();
+      for (const t of ["learner_runs", "bench_runs"]) {
+        try { for (const r of db.query(`SELECT substr(started_at, 1, 10) AS day, SUM(${col}) AS n FROM ${t} WHERE started_at >= ? GROUP BY day`).all(from.toISOString()) as { day: string; n: number | null }[]) out.set(r.day, (out.get(r.day) ?? 0) + (r.n ?? 0)); } catch { /* an older database */ }
+      }
+      return dates.map((d) => out.get(d) ?? 0);
+    };
     const blueprints = [...new Set(cur.merged.map((m) => m.blueprint))].sort();
     ranges[String(days)] = {
       headline: {
@@ -164,6 +172,8 @@ export function buildMetrics(db: Database, now = new Date(), tokenCap: number | 
         return ms.length ? round(ms.filter((m) => !m.retries).length / ms.length, 3) : null;
       }),
       tokens_in_per_day: dates.map((d) => tokens.find((t) => t.day === d)?.n ?? 0),
+      learning_tokens_in_per_day: learn("tokens_in"),
+      learning_usd_per_day: learn("usd").map((n) => round(n)),
       tokens_in_cap: tokenCap && Number.isFinite(tokenCap) ? tokenCap : null,
       usd_by_agent_per_day: spendSeries(db, "COALESCE(s.agent, s.stage, 'other')", from, dates),
       usd_by_model_per_day: spendSeries(db, "u.model", from, dates),
