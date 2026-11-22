@@ -80,7 +80,7 @@
       "state": "grooming",
       "blueprint": "feature",
       "stage": "grooming",
-      "detail": "2 questions",
+      "detail": "3 questions",
       "updated_at": "2026-11-21T09:40:00Z",
       "tokens": {
         "input": 180000,
@@ -96,8 +96,13 @@
       "blocked_by": null,
       "needs": {
         "kind": "question",
-        "text": "Product: per user or per IP? Asked @dana on #421. Engineering: keep old indexes? Yours to answer (u)"
-      }
+        "text": "3 questions · Q1: Should searches wait during a rebuild, or keep using the old index? (product: waiting on @dana)"
+      },
+      "questions": [
+        { "n": 1, "kind": "product", "text": "Should searches wait during a rebuild, or keep using the old index until the new one is ready?" },
+        { "n": 2, "kind": "engineering", "text": "Keep the old index for a day after a rebuild, or drop it at once?" },
+        { "n": 3, "kind": "product", "text": "Index only tickets, or comments and attachments too?" }
+      ]
     },
     {
       "id": 425,
@@ -147,6 +152,7 @@
       "blocked_by": null,
       "needs": null,
       "session": 2,
+      "terminal": "t7",
       "repos": [
         {
           "slug": "acme/api",

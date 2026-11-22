@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { main, paths } from "./cli.ts";
 import { statusMd, summary } from "./ticket.ts";
 import { parseStatusMd } from "../lib/model.js";
+import { validateStatus } from "../lib/status.js";
+import { open } from "./db.ts";
+import { buildStatus } from "./status.ts";
 
 function factory() {
   process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "factory-"));
@@ -59,4 +62,40 @@ test("every state opens with one plain sentence", () => {
   expect(summary({ ...base, state: "ready", pr: { number: 7 } })).toBe("T is ready: PR #7, at $0.50 so far.");
   expect(summary({ ...base, state: "parked", needs: { text: "retries used up" } })).toBe("T is parked: retries used up.");
   expect(summary({ ...base, state: "blocked", blocked_by: 425 })).toBe("T waits on #425.");
+});
+
+test("a stage entered again is one step with its rounds, in blueprint order", () => {
+  const { run, file } = factory();
+  run("ticket", "add", "412", "Rate-limit", "login");
+  run("ticket", "set", "412", "state=running");
+  run("stage", "412", "Implement", "round", "1", "--next", "Verify,PR");
+  for (const round of [1, 2, 3]) {
+    run("stage", "412", "Verify", "check: tests");
+    run("stage", "412", "Implement", `round ${round + 1}`, "--next", "Verify,PR");
+  }
+  const md = file(412, "STATUS.md");
+  expect(md.match(/^- .*Implement/gm)).toHaveLength(1);
+  expect(md.match(/^- .*Verify/gm)).toHaveLength(1);
+  let { stages } = parseStatusMd(md);
+  expect(stages.map((s: any) => [s.state, s.name])).toEqual([["now", "Implement"], ["done", "Verify"], ["next", "PR"]]);
+  expect(stages[0].detail).toBe("4 rounds · round 4");
+  expect(stages[1].detail).toBe("failed 3× · check: tests");
+  run("stage", "412", "Verify", "check: tests", "--next", "PR");
+  run("stage", "412", "PR");
+  stages = parseStatusMd(file(412, "STATUS.md")).stages;
+  expect(stages.map((s: any) => s.name)).toEqual(["Implement", "Verify", "PR"]);
+  expect(stages[1].detail).toBe("failed 3×, then passed · check: tests");
+  expect(stages[0].detail).toBe("4 rounds · round 4");
+});
+
+test("status.json lists a grooming ticket's open questions, numbered", () => {
+  const { run } = factory();
+  run("ticket", "add", "421", "Search", "index");
+  run("ticket", "set", "421", "state=grooming");
+  run("question", "421", "product", "Per user?");
+  run("question", "421", "engineering", "Keep old indexes?");
+  const s = buildStatus(open(paths("acme-api").db));
+  expect((s.tickets.find((t: any) => t.id === 421) as any).questions).toEqual([
+    { n: 1, kind: "product", text: "Per user?" }, { n: 2, kind: "engineering", text: "Keep old indexes?" }]);
+  expect(validateStatus(s)).toEqual([]);
 });
