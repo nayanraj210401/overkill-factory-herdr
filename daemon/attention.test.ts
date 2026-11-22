@@ -21,15 +21,18 @@ function setup() {
   startTicket(db, { dir, repo, id: 7, run: (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: '{"address":"t1"}' } : sh(argv, cwd)) });
   const p = { dir, db: join(dir, "factory.db"), status: join(dir, "status.json") };
   // The agent's terminal as `hc get` reports it: alive, Claude in front, Herdr's agent status.
-  const tick = (agent: string) => {
-    const hc: Run = (argv) => argv[0] === "hc" && argv[1] === "get" ? { code: 0, out: JSON.stringify({ exit_code: null, pid: 1, foreground: { pid: 2 }, status: { app: "claude-code", state: agent } }) }
+  // No agent status (null): Claude Code hasn't reported one yet.
+  const tick = (agent: string | null) => {
+    const hc: Run = (argv) => argv[0] === "hc" && argv[1] === "get" ? { code: 0, out: JSON.stringify({ exit_code: null, pid: 1, foreground: { pid: 2 }, ...(agent ? { status: { app: "claude-code", state: agent } } : {}) }) }
       : argv[0] === "gh" ? { code: 0, out: '{"state":"OPEN","body":"","assignees":[]}' } : sh(argv);
     const logs: string[] = [];
     watchSessions(db, p, hc, (s) => logs.push(s));
     return logs;
   };
   const ticket = () => db.query("SELECT state, stage, needs_kind, needs_text FROM ticket_lead WHERE id = 7").get() as any;
-  return { db, tick, ticket };
+  // The session started this long ago.
+  const startedAgo = (ms: number) => db.query("UPDATE sessions SET started_at = ? WHERE ticket = 7").run(new Date(Date.now() - ms).toISOString());
+  return { db, tick, ticket, startedAgo };
 }
 
 test("an agent blocked on you in its terminal puts the ticket in Needs you until it moves on", () => {
@@ -49,4 +52,24 @@ test("attention never overwrites another need, and clears only its own", () => {
   expect(noteAttention(s.db, { ticket: 7, terminal: "t1", waiting: true, now: "x" })).toBeNull();
   expect(noteAttention(s.db, { ticket: 7, terminal: "t1", waiting: false, now: "x" })).toBeNull();
   expect(s.ticket()).toMatchObject({ needs_kind: "question", needs_text: "split?" });
+});
+
+test("a prompt before the session reports any status (auto mode consent, trust this folder) is waiting on you after a minute", () => {
+  const s = setup();
+  s.startedAgo(30_000);
+  s.tick(null);
+  expect(s.ticket()).toMatchObject({ state: "running", needs_kind: null }); // still starting
+  s.startedAgo(61_000);
+  expect(s.tick(null)).toContain("factory: #7's agent in t1 is waiting on you");
+  expect(s.ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: "attention", needs_text: "Waiting on you in its terminal (t1): open it to answer" });
+  s.tick("working"); // the prompt was answered and the session started
+  expect(s.ticket()).toMatchObject({ state: "running", needs_kind: null, needs_text: null });
+});
+
+test("a silent terminal never overwrites another need", () => {
+  const s = setup();
+  s.db.query("UPDATE tickets SET needs_kind = 'parked', needs_text = 'over budget' WHERE id = 7").run();
+  s.startedAgo(120_000);
+  s.tick(null);
+  expect(s.ticket()).toMatchObject({ needs_kind: "parked", needs_text: "over budget" });
 });
