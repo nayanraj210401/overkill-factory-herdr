@@ -6,12 +6,7 @@
 //                  with the difference as questions; a cosmetic edit is noted and ignored
 //   pulled back    closed, unassigned, or out of the Project's Ready column: paused, and Needs
 //                  you asks "keep or drop the branch?" (`factory resume` keeps, `factory drop`)
-//
-// TODO(split), in the plan's words: "Grooming, or any stage later, can find that a ticket is
-// really several. It proposes sub-tickets with their scope and order, as GitHub sub-issues.
-// Creating them is a gate (`tickets.split: human` by default; `auto` creates them itself).
-// Work already done stays on the branch and moves to the sub-ticket it belongs to; the parent
-// closes when all its children merge." Not built.
+//   split          daemon/split.ts: a ticket that is really several becomes sub-issues
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -230,24 +225,31 @@ function follow(db: Database, o: { dir: string; repo: string; run: Run; now: str
 
 // `factory drop <id>`: the worktrees go, the ticket closes; the branch and its .md files stay.
 export function dropTicket(db: Database, o: { id: number; run: Run; now: string }) {
-  const t = db.query("SELECT state, space FROM tickets WHERE id = ?").get(o.id) as Row | null;
+  const t = db.query("SELECT state FROM tickets WHERE id = ?").get(o.id) as Row | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state === "merged" || t.state === "closed") throw new Error(`#${o.id} is ${t.state} already`);
   if (db.query("SELECT 1 FROM tickets WHERE id = ? AND location = 'cloud'").get(o.id)) throw new Error(`#${o.id} is in the cloud; bring it back first (⇧L)`);
+  return closeTicket(db, { ...o, who: "you", what: "dropped" });
+}
+
+// Closes a ticket: its live sessions stop and its worktrees go (one with uncommitted work stays).
+export function closeTicket(db: Database, o: { id: number; run: Run; now: string; who: string; what: string; why?: string }) {
+  const space = (db.query("SELECT space FROM tickets WHERE id = ?").get(o.id) as Row).space;
   const live = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
-  db.query("UPDATE stages SET ended_at = ?, detail = 'dropped' WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  db.query("UPDATE stages SET ended_at = ?, detail = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.what, o.id);
   db.query("DELETE FROM planned WHERE ticket = ?").run(o.id);
   db.query("UPDATE tickets SET state = 'closed', detail = NULL, needs_kind = NULL, needs_text = NULL, blocked_by = NULL, updated_at = ? WHERE id = ?").run(o.now, o.id);
   for (const s of live) o.run(["hc", "kill", s.terminal]);
   const repos = ticketRepos(db, o.id).filter((r) => r.worktree);
-  if (repos.length) closeSpace(o.run, t.space);
+  if (repos.length) closeSpace(o.run, space);
   let left = 0;
   for (const r of repos) {
     if (o.run(["git", "-C", r.path, "worktree", "remove", r.worktree!]).code === 0) setWork(db, o.id, { worktree: null }, r.repo);
     else left++;
   }
   if (repos.length && !left) db.query("UPDATE tickets SET space = NULL WHERE id = ?").run(o.id);
-  note(db, o.id, "you", "dropped", `${repos.length - left} worktree${repos.length - left === 1 ? "" : "s"} removed; the branch stays${left ? `; ${left} worktree with uncommitted work stays` : ""}`, o.now);
+  const removed = `${repos.length - left} worktree${repos.length - left === 1 ? "" : "s"} removed; the branch stays${left ? `; ${left} worktree with uncommitted work stays` : ""}`;
+  note(db, o.id, o.who, o.what, o.why ? `${o.why}; ${removed}` : removed, o.now);
   return { removed: repos.length - left, left };
 }
