@@ -287,5 +287,33 @@
     }
    ]
   }
+ },
+ "agreement": {
+  "rate": 0.88,
+  "examples": 42,
+  "agreed": 37,
+  "failed": 1,
+  "model": "claude-haiku-5-5",
+  "at": "2026-11-21T03:10:00.000Z",
+  "min": 0.85,
+  "ok": true,
+  "why": "the judge matches the person's verdict on 88% of past comments (away.min_agreement 85%)",
+  "by_verdict": [
+   {
+    "verdict": "fix",
+    "examples": 30,
+    "agreed": 28
+   },
+   {
+    "verdict": "pushback",
+    "examples": 8,
+    "agreed": 6
+   },
+   {
+    "verdict": "escalate",
+    "examples": 4,
+    "agreed": 3
+   }
+  ]
  }
 }

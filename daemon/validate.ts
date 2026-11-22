@@ -15,7 +15,9 @@ type Rule =
 const str = "string" as const, num = "number" as const, strs = "strings" as const;
 const open = { object: {}, open: true };
 const gate = { enum: ["human", "auto"] };
-const LEARN_TARGETS = ["cost_per_pr", "time_to_pr", "interactions_per_pr", "review_rounds_per_pr"];
+// away: in factory.yaml and in the account's config.yaml (daemon/away.ts).
+const AWAY: Rule = { object: { blueprints: strs, budget: str, review_rounds: num, never: strs, min_agreement: num } };
+const LEARN_TARGETS =["cost_per_pr", "time_to_pr", "interactions_per_pr", "review_rounds_per_pr"];
 
 const STAGE: Rule = {
   object: {
@@ -32,7 +34,7 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: open, maintainer: open,
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, maintainer: open,
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
   },
@@ -64,7 +66,7 @@ export const ACCOUNT: Rule = {
   object: {
     plan: { object: { limits: { object: { five_hour: "any", week: "any" } }, pause_at: "any" } },
     budget: { object: { per_day: { object: { input: "any", output: "any" } } } },
-    away: { object: { blueprints: strs, budget: str, review_rounds: num, never: strs, min_agreement: num } },
+    away: AWAY,
     profile: { object: { taste: strs, rules: strs } },
   },
 };
@@ -74,7 +76,14 @@ export function validateAccount(text: string): string[] {
   try { doc = Bun.YAML.parse(text); } catch (e) { return [`YAML: ${(e as Error).message.split("\n")[0]}`]; }
   const errors = duplicateKeys(text);
   if (doc != null) check(doc, ACCOUNT, "", errors);
+  awayRange(doc, errors);
   return errors;
+}
+
+// A share, so 85 (meaning 85%) can't quietly close the gate for good.
+function awayRange(doc: unknown, errors: string[]) {
+  const m = (doc as any)?.away?.min_agreement;
+  if (typeof m === "number" && (m < 0 || m > 1)) errors.push("away.min_agreement: a share from 0 to 1, like 0.85 (0 turns the agreement gate off)");
 }
 
 // `every: 30m | 6h | 1d`, in milliseconds; null when it isn't that.
@@ -185,6 +194,7 @@ export function validateFile(path: string, text: string): string[] {
     const rb = (doc as any)?.review?.round_budget;
     if (rb !== undefined && !/^\s*(\d+(\.\d+)?\s*%|\d+(\.\d+)?\s*[kKmM]?(\s*\/\s*\d+(\.\d+)?\s*[kKmM]?)?)\s*$/.test(String(rb)))
       errors.push("review.round_budget: a share of the ticket's budget (25%) or tokens (200k, or 200k/20k for input/output)");
+    awayRange(doc, errors);
   }
   if (kind === "trigger") {
     const t = doc as any;

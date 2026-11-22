@@ -1,7 +1,8 @@
 // The numbers Home and the status bar show that aren't plain sums: the plan meters,
 // human interactions per PR, and the revert rate.
 import type { Database } from "bun:sqlite";
-import { getMeta, setMeta } from "./db.ts";
+import { getMeta, leadRepo, setMeta } from "./db.ts";
+import { agreementMetrics } from "./agreement.ts";
 import type { Run } from "./runner.ts";
 import { planFile, readPlan, usedNow } from "./planline.ts";
 import { readAccount } from "./account.ts";
@@ -153,5 +154,6 @@ export function buildMetrics(db: Database, now = new Date()) {
       }),
     };
   }
-  return { generated_at: now.toISOString(), ranges };
+  // The babysitter's agreement with you: not per range, it is the latest benchmark run.
+  return { generated_at: now.toISOString(), ranges, agreement: agreementMetrics(db, leadRepo(db)?.path ?? null) };
 }

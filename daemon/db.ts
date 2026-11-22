@@ -167,6 +167,19 @@ export const MIGRATIONS = [
      PRIMARY KEY (ticket, round)
    );
    CREATE TABLE review_posts (ticket INTEGER NOT NULL, round INTEGER NOT NULL, repo TEXT NOT NULL, posted_at TEXT NOT NULL, PRIMARY KEY (ticket, round, repo));`,
+  // Agreement benchmark: your own verdict on a comment (`factory label`), and each run that
+  // re-judged the labelled comments, with what the judge said for each.
+  `ALTER TABLE comments ADD COLUMN label TEXT CHECK (label IN ('fix', 'pushback', 'escalate'));
+   ALTER TABLE comments ADD COLUMN labelled_at TEXT;
+   CREATE TABLE agreement_runs (
+     id INTEGER PRIMARY KEY, model TEXT NOT NULL, examples INTEGER NOT NULL, agreed INTEGER NOT NULL, failed INTEGER NOT NULL,
+     rate REAL NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL
+   );
+   CREATE TABLE agreement_items (
+     run INTEGER NOT NULL REFERENCES agreement_runs(id), ticket INTEGER NOT NULL, n INTEGER NOT NULL,
+     yours TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('you', 'kept')), got TEXT, why TEXT,
+     PRIMARY KEY (run, ticket, n)
+   );`,
 ];
 
 export function open(path: string): Database {
