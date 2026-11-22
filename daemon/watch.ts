@@ -70,7 +70,7 @@ export function watchPrs(db: Database, o: { dir: string; repo: string; me: strin
         if (!count) return;
         // A cheap model proposes a verdict for each; the notes show it, and the fix brief starts from the fix ones.
         for (const s of stored) prejudge(db, { repo: o.repo, ticket: id, rows: s.rows, run: o.run, now: o.now });
-        writeBrief(db, { dir: o.dir, ticket: id, round: openRound(db, id, o.now) });
+        writeBrief(db, { dir: o.dir, ticket: id, round: openRound(db, id, o.now), repo: o.repo });
         const notes = stored.map((s) => commentsNote({ ticket: id, pr: s.pr, rows: s.rows, limit }));
         const on = open.length > 1 ? open.map((p) => name(p.r)).join(", ") : name(open[0].r);
         const park = reviewRoundsLeft(db, o.repo, id) <= 0 ? `${count} new review comment${count > 1 ? "s" : ""} on ${on}; away.review_rounds is used up while you're away` : undefined;

@@ -44,7 +44,14 @@ export function pauseAt(repo: string) {
 export function tokensToday(db: Database, now: Date, every = false): Tokens {
   const q = "SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o FROM usage WHERE at >= ?";
   const day = now.toISOString().slice(0, 10);
-  const one = (d: Database) => d.query(q).get(day) as { i: number | null; o: number | null };
+  // The learner's own calls (learner.ts) count too: budget.learning is a share of the day.
+  const one = (d: Database) => {
+    const r = d.query(q).get(day) as { i: number | null; o: number | null };
+    try {
+      const l = d.query("SELECT SUM(tokens_in) AS i, SUM(tokens_out) AS o FROM learner_runs WHERE started_at >= ?").get(day) as { i: number | null; o: number | null };
+      return { i: (r.i ?? 0) + (l.i ?? 0), o: (r.o ?? 0) + (l.o ?? 0) };
+    } catch { return r; } // a database from before learner runs
+  };
   const rows = [one(db)];
   if (every) {
     const mine = db.filename ? resolve(db.filename) : null;
