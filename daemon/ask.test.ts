@@ -134,6 +134,6 @@ test("factory ask, asks and asks done from the CLI; factory request stays a requ
   expect(JSON.parse(readFileSync(paths("acme-api").status, "utf8")).asks).toEqual([]);
   out.length = 0;
   cli("asks", "overwatch");
-  expect(out).toEqual(["no open notes for overwatch"]);
+  expect(out).toEqual(["no open notes for overwatch", expect.stringMatching(/^Note #1 .* \[done\]$/)]);
   expect(() => cli("ask", "pr-writer", "x")).toThrow(/Repo agents work one stage/);
 });

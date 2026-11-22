@@ -115,10 +115,7 @@
               "id": "reviews",
               "type": "block",
               "content": {
-                "mod": "factory-soon",
-                "props": {
-                  "page": "reviews"
-                }
+                "mod": "factory-reviews"
               }
             },
             {

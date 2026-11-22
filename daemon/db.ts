@@ -232,6 +232,8 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
      about INTEGER, request INTEGER REFERENCES tickets(id), at TEXT NOT NULL, delivered_at TEXT, done_at TEXT
    );
    CREATE INDEX asks_open ON asks(to_agent) WHERE done_at IS NULL;`,
+  // What a babysitter note has been used for: the fix round that carried a ticket's note, or how many judgements a general note has been in.
+  addColumn("asks", "used", "INTEGER NOT NULL DEFAULT 0"),
   // The plan limit (planlimit.ts): when a ticket the limit stopped starts its next session.
   addColumn("tickets", "resume_at", "TEXT"),
   // Bandit tuning (experiments.ts): the value each ticket ran with for each tunable setting it

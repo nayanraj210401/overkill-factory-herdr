@@ -184,6 +184,8 @@ export default class FactoryHome extends View {
         .child(tile("Time to PR", `${d.time_to_pr_min}m`))
         .child(tile("Cost per PR", `$${d.cost_per_pr_usd.toFixed(2)}`))
         .child(tile("Interactions / PR", String(d.interactions_per_pr)))
-        .child(tile("Revert rate", `${Math.round(d.revert_rate * 100)}%`)));
+        .child(tile("Revert rate", `${Math.round(d.revert_rate * 100)}%`)))
+      .children((s.auto_gates ?? []).map((g) => div().id(`auto-${g.blueprint}`).pt(6).text_size(12).text_color(g.reverted ? t.blocked : t.muted)
+        .child(`${g.blueprint} merges itself (gate: auto) · ${g.reverted} of ${g.merged} merged in 30 days reverted (${Math.round(g.revert_rate * 100)}%)`)));
   }
 }

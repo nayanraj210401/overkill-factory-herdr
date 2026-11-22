@@ -21,6 +21,7 @@ for dir in mods/factory-*/; do
   mkdir -p "$home/mods/$name/lib"
   cp lib/*.js "$home/mods/$name/lib/"
   printf 'export default %s;\n' "$(cat fixtures/acme-api/status.json)" > "$home/mods/$name/lib/sample.js"
+  printf 'export default %s;\n' "$(cat fixtures/acme-api/reviews.json)" > "$home/mods/$name/lib/sample-reviews.js"
   # How the window runs the factory CLI: bun + this checkout's source, so it can't go
   # stale the way a dist/factory built from an older commit can.
   printf 'export default ["%s", "%s"];\n' "$(command -v bun)" "$PWD/daemon/cli.ts" > "$home/mods/$name/lib/cli.js"
