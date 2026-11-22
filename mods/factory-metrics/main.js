@@ -1,7 +1,7 @@
-import { View, div } from "gpui-kit";
+import { View, div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, readTextFile, watchFolder, checking, props } from "herdr";
-import { validateMetrics, headlineTiles, minutes, bars, agreementCard } from "./lib/metrics.js";
+import { theme, settings, appHome, readTextFile, watchFolder, checking, props } from "herdr";
+import { validateMetrics, headlineTiles, minutes, agreementCard, chartCards, chartAsset, CHART } from "./lib/metrics.js";
 import { validateBenchmarks, variantRows, suiteNote, COLUMNS } from "./lib/benchmarks.js";
 import { root } from "./lib/store.js";
 
@@ -17,6 +17,7 @@ export default class FactoryMetrics extends View {
     this.benchError = null;
     this.tab = TABS.includes(props()?.tab) ? props().tab : "Throughput"; // a prop only smoke.sh passes
     this.days = "7";
+    this.width = 0; // the page's, for the charts' height
     cx.spawn(async (cx) => {
       for (;;) {
         const dir = root();
@@ -60,12 +61,31 @@ export default class FactoryMetrics extends View {
       .child(body);
   }
 
-  // Columns for a series, tallest = 100px; each labelled under with its day's date.
-  columns(t, id, xs, days, fmt) {
-    const hs = bars(xs);
-    return h_flex().id(id).h(130).items_end().gap(days.length > 10 ? 2 : 8).children(xs.map((x, i) => v_flex().flex_1().items_center().gap(4)
-      .child(div().w_full().h(Math.max(hs[i] * 100, x ? 2 : 0)).rounded(3).bg(t.accent))
-      .when(days.length <= 10, (el) => el.child(div().text_size(10).text_color(t.dim).child(x == null ? "–" : fmt(x))))));
+  // A line chart card: its label, the headline number, a legend for several series, and the
+  // daemon's SVG for this appearance (daemon/charts.ts), scaled to the card's width.
+  chart(t, c) {
+    const inner = this.width ? (this.width - 32 - 10) / 2 - 32 : 0;
+    const legend = h_flex().gap(14).flex_wrap().text_size(12).text_color(t.muted).children(c.legend.map((l) => h_flex().gap(6).items_center()
+      .child(l.color ? div().w(10).h(10).rounded(2).bg(l.color) : div().w(12).h(0).border_t(2).border_color(t.muted))
+      .child(l.name)));
+    return v_flex().id(`chart-${c.id}`).flex_1().min_w(0).p(16).gap(6).rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .child(div().text_color(t.muted).child(c.title))
+      .child(h_flex().gap(8).items_baseline()
+        .child(div().text_size(24).font_semibold().text_color(t.foreground).child(c.value))
+        .child(div().text_size(12).text_color(t.dim).child(c.note)))
+      .when(c.legend.length > 0, (el) => el.child(legend))
+      .child(c.image
+        ? image(c.image).w_full().h(inner > 0 ? Math.round((inner * CHART.h) / CHART.w) : 150)
+        : div().h(150).text_color(t.dim).child("The daemon draws this chart with the next metrics.json."));
+  }
+
+  // A tab's charts, two to a row; extra cards (not charts) fill the last row.
+  charts(t, tab, extra = []) {
+    const mode = settings().dark ? "dark" : "light";
+    const cards = chartCards(this.doc, this.days, tab, mode, (file) => chartAsset(root(), appHome(), file)).map((c) => this.chart(t, c)).concat(extra);
+    const rows = [];
+    for (let i = 0; i < cards.length; i += 2) rows.push(h_flex().gap(10).items_start().child(cards[i]).child(cards[i + 1] ?? div().flex_1()));
+    return rows;
   }
 
   rows(t, pairs) {
@@ -79,29 +99,18 @@ export default class FactoryMetrics extends View {
       .children(TABS.map((x) => this.chip(t, `tab-${x}`, x, x === this.tab, (_e, cx) => { this.tab = x; cx.notify(); })))
       .child(div().flex_1())
       .children(["7", "30"].map((d) => this.chip(t, `days-${d}`, `Last ${d} days`, d === this.days, (_e, cx) => { this.days = d; cx.notify(); })));
-    const page = v_flex().size_full().p(16).gap(12).text_size(13).bg(t.background).overflow_y_scroll().child(head);
+    const page = v_flex().id("root").on_size_change((size, cx) => { this.width = size.width; cx.notify(); }).size_full().p(16).gap(12).text_size(13).bg(t.background).overflow_y_scroll().child(head);
     if (!r) return page.child(div().text_color(t.muted).child(this.error ?? "Loading…"));
     const tiles = h_flex().gap(10).children(headlineTiles(r, this.days).map((x) => v_flex().flex_1().p(14).gap(4).rounded(10).bg(t.surface).border(1).border_color(t.border)
       .child(div().text_color(t.muted).child(x.label))
       .child(div().text_size(24).font_semibold().text_color(t.foreground).child(x.value))
       .child(div().text_size(12).text_color(t.dim).child(x.sub))));
     page.child(tiles);
-    if (this.tab === "Throughput") return page
-      .child(h_flex().gap(10).items_start()
-        .child(this.card(t, "Cycle time, median", `${r.prs_merged} merged`, this.rows(t, [
-          ["Pickup → PR", minutes(r.cycle.pickup_to_pr_min)], ["PR → merge", minutes(r.cycle.pr_to_merge_min)], ["Pickup → merge", minutes(r.cycle.pickup_to_merge_min)]])).flex_1())
-        .child(this.card(t, "PRs merged per day", `${r.prs_merged} in ${this.days} days`, this.columns(t, "merged", r.merged_per_day, r.days, String)).flex_1()))
-      .child(this.card(t, "Human interactions per PR", "lower means more hands-off", this.columns(t, "inter", r.interactions_per_day, r.days, String)));
-    if (this.tab === "Cost") {
-      const spent = r.usd_per_day.reduce((a, b) => a + b, 0);
-      const list = (xs) => this.rows(t, xs.length ? xs.map((x) => [x.name, `$${x.usd.toFixed(2)}`]) : [["Nothing spent yet", ""]]);
-      return page
-        .child(this.card(t, "Spend per day", `$${spent.toFixed(2)} in ${this.days} days`, this.columns(t, "spend", r.usd_per_day, r.days, (x) => `$${x.toFixed(0)}`)))
-        .child(h_flex().gap(10).items_start()
-          .child(this.card(t, "By stage", null, list(r.usd_by_stage)).flex_1())
-          .child(this.card(t, "By model", null, list(r.usd_by_model)).flex_1()));
-    }
-    if (this.tab === "Quality") return page.child(this.card(t, "By blueprint", "merged PRs in range", r.quality.length
+    if (this.tab === "Throughput") return page.children(this.charts(t, "Throughput", [
+      this.card(t, "Cycle time, median", `${r.prs_merged} merged`, this.rows(t, [
+        ["Pickup → PR", minutes(r.cycle.pickup_to_pr_min)], ["PR → merge", minutes(r.cycle.pr_to_merge_min)], ["Pickup → merge", minutes(r.cycle.pickup_to_merge_min)]])).flex_1()]));
+    if (this.tab === "Cost") return page.children(this.charts(t, "Cost"));
+    if (this.tab === "Quality") return page.children(this.charts(t, "Quality")).child(this.card(t, "By blueprint", "merged PRs in range", r.quality.length
       ? v_flex().gap(8).children(r.quality.map((q) => h_flex().gap(16)
         .child(div().flex_1().text_color(t.foreground).child(q.blueprint))
         .child(div().w(110).text_color(t.muted).child(`${q.merged} merged`))

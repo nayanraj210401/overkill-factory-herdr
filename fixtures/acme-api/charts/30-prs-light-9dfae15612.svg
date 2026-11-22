@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 180" width="1040" height="360">
+<line x1="46" x2="510" y1="156" y2="156" stroke="#dfdfe0" stroke-width="1"/>
+<text x="38" y="160" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#76787c">0</text>
+<line x1="46" x2="510" y1="83" y2="83" stroke="#dfdfe0" stroke-width="1"/>
+<text x="38" y="87" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#76787c">1</text>
+<line x1="46" x2="510" y1="10" y2="10" stroke="#dfdfe0" stroke-width="1"/>
+<text x="38" y="14" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#76787c">2</text>
+<text x="46" y="174" text-anchor="start" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#76787c">Oct 23</text>
+<text x="206" y="174" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#76787c">Nov 2</text>
+<text x="350" y="174" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#76787c">Nov 11</text>
+<text x="510" y="174" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#76787c">Nov 21</text>
+<polyline points="46,156 62,10 78,83 94,83 110,10 126,83 142,10 158,83 174,10 190,83 206,83 222,10 238,83 254,10 270,83 286,10 302,83 318,83 334,10 350,83 366,10 382,83 398,10 414,83 430,83 446,10 462,83 478,10 494,83 510,10" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="46,156 62,156 78,10 94,83 110,10 126,83 142,10 158,83 174,10 190,83 206,83 222,10 238,83 254,10 270,83 286,83 302,10 318,83 334,10 350,83 366,10 382,83 398,10 414,83 430,83 446,10 462,83 478,10 494,83 510,83" fill="none" stroke="#eb6834" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

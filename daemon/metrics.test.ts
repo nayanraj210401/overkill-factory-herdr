@@ -69,4 +69,14 @@ test("metrics.json: medians, merges per day, spend by stage and model, quality b
   expect(r.usd_by_stage).toEqual([{ name: "implement", usd: 3 }]);
   expect(r.usd_by_model).toEqual([{ name: "claude-sonnet-5-5", usd: 3 }]);
   expect(r.quality).toEqual([{ blueprint: "feature", merged: 2, reverted: 1, retries_per_ticket: 1 }]);
+  // Per day for the charts: null where nothing happened, so the line breaks instead of reading 0.
+  expect(r.days.at(-1)).toBe("2026-11-21");
+  expect(r.opened_per_day).toEqual([0, 0, 0, 0, 0, 1, 1]);
+  expect(r.time_to_pr_per_day).toEqual([null, null, null, null, null, 180, 60]);
+  expect(r.revert_rate_per_day).toEqual([null, null, null, null, null, 1, 0]);
+  expect(r.first_try_per_day).toEqual([null, null, null, null, null, 0, 0]); // both retried once
+  expect(r.usd_by_agent_per_day).toEqual([{ name: "implement", values: [0, 0, 0, 0, 0, 0, 3] }]); // no agent named: its stage
+  expect(r.usd_by_model_per_day).toEqual([{ name: "claude-sonnet-5-5", values: [0, 0, 0, 0, 0, 0, 3] }]);
+  expect(r.tokens_in_cap).toBeNull();
+  expect((buildMetrics(db, now, 4e7).ranges as any)["7"].tokens_in_cap).toBe(4e7);
 });
