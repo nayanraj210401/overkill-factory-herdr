@@ -7,6 +7,17 @@ import { PAGES, STACK } from "../lib/pages.js";
 const root = new URL("..", import.meta.url);
 const block = (id, mod, props, extra = {}) => ({ id, type: "block", ...extra, content: props ? { mod, props } : { mod } });
 
+// A page that is a live agent terminal: its mod is a strip that starts the agent and focuses it.
+const agentPage = (p) => ({
+  id: p.id,
+  type: "column",
+  resizable: false,
+  children: [
+    block(`${p.id}-bar`, p.mod, null, { size: { px: 56 } }),
+    { id: `${p.id}-terminal`, type: "block", size: { weight: 1 }, content: { agent: "focused" } },
+  ],
+});
+
 export function layout() {
   return {
     id: "root",
@@ -44,7 +55,7 @@ export function layout() {
             type: "stack",
             active: PAGES[0].id,
             padding: 8,
-            children: PAGES.map((p) => block(p.id, p.mod ?? "factory-soon", p.mod ? null : { page: p.id })),
+            children: PAGES.map((p) => p.agent ? agentPage(p) : block(p.id, p.mod ?? "factory-soon", p.mod ? null : { page: p.id })),
           },
           block("status", "factory-status", null, { size: { px: 30 } }),
         ],

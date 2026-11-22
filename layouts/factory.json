@@ -123,10 +123,30 @@
             },
             {
               "id": "overwatch",
-              "type": "block",
-              "content": {
-                "mod": "factory-overwatch"
-              }
+              "type": "column",
+              "resizable": false,
+              "children": [
+                {
+                  "id": "overwatch-bar",
+                  "type": "block",
+                  "size": {
+                    "px": 56
+                  },
+                  "content": {
+                    "mod": "factory-overwatch"
+                  }
+                },
+                {
+                  "id": "overwatch-terminal",
+                  "type": "block",
+                  "size": {
+                    "weight": 1
+                  },
+                  "content": {
+                    "agent": "focused"
+                  }
+                }
+              ]
             },
             {
               "id": "blueprint",
