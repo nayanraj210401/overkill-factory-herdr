@@ -214,6 +214,8 @@ export const MIGRATIONS = [
   // repo the maintainer works in for a look request, never one tickets or watchers list.
   `ALTER TABLE tickets ADD COLUMN request_kind TEXT;
    ALTER TABLE repos ADD COLUMN app INTEGER NOT NULL DEFAULT 0;`,
+  // What GitHub last said of each PR (open, draft, merged, closed), for the window's PR links; null before the first look.
+  `ALTER TABLE ticket_repos ADD COLUMN pr_state TEXT CHECK (pr_state IN ('open', 'draft', 'merged', 'closed'));`,
 ];
 
 export function open(path: string): Database {
@@ -279,7 +281,7 @@ export function setRepo(db: Database, r: Repo) {
 
 // A ticket's work in one repo: its worktree, branch and PR. Without `repo`, the lead
 // repo's, whose row is made on the first write, in the factory's lead repo.
-export type Work = { worktree: string | null; branch: string | null; pr_number: number | null; pr_watched: number; pr_checked_at: string | null; merged_at: string | null; merge_pos: number | null };
+export type Work = { worktree: string | null; branch: string | null; pr_number: number | null; pr_watched: number; pr_checked_at: string | null; merged_at: string | null; merge_pos: number | null; pr_state: "open" | "draft" | "merged" | "closed" | null };
 export function setWork(db: Database, ticket: number, w: Partial<Work>, repo?: string) {
   const keys = Object.keys(w) as (keyof Work)[];
   if (!keys.length) return;
@@ -298,7 +300,7 @@ export function ticketRepos(db: Database, ticket: number): TicketRepo[] {
   const rows = db.query("SELECT tr.*, r.path FROM ticket_repos tr JOIN repos r ON r.slug = tr.repo WHERE tr.ticket = ? ORDER BY tr.lead DESC, tr.repo").all(ticket) as TicketRepo[];
   if (rows.length) return rows;
   const lead = needLead(db);
-  return [{ repo: lead.slug, lead: 1, path: lead.path, worktree: null, branch: null, pr_number: null, pr_watched: 0, pr_checked_at: null, merged_at: null, merge_pos: null }];
+  return [{ repo: lead.slug, lead: 1, path: lead.path, worktree: null, branch: null, pr_number: null, pr_watched: 0, pr_checked_at: null, merged_at: null, merge_pos: null, pr_state: null }];
 }
 
 // The order a cross-repo ticket's PRs merge in: the places set (`factory merge-order`),

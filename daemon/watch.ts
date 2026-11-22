@@ -20,7 +20,7 @@ function ghJson(run: Run, argv: string[]) {
 
 // Conversation comments, review summaries with a body, and inline comments on lines.
 export function prComments(run: Run, slug: string, pr: number) {
-  const view = ghJson(run, ["gh", "pr", "view", String(pr), "--repo", slug, "--json", "state,comments,reviews"]);
+  const view = ghJson(run, ["gh", "pr", "view", String(pr), "--repo", slug, "--json", "state,isDraft,comments,reviews"]);
   const inline = ghJson(run, ["gh", "api", `repos/${slug}/pulls/${pr}/comments`, "--paginate"]) as any[];
   // An inline reply's thread is its root comment; anything else is a thread of its own.
   const comments: GhComment[] = [
@@ -28,7 +28,7 @@ export function prComments(run: Run, slug: string, pr: number) {
     ...(view.reviews ?? []).filter((r: any) => r.body?.trim()).map((r: any) => ({ ghId: `r${r.id}`, thread: `r${r.id}`, author: r.author?.login ?? "", body: r.body, at: r.submittedAt, place: r.state === "CHANGES_REQUESTED" ? "changes requested" : null, url: null })),
     ...inline.map((c: any) => ({ ghId: `i${c.id}`, thread: `i${c.in_reply_to_id ?? c.id}`, author: c.user?.login ?? "", body: c.body ?? "", at: c.created_at, place: c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : null, url: c.html_url ?? null, hunk: c.diff_hunk ?? null })),
   ];
-  return { state: view.state as "OPEN" | "MERGED" | "CLOSED", comments: comments.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) };
+  return { draft: !!view.isDraft, state: view.state as "OPEN" | "MERGED" | "CLOSED", comments: comments.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) };
 }
 
 // Every repo's PR of each ready, watched ticket. Merged or closed there, its repo is done;
@@ -48,6 +48,8 @@ export function watchPrs(db: Database, o: { dir: string; repo: string; me: strin
       const prs = repos.map((r) => ({ r, pr: r.merged_at ? null : prComments(o.run, r.repo, r.pr_number!) }));
       db.transaction(() => {
         for (const { r, pr } of prs) if (pr?.state === "MERGED") setWork(db, id, { merged_at: o.now }, r.repo);
+        // What GitHub says of each PR, for the window's links.
+        for (const { r, pr } of prs) if (pr) setWork(db, id, { pr_state: pr.state === "OPEN" ? (pr.draft ? "draft" : "open") : (pr.state.toLowerCase() as "merged" | "closed") }, r.repo);
         const open = prs.filter((p) => p.pr?.state === "OPEN");
         if (!open.length) {
           const all = prs.every((p) => p.r.merged_at || p.pr?.state === "MERGED");
