@@ -68,7 +68,7 @@ export function buildStatus(db: Database, now = new Date()) {
     version: 1,
     generated_at: now.toISOString(),
     source: "daemon",
-    factory: { name: getMeta(db, "name") ?? "factory", repo: lead?.slug ?? "unknown", ...(lead ? { repos: listRepos(db).map((r) => r.slug) } : {}), daemon: now.getTime() - beat < HEARTBEAT_MS },
+    factory: { name: getMeta(db, "name") ?? "factory", repo: lead?.slug ?? "unknown", ...(lead ? { path: lead.path } : {}), ...(lead ? { repos: listRepos(db).map((r) => r.slug) } : {}), daemon: now.getTime() - beat < HEARTBEAT_MS },
     plan: { ...planMeters(db, now), hold },
     today: {
       time_to_pr_min: Math.round(avg(prs.filter((p) => p.began).map((p) => (Date.parse(p.at) - Date.parse(p.began!)) / 60000))),

@@ -104,3 +104,12 @@ test("status.json lists the factory's repos and each ticket's, lead first; one n
     [{ slug: "acme/api", lead: true, pr: null, worktree: null, branch: null, merged_at: null, merge: 1 }],
   ]);
 });
+
+test("status.json names the lead repo's checkout, where the Config page finds .factory/", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "factory-")), "factory.db"));
+  setRepo(db, { slug: "acme/api", path: "/code/api", lead: true });
+  const s = buildStatus(db);
+  expect(s.factory).toMatchObject({ repo: "acme/api", path: "/code/api" });
+  expect(validateStatus(s)).toEqual([]);
+  expect(validateStatus({ ...s, factory: { ...s.factory, path: 3 } } as any)).toContain("factory.path: needs the lead repo's checkout folder");
+});
