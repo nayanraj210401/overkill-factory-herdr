@@ -1,14 +1,29 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, setShared, shared } from "herdr";
+import { theme, run, setShared, shared, checking, watchFolder } from "herdr";
 import { GROUPS, groupTickets, repoBadge, subtitle, warnMark } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
-import { status } from "./lib/store.js";
+import { reviewCount } from "./lib/reviews.js";
+import { status, readReviews, root } from "./lib/store.js";
 
 const COLOR = { needs: "blocked", running: "working", ready: "done", queue: "muted" };
 
 // The sidebar's live tickets, grouped as on Home. A click opens the Ticket page.
 export default class FactoryTickets extends View {
+  init(_props, cx) {
+    this.reviews = null; // reviews.json's doc, the Reviews page's data; null falls back to status.json's count
+    cx.spawn(async (cx) => {
+      for (;;) {
+        this.reviews = (await readReviews()).doc;
+        cx.notify();
+        if (checking()) return;
+        const watch = watchFolder(root());
+        await Promise.race([watch, new Promise((done) => cx.timer.after(5000, done))]);
+        watch.cancel();
+      }
+    });
+  }
+
   row(t, s, ticket, group, now) {
     const badge = repoBadge(s, ticket);
     const on = shared("factory.ticket") === ticket.id;
@@ -40,7 +55,7 @@ export default class FactoryTickets extends View {
         ...groups[g.id].map((x) => this.row(t, s, x, g.id, now)),
       ]))
       .child(head(`QUEUE · ${groups.queue.length}${blocked ? ` · BLOCKED ${blocked}` : ""}`, t.muted))
-      .child(head(`TO REVIEW · ${s.to_review}`, t.accent).id("to-review").cursor_pointer()
+      .child(head(`TO REVIEW · ${reviewCount(this.reviews, s.to_review)}`, t.accent).id("to-review").cursor_pointer()
         .on_click(() => run("layout.select", { stack: STACK, child: "reviews" })));
   }
 }

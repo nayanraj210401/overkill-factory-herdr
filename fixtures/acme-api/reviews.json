@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "generated_at": "2026-11-21T10:00:00Z",
+  "source": "fixture",
+  "low_risk": { "gate": "human" },
+  "prs": [
+    {
+      "repo": "acme/api", "number": 88, "title": "Bump eslint to 9.4", "author": "sam", "url": "https://github.com/acme/api/pull/88",
+      "additions": 8, "deletions": 4, "requested_at": "2026-11-21T08:10:00Z",
+      "low_risk": true, "risk": { "score": 8, "reasons": [] },
+      "summary": "Dev dependency bump; lint config unchanged.", "pending_review": false, "evidence": "verified",
+      "findings": [],
+      "checks": [{ "name": "tests", "status": "pass", "detail": "128 of 128" }, { "name": "lint", "status": "pass", "detail": null }]
+    },
+    {
+      "repo": "acme/api", "number": 91, "title": "Fix typo in README", "author": "priya", "url": "https://github.com/acme/api/pull/91",
+      "additions": 1, "deletions": 1, "requested_at": "2026-11-21T09:30:00Z",
+      "low_risk": true, "risk": { "score": 3, "reasons": [] },
+      "summary": "One word in the README.", "pending_review": false, "evidence": "none",
+      "findings": [{ "kind": "noise", "text": "Consider a spell-check step in CI", "file": null, "line": null }],
+      "checks": [{ "name": "lint", "status": "pass", "detail": null }]
+    },
+    {
+      "repo": "acme/api", "number": 95, "title": "Payments retry on 502", "author": "alex", "url": "https://github.com/acme/api/pull/95",
+      "additions": 372, "deletions": 38, "requested_at": "2026-11-20T15:00:00Z",
+      "low_risk": false, "risk": { "score": 82, "reasons": ["touches payments", "scenario failing", "author new to the area"] },
+      "summary": "Retries aren't idempotent, so a 502 after a successful charge can charge the customer twice.", "pending_review": true, "evidence": "failed",
+      "findings": [
+        { "kind": "must-fix", "text": "charge() retried without an idempotency key", "file": "retry.ts", "line": 42 },
+        { "kind": "must-fix", "text": "No test for a 502 after a successful charge", "file": "retry.test.ts", "line": null },
+        { "kind": "must-fix", "text": "Retry count is read from an unvalidated header", "file": "retry.ts", "line": 57 },
+        { "kind": "suggestion", "text": "Move backoff into the shared retry util", "file": "retry.ts", "line": 12 },
+        { "kind": "noise", "text": "Rename `attempt` to `tries`", "file": "retry.ts", "line": 30 },
+        { "kind": "noise", "text": "Trailing comma", "file": "retry.ts", "line": 61 },
+        { "kind": "noise", "text": "Prefer early return", "file": "retry.ts", "line": 44 },
+        { "kind": "noise", "text": "Comment wording", "file": "retry.test.ts", "line": 9 }
+      ],
+      "checks": [
+        { "name": "tests", "status": "pass", "detail": "128 of 128" },
+        { "name": "scenario payments.checkout", "status": "fail", "detail": "charged twice" },
+        { "name": "lint", "status": "pass", "detail": null }
+      ]
+    },
+    {
+      "repo": "acme/web", "number": 93, "title": "Search index paging", "author": "dana", "url": "https://github.com/acme/web/pull/93",
+      "additions": 140, "deletions": 52, "requested_at": "2026-11-21T07:00:00Z",
+      "low_risk": false, "risk": { "score": 44, "reasons": ["factory PR, evidence missing for paging"] },
+      "summary": "Paging works, but the last page is dropped when the count divides evenly.", "pending_review": true, "evidence": "verified",
+      "findings": [
+        { "kind": "must-fix", "text": "Last page dropped when total is a multiple of the page size", "file": "search/page.ts", "line": 27 }
+      ],
+      "checks": [
+        { "name": "tests", "status": "pass", "detail": "64 of 64" },
+        { "name": "scenario search.paging", "status": "pass", "detail": null },
+        { "name": "lint", "status": "pass", "detail": null }
+      ]
+    },
+    {
+      "repo": "acme/api", "number": 90, "title": "Dark mode tokens", "author": "sam", "url": "https://github.com/acme/api/pull/90",
+      "additions": 96, "deletions": 21, "requested_at": "2026-11-19T12:00:00Z",
+      "low_risk": false, "risk": { "score": 38, "reasons": ["2 tests failing", "no evidence"] },
+      "summary": "Token rename is fine; two snapshot tests fail on the new values.", "pending_review": true, "evidence": "none",
+      "findings": [
+        { "kind": "suggestion", "text": "Name tokens by role, not by color", "file": "tokens.css", "line": 4 },
+        { "kind": "suggestion", "text": "Update the two snapshots or fix the values", "file": "theme.test.ts", "line": null },
+        { "kind": "suggestion", "text": "Document the new tokens", "file": "README.md", "line": null },
+        { "kind": "suggestion", "text": "Drop the unused --border-2", "file": "tokens.css", "line": 31 }
+      ],
+      "checks": [
+        { "name": "tests", "status": "fail", "detail": "2 failing" },
+        { "name": "lint", "status": "pass", "detail": null }
+      ]
+    }
+  ]
+}
