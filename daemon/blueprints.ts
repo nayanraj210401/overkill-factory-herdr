@@ -4,7 +4,8 @@ import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadAgent, loadBlueprint } from "./runner.ts";
+import { loadBlueprint } from "./runner.ts";
+import { loadAgent } from "./agents.ts";
 import { validateBlueprints } from "../lib/blueprints.js";
 
 export const DAYS = 7;

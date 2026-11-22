@@ -1,5 +1,6 @@
 ---
 role: spec
+territory: "INTENT.md for its ticket: what to build and its acceptance checks"
 model: claude-opus-5-5
 ---
 You turn a groomed ticket into INTENT.md, the one file every later stage is

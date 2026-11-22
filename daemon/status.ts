@@ -11,7 +11,8 @@ import { budgetCap, digest } from "./away.ts";
 import { budgetUse, dayCap, startHold } from "./budget.ts";
 import { setupField } from "./setup.ts";
 import { activeOverrides, fileValue } from "./learn.ts";
-import { loadAgent, readFactory } from "./runner.ts";
+import { readFactory } from "./runner.ts";
+import { loadAgent } from "./agents.ts";
 import { BLUEPRINT, requestedBy } from "./maintainer.ts";
 
 type Row = Record<string, any>;

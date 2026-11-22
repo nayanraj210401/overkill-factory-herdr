@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import { whyNotTunable } from "./learn.ts";
 import { PLACEHOLDERS, templateErrors } from "./prompts.ts";
 import { featureErrors } from "./features.ts";
+import { FACTORY_AGENTS, isFactoryAgent } from "./agents.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -42,7 +43,7 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, artifacts: ARTIFACTS, maintainer: { object: { gate } },
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, floor: "any", learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, artifacts: ARTIFACTS, maintainer: { object: { gate } },
       verify: { object: { features: str } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
@@ -50,7 +51,9 @@ export const KINDS: Record<string, Rule> = {
   blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },
   agent: {
     object: {
-      role: { enum: ["orchestrator", "triage", "spec", "plan", "build", "review", "verify", "scorer", "maintain"] },
+      // overwatch, babysit, maintain and learn are the factory agents' roles (agents.ts).
+      role: { enum: ["orchestrator", "triage", "spec", "plan", "build", "review", "verify", "scorer", "maintain", "overwatch", "babysit", "learn"] },
+      territory: str, // one line: what only this agent acts on, for every brief's neighbour map
       harness: str, model: str, effort: str, from: str, tools: strs, mcp: strs, skills: strs, context: strs,
     },
   },
@@ -210,6 +213,9 @@ export function validateFile(path: string, text: string): string[] {
     const rb = (doc as any)?.review?.round_budget;
     if (rb !== undefined && !/^\s*(\d+(\.\d+)?\s*%|\d+(\.\d+)?\s*[kKmM]?(\s*\/\s*\d+(\.\d+)?\s*[kKmM]?)?)\s*$/.test(String(rb)))
       errors.push("review.round_budget: a share of the ticket's budget (25%) or tokens (200k, or 200k/20k for input/output)");
+    const fl = (doc as any)?.budget?.floor;
+    if (fl !== undefined && !/^\s*\d+(\.\d+)?\s*%?\s*$/.test(String(fl)))
+      errors.push("budget.floor: a share of budget.per_ticket, like 50% or 0.5");
     awayRange(doc, errors);
   }
   if (kind === "trigger") {
@@ -251,7 +257,8 @@ function files(dir: string): string[] {
 // no file would break the first run, so it fails here for every user's factory.
 function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
   const base = (p: string, folder: string) => p.startsWith(`${folder}/`) ? p.slice(folder.length + 1).replace(/\.(md|ya?ml)$/, "") : null;
-  const agents = new Set(paths.map((p) => base(p, "agents")).filter(Boolean));
+  // A factory agent (the maintainer, say) is there for every repo, with or without a file here.
+  const agents = new Set([...paths.map((p) => base(p, "agents")).filter(Boolean), ...FACTORY_AGENTS]);
   const blueprints = new Set(paths.map((p) => base(p, "blueprints")).filter(Boolean));
   const prompts = new Set([...paths.map((p) => base(p, "prompts")).filter(Boolean), "stage"]); // stage.md is built in
   const parse = (p: string) => { try { return Bun.YAML.parse(readFileSync(join(dir, p), "utf8")) as any; } catch { return null; } };
@@ -285,5 +292,16 @@ export function validateDir(dir: string) {
     .filter((p) => !p.split("/").some((part) => part.startsWith(".")))
     .sort();
   const dangling = danglingNames(dir, paths);
-  return paths.map((path) => ({ path, errors: [...validateFile(path, readFileSync(join(dir, path), "utf8")), ...(dangling[path] ?? [])] }));
+  return paths.map((path) => {
+    const r: { path: string; errors: string[]; warnings?: string[] } = { path, errors: [...validateFile(path, readFileSync(join(dir, path), "utf8")), ...(dangling[path] ?? [])] };
+    const w = warningOf(path);
+    if (w) r.warnings = [w];
+    return r;
+  });
+}
+
+// Files that pass but do nothing: a repo's copy of a factory agent is never read.
+function warningOf(path: string) {
+  const name = path.match(/^agents\/([^/]+)\.md$/)?.[1];
+  return name && isFactoryAgent(name) ? `ignored: ${name} is a factory agent, one for every repo; change ~/.factory/agents/${name}.md instead (through the maintainer)` : null;
 }

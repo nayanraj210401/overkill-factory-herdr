@@ -28,6 +28,7 @@ import { accountPending, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount } from "./
 import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
 import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from "./artifacts.ts";
+import { loadAgent } from "./agents.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -41,10 +42,11 @@ export const sh: Run = (argv, cwd) => {
 type Stage = { agent?: string; check?: string; next?: string[]; output?: string; prompt?: string; per?: "ticket" | "slice" };
 type Blueprint = { name: string; orchestrator?: string; start: string; stages: Record<string, Stage> };
 
-// The maintainer's blueprint and agent ship with the factory (setup copies them too): a
-// factory without its own uses these, so every factory can take requests (maintainer.ts).
+// The maintainer's blueprint ships with the factory (setup copies it too): a factory
+// without its own uses it, so every factory can take requests (maintainer.ts). The
+// maintainer agent itself is a factory agent, one for every repo (agents.ts).
 const BUILT_IN = join(import.meta.dir, "../fixtures/acme-api/.factory");
-const SHIPPED = ["blueprints/factory.yaml", "agents/maintainer.md"];
+const SHIPPED = ["blueprints/factory.yaml"];
 
 function readYaml(repo: string, path: string) {
   const own = join(repo, ".factory", path);
@@ -64,13 +66,6 @@ export function loadBlueprint(repo: string, name: string): Blueprint {
   const gate = name === "factory" ? readFactory(repo).maintainer?.gate : undefined;
   if (gate && b.stages.merge) (b.stages.merge as BlueprintStage).gate = gate;
   return b;
-}
-
-export function loadAgent(repo: string, name: string) {
-  const text = readYaml(repo, `agents/${name}.md`);
-  if (!text) return null;
-  const m = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)!;
-  return { ...(Bun.YAML.parse(m[1]) as Record<string, any>), prompt: m[2].trim() };
 }
 
 // The path the blueprint would take with no surprises: the first `next` each time.

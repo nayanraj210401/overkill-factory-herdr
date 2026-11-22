@@ -129,6 +129,8 @@ S3–S8 depend only on S0–S2 and touch separate mod folders, so they can run i
 - **M4, learning + benchmarks:** Metrics Learning and Benchmarks tabs.
 - **M5, auto gates + maintainer:** revert rate on Home.
 - **M6, reviews:** Reviews page.
+- **M7, agents with territories:** two tiers of agents, one Overwatch for every repo, a neighbour map in every brief, and agents asking each other.
+  - **Two tiers of agent files** (`daemon/agents.ts`): repo agents load from the repo's `.factory/agents/` as before. The factory agents (overwatch, babysitter, maintainer, learner) load from `~/.factory/agents/<name>.md`, else the defaults shipped in this repo's `agents/`; a repo's copy of one is never read, and `factory validate` warns about it (`!` and `ignored: …`) and checks the files in `~/.factory/agents/` with the account config. `factory init` and `factory setup` copy the shipped ones into `~/.factory/agents/` once each and never overwrite one. Every agent header may carry `territory:` (one line: what only it acts on); the shipped ones do. The factory agents' roles are `overwatch`, `babysit`, `maintain` and `learn`. An override of a factory agent's setting has no `.factory/` file to export to; `factory learn export` says so.
 
 ## Open technical questions for discussion
 
@@ -140,3 +142,4 @@ Status 2026-11-21: Q1 is settled by test (copy `lib/` into each mod; a symlink i
 4. **Getting the app.** `herdr-app` isn't installed here. M1 can't be checked without it.
 5. **Fixture source.** Use flow-stack v1 task folders as-is (real but messy), or hand-write a clean set first?
 - **One claude for every session** (#99): overwatch, triage, stages, handoffs and the daemon's `claude -p` calls all run the same binary: `claude.path` in `~/.factory/config.yaml`, else the newest found (PATH, `~/.local/bin`, Homebrew, nvm). `factory claude` and a Config card list the ones found. Agents also keep your PATH's order ahead of Homebrew's.
+- **Grooming's budget has a floor and needs history** (`daemon/budget.ts`, `daemon/groom.ts`, `daemon/validate.ts`): under 5 merged tickets on the blueprint the ticket gets `budget.per_ticket`; from 5 up it is the p80 of past input and output apart times `headroom`. Never below `budget.floor` (default 50%) of `per_ticket` or 150k in / 8k out per stage run (a `per: slice` stage counts 3). The reason goes in the budget decision's `why`. Found when a sandbox feature ticket got 426k/23k from two tiny tickets and parked at the last stage. Tests cover default, floor, percentile, per-slice and the text.
