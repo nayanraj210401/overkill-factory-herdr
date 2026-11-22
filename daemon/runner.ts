@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { validateFile } from "./validate.ts";
+import { validateDir, validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { openPr, prBody, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
 import { closeSpace, openAgent, openTab, toolPath, withFactory, worktreePath } from "./herdr.ts";
@@ -36,9 +36,15 @@ export const sh: Run = (argv, cwd) => {
 type Stage = { agent?: string; check?: string; next?: string[]; output?: string; prompt?: string; per?: "ticket" | "slice" };
 type Blueprint = { name: string; orchestrator?: string; start: string; stages: Record<string, Stage> };
 
+// The maintainer's blueprint and agent ship with the factory (setup copies them too): a
+// factory without its own uses these, so every factory can take requests (maintainer.ts).
+const BUILT_IN = join(import.meta.dir, "../fixtures/acme-api/.factory");
+const SHIPPED = ["blueprints/factory.yaml", "agents/maintainer.md"];
+
 function readYaml(repo: string, path: string) {
-  const file = join(repo, ".factory", path);
-  if (!existsSync(file)) return null;
+  const own = join(repo, ".factory", path);
+  const file = existsSync(own) ? own : SHIPPED.includes(path) ? join(BUILT_IN, path) : null;
+  if (!file) return null;
   const text = readFileSync(file, "utf8");
   const errors = validateFile(path, text);
   if (errors.length) throw new Error(`.factory/${path}: ${errors[0]}`);
@@ -48,7 +54,11 @@ function readYaml(repo: string, path: string) {
 export function loadBlueprint(repo: string, name: string): Blueprint {
   const text = readYaml(repo, `blueprints/${name}.yaml`) ?? (name === "default" ? readYaml(repo, "blueprint.yaml") : null);
   if (!text) throw new Error(`no blueprint "${name}" in ${repo}/.factory/blueprints/`);
-  return Bun.YAML.parse(text) as Blueprint;
+  const b = Bun.YAML.parse(text) as Blueprint;
+  // A maintainer's PR merges as factory.yaml's maintainer.gate says: human unless you chose auto.
+  const gate = name === "factory" ? readFactory(repo).maintainer?.gate : undefined;
+  if (gate && b.stages.merge) (b.stages.merge as BlueprintStage).gate = gate;
+  return b;
 }
 
 export function loadAgent(repo: string, name: string) {
@@ -186,7 +196,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -241,7 +251,25 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     record("evidence", ok, ok ? `${latest.length} checks pass` : latest.length ? `${latest.filter((r) => r.result !== "PASS").length} failing` : "no checks recorded");
     return ok;
   }
+  if (o.check === "factory") {
+    // A maintainer's change: every .factory/ file passes the schema check, and nothing
+    // outside .factory/ changed (the maintainer looks after the factory, not the code).
+    const bad = validateDir(join(o.worktree, ".factory")).filter((r) => r.errors.length);
+    record("factory validate", !bad.length, bad.length ? bad.map((r) => `${r.path}: ${r.errors[0]}`).join("; ").slice(0, 200) : "every .factory/ file passes");
+    const outside = changedFiles(o.run, o.repo, o.worktree).filter((f) => !f.startsWith(".factory/"));
+    record("only .factory/", !outside.length, outside.length ? `changed outside .factory/: ${outside.slice(0, 5).join(", ")}` : "every change is in .factory/");
+    return !bad.length && !outside.length;
+  }
   throw new Error(`unknown check "${o.check}"`);
+}
+
+// Files the ticket's branch changed since it left the repo's checkout, committed or not.
+function changedFiles(run: Run, repo: string, worktree: string) {
+  const head = run(["git", "-C", repo, "rev-parse", "HEAD"]).out.trim();
+  const fork = run(["git", "-C", worktree, "merge-base", "HEAD", head]);
+  const committed = fork.code === 0 ? run(["git", "-C", worktree, "diff", "--name-only", fork.out.trim(), "HEAD"]).out.split("\n") : [];
+  const loose = [["diff", "--name-only", "HEAD"], ["ls-files", "--others", "--exclude-standard"]].flatMap((a) => run(["git", "-C", worktree, ...a]).out.split("\n"));
+  return [...new Set([...committed, ...loose].map((f) => f.trim()).filter(Boolean))];
 }
 
 // A cross-repo ticket's tests check also runs factory.yaml's cross_check, in the lead's

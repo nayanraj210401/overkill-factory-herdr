@@ -23,7 +23,7 @@ const LEARN_TARGETS = ["cost_per_pr", "time_to_pr", "interactions_per_pr", "revi
 
 const STAGE: Rule = {
   object: {
-    agent: str, prompt: str, check: { enum: ["evidence", "tests", "lint"] }, output: str, next: strs, on_fail: str,
+    agent: str, prompt: str, check: { enum: ["evidence", "tests", "lint", "factory"] }, output: str, next: strs, on_fail: str,
     max_retries: num, per: { enum: ["ticket", "slice"] }, requires: str, template: str, gate, stages: "any",
   },
 };
@@ -36,7 +36,7 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, maintainer: open,
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, maintainer: { object: { gate } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
   },

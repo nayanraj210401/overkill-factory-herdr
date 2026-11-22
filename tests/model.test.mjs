@@ -209,6 +209,16 @@ test("planPct shows a dash when nothing reports the plan's usage", async () => {
   assert.equal(planPct({ week: 0.42 }, "week"), "42%"); // the sample has no source
 });
 
+test("Config's Pending changes lists the maintainer's open requests only", async () => {
+  const { pendingRequests } = await import("../lib/model.js");
+  const tickets = [
+    { id: 1, blueprint: "factory", state: "running" }, { id: 2, blueprint: "factory", state: "merged" },
+    { id: 3, blueprint: "feature", state: "running" }, { id: 4, blueprint: "factory", state: "queued" }, { id: 5, blueprint: "factory", state: "closed" },
+  ];
+  assert.deepEqual(pendingRequests(tickets).map((t) => t.id), [1, 4]);
+  assert.deepEqual(pendingRequests(undefined), []);
+});
+
 test("an agent waiting on you in its terminal is in Needs you, first, whatever its stage", async () => {
   const { groupOf, needsYou } = await import("../lib/model.js");
   const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "Waiting on you in its terminal (t1): open it to answer" } };
