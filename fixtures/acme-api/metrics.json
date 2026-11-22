@@ -96,6 +96,116 @@
      "reverted": 0,
      "retries_per_ticket": 0.9
     }
+   ],
+   "opened_per_day": [
+    1,
+    2,
+    1,
+    1,
+    2,
+    1,
+    2
+   ],
+   "time_to_pr_per_day": [
+    42,
+    55,
+    61,
+    38,
+    47,
+    52,
+    58
+   ],
+   "revert_rate_per_day": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "first_try_per_day": [
+    1,
+    0,
+    1,
+    1,
+    0.5,
+    1,
+    0
+   ],
+   "tokens_in_per_day": [
+    7970000,
+    14790000,
+    7660000,
+    13830000,
+    6790000,
+    9020000,
+    4960000
+   ],
+   "tokens_in_cap": 16000000,
+   "usd_by_agent_per_day": [
+    {
+     "name": "implementer",
+     "values": [
+      1.41,
+      2.86,
+      1.24,
+      2.77,
+      1.27,
+      1.6,
+      0.96
+     ]
+    },
+    {
+     "name": "reviewer",
+     "values": [
+      0.64,
+      0.95,
+      0.74,
+      0.98,
+      0.53,
+      0.73,
+      0.32
+     ]
+    },
+    {
+     "name": "checker",
+     "values": [
+      0.52,
+      0.96,
+      0.49,
+      0.71,
+      0.39,
+      0.58,
+      0.32
+     ]
+    }
+   ],
+   "usd_by_model_per_day": [
+    {
+     "name": "claude-opus-5-5",
+     "values": [
+      0.87,
+      1.81,
+      0.74,
+      1.78,
+      0.7,
+      0.99,
+      0.61
+     ]
+    },
+    {
+     "name": "claude-sonnet-5-5",
+     "values": [
+      1.7,
+      2.96,
+      1.73,
+      2.68,
+      1.49,
+      1.92,
+      0.99
+     ]
+    }
    ]
   },
   "30": {
@@ -285,6 +395,346 @@
      "reverted": 1,
      "retries_per_ticket": 1.2
     }
+   ],
+   "opened_per_day": [
+    0,
+    2,
+    1,
+    1,
+    2,
+    1,
+    2,
+    1,
+    2,
+    1,
+    1,
+    2,
+    1,
+    2,
+    1,
+    2,
+    1,
+    1,
+    2,
+    1,
+    2,
+    1,
+    2,
+    1,
+    1,
+    2,
+    1,
+    2,
+    1,
+    2
+   ],
+   "time_to_pr_per_day": [
+    null,
+    55,
+    61,
+    38,
+    47,
+    52,
+    58,
+    44,
+    70,
+    49,
+    42,
+    55,
+    61,
+    38,
+    47,
+    52,
+    58,
+    44,
+    70,
+    49,
+    42,
+    55,
+    61,
+    38,
+    47,
+    52,
+    58,
+    44,
+    70,
+    49
+   ],
+   "revert_rate_per_day": [
+    null,
+    null,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "first_try_per_day": [
+    null,
+    null,
+    1,
+    1,
+    0.5,
+    1,
+    0.5,
+    1,
+    0.5,
+    1,
+    1,
+    0.5,
+    1,
+    0.5,
+    1,
+    0,
+    1,
+    1,
+    0.5,
+    1,
+    0.5,
+    1,
+    0.5,
+    1,
+    1,
+    0.5,
+    1,
+    0.5,
+    1,
+    0
+   ],
+   "tokens_in_per_day": [
+    0,
+    7720000,
+    7530000,
+    14940000,
+    5150000,
+    12120000,
+    6080000,
+    8250000,
+    15220000,
+    5830000,
+    11900000,
+    7690000,
+    14820000,
+    5860000,
+    4370000,
+    17300000,
+    6480000,
+    13700000,
+    5550000,
+    14790000,
+    8430000,
+    8000000,
+    9420000,
+    7970000,
+    14790000,
+    7660000,
+    13830000,
+    6790000,
+    9020000,
+    4960000
+   ],
+   "tokens_in_cap": 16000000,
+   "usd_by_agent_per_day": [
+    {
+     "name": "implementer",
+     "values": [
+      0,
+      1.49,
+      1.22,
+      2.99,
+      0.96,
+      2.15,
+      1.18,
+      1.33,
+      3.04,
+      1.09,
+      2.11,
+      1.49,
+      2.39,
+      1.17,
+      0.82,
+      3.07,
+      1.25,
+      2.21,
+      1.11,
+      2.77,
+      1.5,
+      1.55,
+      1.52,
+      1.59,
+      2.77,
+      1.36,
+      2.68,
+      1.09,
+      1.8,
+      0.93
+     ]
+    },
+    {
+     "name": "reviewer",
+     "values": [
+      0,
+      0.5,
+      0.73,
+      1.06,
+      0.4,
+      0.98,
+      0.39,
+      0.8,
+      1.08,
+      0.45,
+      0.96,
+      0.5,
+      1.43,
+      0.42,
+      0.34,
+      1.4,
+      0.42,
+      1.33,
+      0.39,
+      1.14,
+      0.68,
+      0.52,
+      0.91,
+      0.57,
+      1.14,
+      0.62,
+      0.89,
+      0.66,
+      0.64,
+      0.38
+     ]
+    },
+    {
+     "name": "checker",
+     "values": [
+      0,
+      0.5,
+      0.48,
+      0.77,
+      0.3,
+      0.78,
+      0.39,
+      0.53,
+      0.79,
+      0.34,
+      0.77,
+      0.49,
+      0.96,
+      0.3,
+      0.25,
+      1.11,
+      0.42,
+      0.88,
+      0.29,
+      0.86,
+      0.54,
+      0.51,
+      0.61,
+      0.41,
+      0.86,
+      0.49,
+      0.89,
+      0.44,
+      0.47,
+      0.29
+     ]
+    }
+   ],
+   "usd_by_model_per_day": [
+    {
+     "name": "claude-opus-5-5",
+     "values": [
+      0,
+      0.95,
+      0.73,
+      1.93,
+      0.53,
+      1.33,
+      0.74,
+      0.8,
+      1.96,
+      0.6,
+      1.31,
+      0.94,
+      1.43,
+      0.76,
+      0.45,
+      1.9,
+      0.79,
+      1.33,
+      0.72,
+      1.53,
+      0.92,
+      0.98,
+      0.91,
+      1.03,
+      1.53,
+      0.84,
+      1.69,
+      0.66,
+      1.16,
+      0.51
+     ]
+    },
+    {
+     "name": "claude-sonnet-5-5",
+     "values": [
+      0,
+      1.54,
+      1.7,
+      2.89,
+      1.13,
+      2.58,
+      1.22,
+      1.86,
+      2.95,
+      1.28,
+      2.53,
+      1.54,
+      3.35,
+      1.13,
+      0.96,
+      3.68,
+      1.3,
+      3.09,
+      1.07,
+      3.24,
+      1.8,
+      1.6,
+      2.13,
+      1.54,
+      3.24,
+      1.63,
+      2.77,
+      1.53,
+      1.75,
+      1.09
+     ]
+    }
    ]
   }
  },
@@ -315,5 +765,83 @@
     "agreed": 3
    }
   ]
+ },
+ "charts": {
+  "7": {
+   "time-to-pr": {
+    "light": "7-time-to-pr-light-5921ae6396.svg",
+    "dark": "7-time-to-pr-dark-1f421543a6.svg"
+   },
+   "prs": {
+    "light": "7-prs-light-a8541320c2.svg",
+    "dark": "7-prs-dark-31fd7afaf7.svg"
+   },
+   "interactions": {
+    "light": "7-interactions-light-5e95cd0ab0.svg",
+    "dark": "7-interactions-dark-d0cf904f9e.svg"
+   },
+   "spend": {
+    "light": "7-spend-light-088049cdef.svg",
+    "dark": "7-spend-dark-8ba701444a.svg"
+   },
+   "tokens": {
+    "light": "7-tokens-light-571d8719b4.svg",
+    "dark": "7-tokens-dark-19a05c1667.svg"
+   },
+   "by-agent": {
+    "light": "7-by-agent-light-62567c7521.svg",
+    "dark": "7-by-agent-dark-68f94eaa0f.svg"
+   },
+   "by-model": {
+    "light": "7-by-model-light-77112f6dd9.svg",
+    "dark": "7-by-model-dark-bb9e1c1198.svg"
+   },
+   "reverts": {
+    "light": "7-reverts-light-cbfca20b6f.svg",
+    "dark": "7-reverts-dark-3d1eea7f47.svg"
+   },
+   "first-try": {
+    "light": "7-first-try-light-532fd14abc.svg",
+    "dark": "7-first-try-dark-e52a2249b8.svg"
+   }
+  },
+  "30": {
+   "time-to-pr": {
+    "light": "30-time-to-pr-light-c6bc61a800.svg",
+    "dark": "30-time-to-pr-dark-62b1d60459.svg"
+   },
+   "prs": {
+    "light": "30-prs-light-9dfae15612.svg",
+    "dark": "30-prs-dark-6e0b472a21.svg"
+   },
+   "interactions": {
+    "light": "30-interactions-light-683bb863da.svg",
+    "dark": "30-interactions-dark-a840a67a11.svg"
+   },
+   "spend": {
+    "light": "30-spend-light-75b067e81e.svg",
+    "dark": "30-spend-dark-b42da2fd32.svg"
+   },
+   "tokens": {
+    "light": "30-tokens-light-77154c10fc.svg",
+    "dark": "30-tokens-dark-eea5448330.svg"
+   },
+   "by-agent": {
+    "light": "30-by-agent-light-e68054f281.svg",
+    "dark": "30-by-agent-dark-9dbda4d6eb.svg"
+   },
+   "by-model": {
+    "light": "30-by-model-light-435d9e5f44.svg",
+    "dark": "30-by-model-dark-2ac5dbf7d7.svg"
+   },
+   "reverts": {
+    "light": "30-reverts-light-bf0437537e.svg",
+    "dark": "30-reverts-dark-e0d4568ece.svg"
+   },
+   "first-try": {
+    "light": "30-first-try-light-3a6fc3e412.svg",
+    "dark": "30-first-try-dark-44b86c1516.svg"
+   }
+  }
  }
 }

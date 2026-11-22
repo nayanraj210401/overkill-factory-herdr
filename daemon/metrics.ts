@@ -119,7 +119,15 @@ function period(db: Database, from: Date, to: Date) {
   };
 }
 
-export function buildMetrics(db: Database, now = new Date()) {
+// Spend per day split by a key (an agent, a model): one series per key, a day without spend 0.
+function spendSeries(db: Database, keyExpr: string, from: Date, dates: string[]) {
+  const rows = db.query(`SELECT ${keyExpr} AS k, substr(u.at, 1, 10) AS day, SUM(u.usd) AS usd FROM usage u LEFT JOIN sessions s ON s.id = u.session
+    WHERE u.at >= ? GROUP BY k, day`).all(from.toISOString()) as { k: string; day: string; usd: number }[];
+  return [...new Set(rows.map((r) => r.k))].sort().map((k) => ({ name: k, values: dates.map((d) => round(rows.find((r) => r.k === k && r.day === d)?.usd ?? 0)) }));
+}
+
+// tokenCap: the day's input-token cap (budget.per_day), drawn as a level on the tokens chart.
+export function buildMetrics(db: Database, now = new Date(), tokenCap: number | null = null) {
   const day = 86_400_000;
   const ranges: Record<string, unknown> = {};
   for (const days of [7, 30]) {
@@ -129,6 +137,7 @@ export function buildMetrics(db: Database, now = new Date()) {
     const dates = Array.from({ length: days }, (_, i) => new Date(from.getTime() + (i + 1) * day).toISOString().slice(0, 10));
     const onDay = (at: string) => at.slice(0, 10);
     const spend = db.query(`SELECT substr(u.at, 1, 10) AS day, SUM(u.usd) AS usd FROM usage u WHERE u.at >= ? GROUP BY day`).all(from.toISOString()) as { day: string; usd: number }[];
+    const tokens = db.query(`SELECT substr(at, 1, 10) AS day, SUM(input + cache_write_5m + cache_write_1h) AS n FROM usage WHERE at >= ? GROUP BY day`).all(from.toISOString()) as { day: string; n: number }[];
     const byStage = db.query(`SELECT COALESCE(s.stage, 'other') AS k, SUM(u.usd) AS usd FROM usage u LEFT JOIN sessions s ON s.id = u.session WHERE u.at >= ? GROUP BY k ORDER BY usd DESC`).all(from.toISOString()) as { k: string; usd: number }[];
     const byModel = db.query(`SELECT model AS k, SUM(usd) AS usd FROM usage WHERE at >= ? GROUP BY k ORDER BY usd DESC`).all(from.toISOString()) as { k: string; usd: number }[];
     const blueprints = [...new Set(cur.merged.map((m) => m.blueprint))].sort();
@@ -140,6 +149,24 @@ export function buildMetrics(db: Database, now = new Date()) {
       prs_opened: cur.opened.length, prs_merged: cur.merged.length,
       cycle: cur.cycle,
       merged_per_day: dates.map((d) => cur.merged.filter((m) => onDay(m.at) === d).length),
+      opened_per_day: dates.map((d) => cur.opened.filter((o) => onDay(o.at) === d).length),
+      // Per day, null where there was nothing to measure: the chart's line breaks there.
+      time_to_pr_per_day: dates.map((d) => {
+        const ms = cur.opened.filter((o) => onDay(o.at) === d && o.began).map((o) => (Date.parse(o.at) - Date.parse(o.began!)) / 60000);
+        return ms.length ? Math.round(median(ms)) : null;
+      }),
+      revert_rate_per_day: dates.map((d) => {
+        const ms = cur.merged.filter((m) => onDay(m.at) === d);
+        return ms.length ? round(ms.filter((m) => m.reverted_by != null).length / ms.length, 3) : null;
+      }),
+      first_try_per_day: dates.map((d) => {
+        const ms = cur.merged.filter((m) => onDay(m.at) === d);
+        return ms.length ? round(ms.filter((m) => !m.retries).length / ms.length, 3) : null;
+      }),
+      tokens_in_per_day: dates.map((d) => tokens.find((t) => t.day === d)?.n ?? 0),
+      tokens_in_cap: tokenCap && Number.isFinite(tokenCap) ? tokenCap : null,
+      usd_by_agent_per_day: spendSeries(db, "COALESCE(s.agent, s.stage, 'other')", from, dates),
+      usd_by_model_per_day: spendSeries(db, "u.model", from, dates),
       interactions_per_day: dates.map((d) => {
         const o = cur.opened.filter((x) => onDay(x.at) === d);
         return o.length ? round(mean(o.map((x) => interactionsBefore(db, x.ticket, x.at))), 1) : null;

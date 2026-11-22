@@ -30,7 +30,8 @@ import { judge } from "./comments.ts";
 import { disagreements, examples, label, pushbackGate, runAgreement } from "./agreement.ts";
 import { importRoutine, LOG_BRANCH, routineDue, routineSteps, writeRoutine } from "./routine.ts";
 import { isAway, setAway } from "./away.ts";
-import { startHold } from "./budget.ts";
+import { dayCap, startHold } from "./budget.ts";
+import { linkCharts, removeStale, writeCharts } from "./charts.ts";
 import { noteCloudFailure, toCloud, toLocal } from "./cloud.ts";
 import { bringAll, cloudPolicy, moveAll, noteGap, onSleep, onWake, wakeTick } from "./sleep.ts";
 import { powerWatcher } from "./power.ts";
@@ -416,7 +417,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let r!: AskResult;
       change(db, () => {
         r = askAgent(db, { to, text: words.filter(Boolean).join(" "), why, from: cmd === "request" ? fromFlag ?? "you" : askerOf(fromFlag), about: about === null ? null : Number(about),
-          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(db, sh), requestKind: kindFlag ?? undefined, target: repo !== "unknown" ? repo : undefined });
+          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(sh), requestKind: kindFlag ?? undefined, target: repo !== "unknown" ? repo : undefined });
       });
       writeStatus(db, p.status);
       if (r.kind === "request") {
@@ -733,7 +734,9 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       } else throw new Error("usage: factory lesson add|list|retire");
     } else if (cmd === "overwatch") {
       let r: any = null;
-      change(db, () => { r = overwatch(db, { name, dir: p.dir, run: sh, now: now() }); });
+      // One for every factory: found or started from any of them (overwatch.ts).
+      r = overwatch({ run: sh, now: now() });
+      if (r.started) change(db, () => { db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (NULL, 'you', 'started the overwatch agent', ?)").run(now()); });
       return log(json ? JSON.stringify(r) : `overwatch ${r.started ? "started" : "running"} in ${r.terminal}`);
     } else if (cmd === "blueprints") {
       const repoDir = needLead(db).path;
@@ -1022,11 +1025,18 @@ function writeAll(db: Database, p: ReturnType<typeof paths>) {
 }
 
 // metrics.json for the Metrics page, checked against lib/metrics.js and written atomically.
+// Its charts are drawn first (daemon/charts.ts, into charts/ beside it), so the page never reads
+// a manifest naming a file not yet written; the files it stops naming go after.
 export function writeMetrics(db: Database, path: string, now = new Date()) {
-  const doc = buildMetrics(db, now);
+  const lead = leadRepo(db);
+  const doc: ReturnType<typeof buildMetrics> & { charts?: unknown } = buildMetrics(db, now, lead ? dayCap(lead.path)?.input ?? null : null);
   const errors = validateMetrics(doc);
   if (errors.length) throw new Error(`metrics.json would break the contract:\n${errors.join("\n")}`);
+  const charts = writeCharts(dirname(path), doc);
+  doc.charts = charts.manifest;
   writeIfChanged(path, JSON.stringify(doc) + "\n");
+  removeStale(charts.stale);
+  try { linkCharts(dirname(path)); } catch (e) { console.error(`charts link: ${(e as Error).message}`); }
   return doc;
 }
 
@@ -1087,7 +1097,7 @@ function runAll(interval: number, log: (s: string) => void) {
         recordUsage(db, log);
         watchSessions(db, p, sh, log);
         // Notes for Overwatch that its terminal hasn't had yet (it was busy, or not running).
-        deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(db, sh), name });
+        deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(sh), name });
         const lead = leadRepo(db);
         if (lead) runScheduledBenchmarks(db, { repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
         writeAll(db, p);
