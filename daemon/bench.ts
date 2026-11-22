@@ -16,6 +16,8 @@ import { worktreePath, sessionState } from "./herdr.ts";
 import { STOPS, guardSettings } from "./guard.ts";
 import { argvFor, loadBlueprint, plannedPath, readFactory, type Run } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
+import { learningHold } from "./learner.ts";
+import { setMeta } from "./db.ts";
 import { jsonl, parseTranscript, transcriptDir, usd } from "./usage.ts";
 import { parseSchedule, validateFile } from "./validate.ts";
 
@@ -279,6 +281,16 @@ export function describePlan(p: Plan): string[] {
   ];
 }
 
+// The day's learning budget (budget.learning, shared with the learner) stops benchmarks. The
+// reason goes in the decision log once a day per suite, and in BENCHMARK.md while it holds.
+export function holdSuite(db: Database, o: { dir?: string; name: string; why: string; at: string; what?: string }) {
+  const what = o.what ?? `benchmark ${o.name} held`;
+  const seen = db.query("SELECT 1 FROM decisions WHERE who = 'daemon' AND what = ? AND at >= ?").get(what, o.at.slice(0, 10));
+  if (!seen) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (NULL, 'daemon', ?, ?, ?)").run(what, o.why, o.at);
+  setMeta(db, `bench_held:${o.name}`, JSON.stringify({ why: o.why, at: o.at }));
+  if (o.dir) writeBenchmarks(db, o.dir);
+}
+
 export async function runSuite(db: Database, o: { dir: string; repo: string; slug: string; name: string; run: Run; agent: Agent; now?: () => string; log?: (s: string) => void }) {
   const now = o.now ?? (() => new Date().toISOString());
   const log = o.log ?? (() => {});
@@ -286,6 +298,12 @@ export async function runSuite(db: Database, o: { dir: string; repo: string; slu
   const { suite, tasks, commands } = plan;
   if (!commands.length) throw new Error("factory.yaml has no quality_floor commands; they score the held-out tests");
   if (!tasks.length) throw new Error(`no merged PR in ${plan.slug} added tests, so there is nothing to hold out${plan.skipped.length ? ` (${plan.skipped[0]})` : ""}`);
+  const held = learningHold(db, o.repo, new Date(now()));
+  if (held) {
+    holdSuite(db, { dir: o.dir, name: suite.name, why: held, at: now() });
+    throw new Error(`benchmark ${suite.name} not started: ${held}; it resumes tomorrow`);
+  }
+  setMeta(db, `bench_held:${suite.name}`, "");
   const batch = Number(db.query(`INSERT INTO bench_batches (suite, target, size, repo, variants, tasks, max_usd, max_tokens, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(suite.name, targetName(suite), suite.size, plan.slug, JSON.stringify(suite.variants), tasks.length, suite.limits.max_usd ?? null, suite.limits.max_tokens ?? null, now()).lastInsertRowid);
   // Task by task, every variant of it, so a stop at the cap leaves whole comparisons.
@@ -301,10 +319,13 @@ export async function runSuite(db: Database, o: { dir: string; repo: string; slu
   const worker = async () => {
     while (next < jobs.length) {
       const j = jobs[next++];
+      // A batch's own runs are in bench_runs as they finish, so the day's total is current.
+      const hold = stopped ? null : capped() ? null : learningHold(db, o.repo, new Date(now()));
+      if (hold) { stopped = "learning"; holdSuite(db, { name: suite.name, why: hold, at: now(), what: `benchmark ${suite.name} stopped starting tasks` }); }
       if (stopped || capped()) {
-        stopped = "cap";
+        stopped ??= "cap";
         const t = now();
-        record(j, { status: "skipped", detail: "spending cap reached", harness: null, model: null, started_at: t, ended_at: t, tokens_in: 0, tokens_out: 0, usd: 0, holdout_pass: null, diff_lines: null, pr_lines: null, cwd: null, transcript: null });
+        record(j, { status: "skipped", detail: stopped === "learning" ? "budget.learning spent for today" : "spending cap reached", harness: null, model: null, started_at: t, ended_at: t, tokens_in: 0, tokens_out: 0, usd: 0, holdout_pass: null, diff_lines: null, pr_lines: null, cwd: null, transcript: null });
         continue;
       }
       const r = await replay({ repo: o.repo, suite, task: j.task, variant: j.variant, run: o.run, agent: o.agent, commands, dir: o.dir, now });
@@ -346,7 +367,9 @@ export function buildBenchmarks(db: Database, now = new Date()) {
     return { name: b.suite, target: b.target, size: b.size, repo: b.repo, started_at: b.started_at, ended_at: b.ended_at, tasks: b.tasks,
       spent_usd: round(rows.reduce((n, r) => n + r.usd, 0)), stopped: b.stopped, variants, winner, recommendation };
   });
-  return { generated_at: now.toISOString(), suites };
+  const held = (db.query("SELECT key, value FROM meta WHERE key LIKE 'bench_held:%' AND value != ''").all() as { key: string; value: string }[])
+    .map((m) => ({ name: m.key.slice("bench_held:".length), ...JSON.parse(m.value) }));
+  return { generated_at: now.toISOString(), suites, held };
 }
 
 // The best variant: most held-out tests passed, then cheaper, then faster. Only a

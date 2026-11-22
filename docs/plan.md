@@ -159,7 +159,7 @@ Every action is a click or a key, and each one is a single call to the daemon. T
 | `u` | Answer a question and restart a waiting ticket |
 | `p` | Pause or resume a ticket |
 | `shift-c / shift-l` | Move the ticket to a cloud session / bring it back to local |
-| `g r, then a / s` | Reviews; approve a low-risk PR / open the pending review on github.com |
+| `g r, then a / o` | Reviews; approve a low-risk PR / open the PR (`s` too) on github.com. `h` shows the hidden noise |
 | `b` | Change the ticket's budget |
 
 ## Architecture
@@ -383,6 +383,29 @@ review:
     requires: [checks_pass, evidence_verified]
   never_low_risk: [auth, payments]
 ```
+
+#### reviews.json (draft, pending the user's M6 ideas)
+
+The Reviews page and the sidebar's "To review" count read `reviews.json` from the factory's folder, next to `status.json`. `lib/reviews.js` is the contract (`validateReviews`, `shapeReviews`); the page was built against `fixtures/acme-api/reviews.json` while the daemon side waits, so the shape can still change in one place. A missing file is not an error: the page says the daemon hasn't written one, and the sidebar falls back to `status.json`'s `to_review`.
+
+```json
+{
+  "version": 1, "generated_at": "ISO time", "source": "fixture | daemon",
+  "low_risk": { "gate": "human | auto" },
+  "prs": [{
+    "repo": "acme/api", "number": 95, "title": "…", "author": "alex", "url": "https://github.com/acme/api/pull/95",
+    "additions": 372, "deletions": 38, "requested_at": "ISO time",
+    "low_risk": false,                       // the daemon applies review.low_risk; the page never re-scores
+    "risk": { "score": 82, "reasons": ["touches payments", "scenario failing"] },
+    "summary": "main point first", "pending_review": true,
+    "evidence": "verified | failed | none",  // the author's pack, re-run (none: they had no pack)
+    "findings": [{ "kind": "must-fix | suggestion | noise", "text": "…", "file": "retry.ts", "line": 42 }],
+    "checks": [{ "name": "tests | scenario x | lint", "status": "pass | fail", "detail": "128 of 128" }]
+  }]
+}
+```
+
+The page puts `low_risk` PRs in the fast lane, the rest by `risk.score` (highest first, the older request first among equals), shows `high` from a score of 60, and hides `noise` until `h`. `a` approves a low-risk PR through `factory review approve <repo>#<n>`, which the daemon doesn't have yet, so the page toasts that it isn't wired (`APPROVE_WIRED` in `lib/reviews.js`).
 
 **It learns from what you submit.** When you submit, the daemon compares your final review with the pending one: which comments you kept, edited or deleted, what you added, and the verdict you chose. That trains the noise filter (a candidate for a small trained model, PRD 6.11) and your reviewer pack, with no extra step from you. Metrics shows how often comments survive unchanged, and your review minutes per day against `attention.review_minutes_per_day`.
 
