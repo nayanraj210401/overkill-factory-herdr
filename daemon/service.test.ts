@@ -121,3 +121,20 @@ test("login off: loaded but not started at login, restarted only after a crash; 
   service("start", o);
   expect(calls.at(-1)).toEqual(["kickstart", "gui/501/x.test"]);
 });
+
+test("install --login off installs it not starting at login, and running now; --login on, or none on a first install, starts at login", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agents-"));
+  const calls: string[][] = [];
+  const o = { factoryHome: mkdtempSync(join(tmpdir(), "fh-")), label: "x.test", agentsDir: dir, uid: 501, log: () => {}, sign: () => {},
+    run: (a: string[]) => (calls.push(a), { code: 0, out: "" }) };
+  const file = join(dir, "x.test.plist");
+  service("install", { ...o, login: "off" });
+  expect(atLoginOf(file)).toBe(false);
+  expect(calls.at(-1)).toEqual(["kickstart", "gui/501/x.test"]);
+  service("install", { ...o, login: "on" });
+  expect(atLoginOf(file)).toBe(true);
+  service("uninstall", o);
+  service("install", o);
+  expect(atLoginOf(file)).toBe(true);
+  expect(() => service("install", { ...o, login: "maybe" })).toThrow("--login on|off");
+});
