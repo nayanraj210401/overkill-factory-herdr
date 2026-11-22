@@ -6,6 +6,9 @@ import { open, setRepo } from "./db.ts";
 import { sh, type Run } from "./runner.ts";
 import { runScheduledBenchmarks } from "./cli.ts";
 import { applySet, buildTasks, describePlan, planSuite, readSuite, resolveVariant, runSuite, scheduledSuites, usageIn, benchArgv, type Agent } from "./bench.ts";
+import { learningUsage, tokensToday } from "./budget.ts";
+import { learningHold } from "./learner.ts";
+import { buildMetrics } from "./metrics.ts";
 import { transcriptDir } from "./usage.ts";
 import { validateFile, parseSchedule } from "./validate.ts";
 import { buildRuns } from "./runs.ts";
@@ -254,4 +257,77 @@ test("a Claude replay runs with acceptEdits and an allowlist of file tools, read
   expect(settings.permissions.allow.some((a: string) => /Bash\((git push|rm|curl)/.test(a))).toBe(false);
   expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain("guard.ts");
   expect(benchArgv({ ...step, harness: "codex" }, task, { cwd: "/w", log: "/l" }).slice(0, 3)).toEqual(["codex", "exec", "--full-auto"]);
+});
+
+// budget.learning, shared with the learner (budget.ts learningUsage, learner.ts learningHold).
+const DAY = "2026-11-21T10:00:00.000Z";
+const withLearning = (learning: string) => {
+  const s = setup(SUITE.replace("schedule: weekly", "schedule: daily"));
+  writeFileSync(join(s.repo, ".factory/factory.yaml"), `${readFileSync(join(s.repo, ".factory/factory.yaml"), "utf8")}budget: { learning: "${learning}" }\n`);
+  return s;
+};
+const spendLearner = (db: any, tokens_in: number, at = DAY) =>
+  db.query("INSERT INTO learner_runs (started_at, model, status, merged, tokens_in, tokens_out, usd) VALUES (?, 'm', 'done', 0, ?, 0, 1.5)").run(at, tokens_in);
+const quiet = { b: { fix: true, model: "claude-sonnet-5-5", input: 1000, output: 100 } };
+
+test("a benchmark's tokens are the day's learning spend, and count toward the day's total", async () => {
+  const { repo, run, dir, db } = withLearning("1M/100k");
+  const { agent } = stubAgent({ baseline: quiet.b, "opus-builder": quiet.b });
+  await runSuite(db, { dir, repo, slug: "acme/api", name: "impl", run, agent, now: () => DAY });
+  const now = new Date(DAY);
+  expect(learningUsage(db, now)).toEqual({ input: 2000, output: 200 });
+  expect(tokensToday(db, now).input).toBe(2000); // no work usage here: all of it is learning
+  expect(learningUsage(db, new Date("2026-11-22T10:00:00Z"))).toEqual({ input: 0, output: 0 }); // the next day starts clean
+  const r = (buildMetrics(db, new Date("2026-11-21T12:00:00Z")).ranges as any)["7"];
+  expect(r.learning_tokens_in_per_day.at(-1)).toBe(2000);
+  expect(r.tokens_in_per_day.at(-1)).toBe(0); // and it isn't work
+});
+
+test("learner runs and benchmarks share one total: together they never pass budget.learning", () => {
+  const { repo, db } = withLearning("1000/10k");
+  const now = new Date(DAY);
+  expect(learningHold(db, repo, now)).toBeNull();
+  spendLearner(db, 600);
+  expect(learningHold(db, repo, now)).toBeNull();
+  db.query("INSERT INTO bench_batches (id, suite, target, size, repo, variants, tasks, started_at) VALUES (1, 's', 't', 'smoke', 'r', '[]', 1, ?)").run(DAY);
+  db.query("INSERT INTO bench_runs (batch, task, title, variant, status, started_at, tokens_in, tokens_out, usd) VALUES (1, 1, 't', 'v', 'done', ?, 400, 0, 1)").run(DAY);
+  expect(learningHold(db, repo, now)).toContain("budget.learning is spent for today (1000/1000 in");
+  expect(learningHold(db, repo, new Date("2026-11-22T00:00:00Z"))).toBeNull();
+});
+
+test("a running suite stops starting tasks once the day's learning budget is used, and says why", async () => {
+  const { repo, run, dir, db } = withLearning("1500/10k");
+  spendLearner(db, 600); // the learner already spent some of it today
+  const { agent, seen } = stubAgent({ baseline: quiet.b, "opus-builder": quiet.b });
+  const r = await runSuite(db, { dir, repo, slug: "acme/api", name: "impl", run, agent, now: () => DAY });
+  expect(r.stopped).toBe("learning");
+  expect(seen).toHaveLength(1); // 600 + 1000 passes 1500: the second variant never starts
+  expect(db.query("SELECT variant, status, detail FROM bench_runs ORDER BY id").all()).toEqual([
+    { variant: "baseline", status: "done", detail: null },
+    { variant: "opus-builder", status: "skipped", detail: "budget.learning spent for today" },
+  ]);
+  expect(db.query("SELECT who, what, why FROM decisions").all()).toEqual([
+    { who: "daemon", what: "benchmark impl stopped starting tasks", why: expect.stringContaining("budget.learning is spent for today") }]);
+  expect(readFileSync(join(dir, "BENCHMARK.md"), "utf8")).toContain("budget.learning was spent for the day");
+  // Spent already: a manual run of it today doesn't start at all, and keeps the last report.
+  await expect(runSuite(db, { dir, repo, slug: "acme/api", name: "impl", run, agent, now: () => DAY })).rejects.toThrow("not started: budget.learning is spent");
+  expect(db.query("SELECT COUNT(*) AS n FROM bench_batches").get()).toEqual({ n: 1 });
+  // The next day it runs again.
+  const next = await runSuite(db, { dir, repo, slug: "acme/api", name: "impl", run, agent, now: () => "2026-11-22T10:00:00.000Z" });
+  expect(next.stopped).toBeNull();
+});
+
+test("a scheduled suite is held while the learning budget is spent, noted in the log and BENCHMARK.md, and runs the next day", () => {
+  const { repo, db, dir } = withLearning("1000/10k");
+  const launched: string[][] = [];
+  const tick = (now: string) => runScheduledBenchmarks(db, { dir, repo, name: "acme-api", now, log: () => {}, launch: (a) => launched.push(a) });
+  tick("2026-11-20T10:00:00Z"); // first sight: stamped
+  spendLearner(db, 1000, "2026-11-21T09:00:00Z");
+  tick("2026-11-21T10:00:00Z");
+  tick("2026-11-21T10:05:00Z");
+  expect(launched).toEqual([]);
+  expect(db.query("SELECT what FROM decisions").all()).toEqual([{ what: "benchmark impl held" }]); // once a day; implement-model is weekly, not due
+  expect(readFileSync(join(dir, "BENCHMARK.md"), "utf8")).toMatch(/## Held[\s\S]*- impl: held since 2026-11-21 10:05, budget\.learning is spent/);
+  tick("2026-11-22T00:00:01Z"); // a new day: nothing spent yet
+  expect(launched.map((a) => a[3])).toEqual(["impl"]);
 });

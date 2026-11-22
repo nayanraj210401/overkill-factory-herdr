@@ -22,7 +22,7 @@ import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { applyMerged, isKind, proposeAccount, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
 import { cleanupPlan, planMarkdown, proposeCleanup } from "./cleanup.ts";
-import { learnerDigest, learnerDue, learnerHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
+import { learnerDigest, learnerDue, learnerHold, learningHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
 import { noteAttention, waiting } from "./attention.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
@@ -50,7 +50,7 @@ import { ask as askAgent, askerOf, deliverToOverwatch, doneAsk, noteText, openAs
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
-import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
+import { describePlan, hcAgent, holdSuite, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
 import { advance, answer, autoMerge, checkReady, readFactory, mergeOnGithub, recordMerge, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { publishFailed, recordArtifact } from "./artifacts.ts";
 import { migrateFlowStack } from "./migrate.ts";
@@ -871,11 +871,14 @@ export function runTriggers(db: Database, o: { dir: string; repo: string; slug: 
 // The stamp is written first: a suite that fails waits for its next turn like one that works.
 // A suite the daemon sees for the first time is stamped, not run: it costs real money, so
 // the first run is one interval away (or `factory bench`, which stamps too).
-export function runScheduledBenchmarks(db: Database, o: { repo: string; name: string; now: string; log: (s: string) => void; launch: (argv: string[]) => void }) {
+export function runScheduledBenchmarks(db: Database, o: { dir?: string; repo: string; name: string; now: string; log: (s: string) => void; launch: (argv: string[]) => void }) {
   for (const s of scheduledSuites(o.repo)) {
     const key = `bench_at:${s.name}`;
     const last = getMeta(db, key);
     if (last && !isDue(last, Date.parse(o.now), s.ms)) continue;
+    // Due but the day's learning budget is used: held, not stamped, so the next tick after it resets runs it.
+    const held = last ? learningHold(db, o.repo, new Date(o.now)) : null;
+    if (held) { holdSuite(db, { dir: o.dir, name: s.name, why: held, at: o.now }); continue; }
     setMeta(db, key, o.now);
     if (!last) continue;
     o.launch(["bun", import.meta.path, "bench", s.name, "--name", o.name]);
@@ -1104,7 +1107,7 @@ function runAll(interval: number, log: (s: string) => void) {
         // Notes for Overwatch that its terminal hasn't had yet (it was busy, or not running).
         deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(sh), name });
         const lead = leadRepo(db);
-        if (lead) runScheduledBenchmarks(db, { repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
+        if (lead) runScheduledBenchmarks(db, { dir: p.dir, repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
         writeAll(db, p);
       } catch (e) {
         log(`factory ${name}: ${(e as Error).message}`);
