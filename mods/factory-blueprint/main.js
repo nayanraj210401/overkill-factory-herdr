@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, readTextFile, watchFolder, checking } from "herdr";
-import { validateBlueprints, stageOrder, stageNotes } from "./lib/blueprints.js";
+import { validateBlueprints, stageOrder, stageNotes, draftsFor } from "./lib/blueprints.js";
 import { root } from "./lib/store.js";
 
 // Blueprint: each blueprint's stages in the order a ticket meets them, with run
@@ -45,8 +45,11 @@ export default class FactoryBlueprint extends View {
 
   render() {
     const t = theme();
-    const bps = this.doc?.blueprints ?? [];
+    const current = this.doc?.blueprints ?? [];
+    // A blueprint only a pending request creates still gets a chip, with just its draft.
+    const bps = [...current, ...(this.doc?.drafts ?? []).filter((d, i, all) => !current.some((x) => x.name === d.name) && all.findIndex((x) => x.name === d.name) === i).map((d) => ({ name: d.name, error: null, stages: [], draftOnly: true }))];
     const b = bps.find((x) => x.name === this.picked) ?? bps.find((x) => x.name === "feature") ?? bps[0];
+    const drafts = b ? draftsFor(this.doc, b.name) : [];
     const chip = (x) => div().id(`b-${x.name}`).px(14).py(4).rounded_full().border(1).cursor_pointer()
       .border_color(x === b ? t.accent : t.border).text_color(x === b ? t.accent : t.muted).hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => { this.picked = x.name; cx.notify(); }).child(x.name);
@@ -59,10 +62,24 @@ export default class FactoryBlueprint extends View {
     const stageBox = (s) => v_flex().gap(4).items_center()
       .child(this.box(t, { id: s.id, label: s.id, sub: runs(s.runs), tone: tone(s) }))
       .child(div().text_size(11).text_color(s.gate === "human" ? t.blocked : t.dim).child(s.gate === "human" ? "human gate" : s.requires === "ready" ? "needs ready rules" : s.who));
+    const MARK = { added: ["done", "+ added"], changed: ["blocked", "~ changed"] };
+    const draftBox = (s) => {
+      const [tn, word] = MARK[s.change] ?? ["border", ""];
+      return v_flex().gap(4).items_center()
+        .child(this.box(t, { id: `d-${s.id}`, label: s.id, sub: word || s.who, tone: tn }))
+        .child(div().text_size(11).text_color(s.change === "same" ? t.dim : t[tn]).child(word ? s.who : s.gate === "human" ? "human gate" : ""));
+    };
+    const draftView = (d) => v_flex().gap(8).pt(10)
+      .child(div().text_size(11).text_color(t.accent).child(`DRAFT FROM #${d.ticket}${d.title ? `: ${d.title}` : ""} · ${d.summary}`))
+      .when(Boolean(d.error), (el) => el.child(div().text_color(t.blocked).child(d.error)))
+      .child(h_flex().flex_wrap().items_start().gap(4).children(d.stages.filter((s) => s.onPath).flatMap((s, i) => (i ? [arrow(), draftBox(s)] : [draftBox(s)]))))
+      .when(d.stages.some((s) => !s.onPath), (el) => el.child(h_flex().flex_wrap().gap(8).children(d.stages.filter((s) => !s.onPath).map(draftBox))))
+      .when(d.removed.length > 0, (el) => el.child(div().text_color(t.muted).child(`Removed: ${d.removed.map((s) => s.id).join(", ")}`)));
     return v_flex().size_full().p(16).gap(14).text_size(13).bg(t.background).overflow_y_scroll()
       .child(h_flex().gap(8).children(bps.map(chip)))
       .when(Boolean(this.error), (el) => el.child(div().text_color(t.muted).child(this.error)))
       .when(Boolean(b?.error), (el) => el.child(div().text_color(t.blocked).child(`${b.name}: ${b.error}`)))
+      .when(stages.length === 0 && drafts.length > 0, (el) => el.children(drafts.map(draftView)))
       .when(stages.length > 0, (el) => el
         .child(h_flex().flex_wrap().items_start().gap(4)
           .child(v_flex().gap(4).items_center().child(this.box(t, { id: "grooming", label: "grooming", sub: runs(b.grooming_runs), dashed: true, dim: true }))
@@ -74,6 +91,7 @@ export default class FactoryBlueprint extends View {
         .child(v_flex().gap(4).pt(6)
           .child(div().text_color(t.foreground).child(`Grooming picks this blueprint${b.orchestrator ? `, then the ${b.orchestrator} agent picks each next stage` : ""}.`))
           .children(stageNotes(b).map((n) => div().text_color(t.muted).child(n))))
+        .children(drafts.map(draftView))
         .child(div().text_size(12).text_color(t.dim).child(`Counts are stage runs in the last ${this.doc.days} days; retries count again.`)));
   }
 }

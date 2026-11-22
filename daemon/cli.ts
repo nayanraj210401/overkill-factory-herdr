@@ -38,6 +38,7 @@ import { writeRuns } from "./runs.ts";
 import { validateMetrics } from "../lib/metrics.js";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
+import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { overwatch } from "./overwatch.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
@@ -85,6 +86,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   lesson list [words…] | lesson retire <id>  the store (--json), searched by words / take one out of briefs
   overwatch [--json]                 start the overwatch agent, or print the live one's terminal
   blueprints                         write blueprints.json (stages, runs in 7 days) for the Blueprint page
+  dry-run <file|name> [--tickets N] [--json]  replay the last N (default 5) finished tickets through a draft blueprint, no agents; writes DRYRUN.md here
   plan <5h tokens> <week tokens>     your plan's limits, for the 5h and week meters: plan 20M 400M
   usage                              read agents' Claude Code transcripts now (the daemon does every tick)
   queue                              add the Project's Ready issues as grooming tickets now (the daemon: every 3 minutes)
@@ -174,6 +176,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const mergeFlag = flag(args, "merge");
   const maxRunningFlag = flag(args, "max-running");
   const queueFlag = flag(args, "queue");
+  const ticketsFlag = flag(args, "tickets");
   const by = flag(args, "by");
   const why = flag(args, "why");
   const source = flag(args, "source");
@@ -573,6 +576,14 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const repoDir = needLead(db).path;
       const doc = writeBlueprints(db, repoDir, p.blueprints);
       log(`${doc.blueprints.map((b) => b.name).join(", ") || "no blueprints"} → ${p.blueprints}`);
+      return;
+    } else if (cmd === "dry-run") {
+      if (!sub) throw new Error("usage: factory dry-run <blueprint file or name> [--tickets N] [--json]");
+      const n = ticketsFlag === null ? 5 : Number(ticketsFlag);
+      if (!Number.isInteger(n) || n < 1) throw new Error("--tickets takes a whole number of tickets, like --tickets 5");
+      const d = replayDraft(db, loadDraft(draftSource(needLead(db).path, sub)), n);
+      writeFileSync("DRYRUN.md", dryRunMarkdown(d));
+      log(json ? JSON.stringify(d) : `${dryRunMarkdown(d)}\n→ DRYRUN.md`);
       return;
     } else if (cmd === "plan") {
       const [h5, wk] = [parseTokens(sub ?? ""), parseTokens(rest[0] ?? "")];

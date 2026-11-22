@@ -103,6 +103,13 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktrees
 
 export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fail");
 
+// PR.md, then the blueprint dry run when the maintainer's check wrote one.
+export function prText(dir: string, id: number) {
+  const folder = join(dir, "tickets", String(id));
+  const dry = join(folder, "DRYRUN.md");
+  return readFileSync(join(folder, "PR.md"), "utf8").trim() + (existsSync(dry) ? `\n\n${readFileSync(dry, "utf8").trim()}` : "");
+}
+
 // The PR body: PR.md, the other repos' PRs of a cross-repo change, the issue it closes,
 // and the rule results.
 export function prBody(md: string, rules: Rule[], others: { repo: string; pr: number | null }[] = [], closes: string | null = null) {
@@ -123,7 +130,7 @@ export function closesIssue(db: Database, id: number, repo: { lead: number }, cr
 // with the rule results appended. Agents can't push; only the daemon does (plan: Hard stops).
 export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null; others?: { repo: string; pr: number | null }[]; closes?: string | null }) {
   const t = db.query("SELECT title FROM ticket_lead WHERE id = ?").get(o.id) as { title: string };
-  const md = readFileSync(join(o.dir, "tickets", String(o.id), "PR.md"), "utf8");
+  const md = prText(o.dir, o.id);
   const bodyFile = join(o.dir, "tickets", String(o.id), ".pr-body.md");
   mkdirSync(join(o.dir, "tickets", String(o.id)), { recursive: true });
   writeFileSync(bodyFile, prBody(md, o.rules, o.others, o.closes));

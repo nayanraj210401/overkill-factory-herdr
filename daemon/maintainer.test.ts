@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
@@ -27,7 +27,8 @@ function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   const db = open(join(dir, "factory.db"));
   setRepo(db, { slug: "acme/api", path: repo, lead: true });
   let term = 0;
-  const run: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: `{"address":"t${++term}"}` } : argv[0] === "gh" ? (argv[1] === "pr" && argv[2] === "create" ? { code: 0, out: "https://github.com/acme/api/pull/9" } : { code: 1, out: "gh is stubbed" }) : sh(argv, cwd));
+  const bodies: string[] = []; // each PR body the daemon opened
+  const run: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: `{"address":"t${++term}"}` } : argv[0] === "gh" ? (argv[1] === "pr" && argv[2] === "create" ? (bodies.push(readFileSync(argv[argv.indexOf("--body-file") + 1], "utf8")), { code: 0, out: "https://github.com/acme/api/pull/9" }) : { code: 1, out: "gh is stubbed" }) : sh(argv, cwd));
   const ticket = (id: number) => db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as any;
   const commit = (wt: string, file: string, text: string) => {
     writeFileSync(join(wt, file), text);
@@ -39,7 +40,7 @@ function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
     writeFileSync(join(dir, "tickets", String(id), "PR.md"), "Raises the day's budget.\n\n## What changed\n- x\n## Why\nx\n## How it was verified\nx\n## Risk\nLow.\n");
     return advance(db, { dir, repo, id, run, now });
   };
-  return { db, dir, repo, run, ticket, commit, finish };
+  return { db, dir, repo, run, ticket, commit, finish, bodies };
 }
 
 const evidence = (db: any, id: number) => db.query("SELECT check_name, result, detail FROM evidence WHERE ticket = ? ORDER BY id").all(id) as { check_name: string; result: string; detail: string }[];
@@ -90,4 +91,32 @@ test("the factory check sends the change back when it touches code or breaks the
   expect(evidence(s.db, id).filter((e) => e.check_name === "factory validate").at(-1)).toMatchObject({ result: "FAIL" });
   expect(evidence(s.db, id).filter((e) => e.check_name === "factory validate").at(-1)!.detail).toContain("max_runing: unknown key");
   expect(s.ticket(id).stage).toBe("maintain");
+});
+
+test("a blueprint change gets a dry run: DRYRUN.md, an evidence row, and the PR body carries it", () => {
+  const s = setup();
+  // A merged ticket on the chore blueprint, with the stages it went through.
+  s.db.query("INSERT INTO tickets (id, title, state, blueprint, updated_at) VALUES (50, 'Fix a typo', 'merged', 'chore', ?)").run(now);
+  ["Groom", "Implement", "Verify", "PR", "Merge"].forEach((n, i) => s.db.query("INSERT INTO stages (ticket, name, started_at) VALUES (50, ?, ?)").run(n, `2026-11-20T0${i}:00:00Z`));
+  const { id } = request(s.db, { text: "Drop the verify stage from chore", repo: "acme/api", run: s.run, now });
+  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
+  const chore = readFileSync(join(s.repo, ".factory/blueprints/chore.yaml"), "utf8");
+  expect(chore).toContain("verify");
+  s.commit(s.ticket(id).worktree, ".factory/blueprints/chore.yaml", "name: chore\nstart: implement\nstages:\n  implement: { agent: builder, next: [pr] }\n  pr: { requires: ready, output: PR.md, template: pr-readable, next: [merge] }\n  merge: { gate: human, next: [end] }\n");
+  s.finish(id);
+  const dry = join(s.dir, "tickets", String(id), "DRYRUN.md");
+  expect(readFileSync(dry, "utf8")).toContain("Stages the old runs had that the draft lacks: `verify`");
+  expect(evidence(s.db, id).find((e) => e.check_name === "blueprint dry run")).toMatchObject({ result: "PASS" });
+  expect(s.bodies[0]).toContain("## Dry run: the `chore` blueprint");
+  expect(s.bodies[0]).toContain("**Ready rules**");
+});
+
+test("a change that touches no blueprint writes no DRYRUN.md", () => {
+  const s = setup();
+  const { id } = request(s.db, { text: "Raise the day's budget", repo: "acme/api", run: s.run, now });
+  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
+  s.commit(s.ticket(id).worktree, ".factory/factory.yaml", "name: t\nquality_floor: [\"true\"]\nmax_running: 3\n");
+  s.finish(id);
+  expect(existsSync(join(s.dir, "tickets", String(id), "DRYRUN.md"))).toBe(false);
+  expect(s.bodies[0]).not.toContain("Dry run");
 });
