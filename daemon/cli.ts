@@ -798,7 +798,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     // Waiting on you in its terminal (a question, a prompt): Needs you says so until it moves on.
     try {
       let noted: string | null = null;
-      change(db, () => { noted = noteAttention(db, { ticket: s.ticket, terminal: s.terminal, waiting: !gone && waiting(info), now: nowIso }); });
+      change(db, () => { noted = noteAttention(db, { ticket: s.ticket, terminal: s.terminal, waiting: !gone && waiting(info, { startedAt: s.started_at, now: Date.now() }), now: nowIso }); });
       if (noted === "waiting") log(`factory: #${s.ticket}'s agent in ${s.terminal} is waiting on you`);
     } catch (e) { log(`factory: #${s.ticket}: ${(e as Error).message}`); }
     if (!gone) continue;
