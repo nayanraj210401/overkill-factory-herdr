@@ -415,7 +415,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let r!: AskResult;
       change(db, () => {
         r = askAgent(db, { to, text: words.filter(Boolean).join(" "), why, from: cmd === "request" ? fromFlag ?? "you" : askerOf(fromFlag), about: about === null ? null : Number(about),
-          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(db, sh), requestKind: kindFlag ?? undefined, target: repo !== "unknown" ? repo : undefined });
+          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(sh), requestKind: kindFlag ?? undefined, target: repo !== "unknown" ? repo : undefined });
       });
       writeStatus(db, p.status);
       if (r.kind === "request") {
@@ -732,7 +732,9 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       } else throw new Error("usage: factory lesson add|list|retire");
     } else if (cmd === "overwatch") {
       let r: any = null;
-      change(db, () => { r = overwatch(db, { name, dir: p.dir, run: sh, now: now() }); });
+      // One for every factory: found or started from any of them (overwatch.ts).
+      r = overwatch({ run: sh, now: now() });
+      if (r.started) change(db, () => { db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (NULL, 'you', 'started the overwatch agent', ?)").run(now()); });
       return log(json ? JSON.stringify(r) : `overwatch ${r.started ? "started" : "running"} in ${r.terminal}`);
     } else if (cmd === "blueprints") {
       const repoDir = needLead(db).path;
@@ -1075,7 +1077,7 @@ function runAll(interval: number, log: (s: string) => void) {
         recordUsage(db, log);
         watchSessions(db, p, sh, log);
         // Notes for Overwatch that its terminal hasn't had yet (it was busy, or not running).
-        deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(db, sh), name });
+        deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(sh), name });
         const lead = leadRepo(db);
         if (lead) runScheduledBenchmarks(db, { repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
         writeAll(db, p);

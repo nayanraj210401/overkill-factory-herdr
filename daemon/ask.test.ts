@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setMeta, setRepo } from "./db.ts";
+import { open, setRepo } from "./db.ts";
 import { ask, askerOf, deliverToOverwatch, doneAsk, openAsks, takeNotes } from "./ask.ts";
 import { buildStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
@@ -57,12 +57,13 @@ test("asking Overwatch: a note in Needs you, typed into its live terminal, once"
   expect(validateStatus(st)).toEqual([]);
   expect(st.asks).toEqual([{ id: a.ask.id, from: "spec-writer", to: "overwatch", text: "#412 needs a product answer: free or paid tier?", why: null, ticket: 412, at: now, delivered: false }]);
   // The daemon's tick types it once Overwatch is live; a busy send leaves it for the next tick.
-  setMeta(s.db, "overwatch_terminal", "t5");
-  const { liveOverwatch } = require("./overwatch.ts") as typeof import("./overwatch.ts");
+  const { liveOverwatch, stateFile } = require("./overwatch.ts") as typeof import("./overwatch.ts");
+  const home = mkdtempSync(join(tmpdir(), "ask-home-"));
+  require("node:fs").writeFileSync(stateFile(home), JSON.stringify({ terminal: "t5" }));
   s.setBusy(true);
-  expect(deliverToOverwatch(s.db, { run: s.run, now, terminal: () => liveOverwatch(s.db, s.run), name: "acme-api" })).toBe(0);
+  expect(deliverToOverwatch(s.db, { run: s.run, now, terminal: () => liveOverwatch(s.run, home), name: "acme-api" })).toBe(0);
   s.setBusy(false);
-  expect(deliverToOverwatch(s.db, { run: s.run, now, terminal: () => liveOverwatch(s.db, s.run), name: "acme-api" })).toBe(1);
+  expect(deliverToOverwatch(s.db, { run: s.run, now, terminal: () => liveOverwatch(s.run, home), name: "acme-api" })).toBe(1);
   expect(s.sends.at(-1)).toEqual(["hc", "send", "t5", `Note #${a.ask.id} from spec-writer about #412: #412 needs a product answer: free or paid tier?. When it's handled: factory asks done ${a.ask.id} --name acme-api`]);
   expect(deliverToOverwatch(s.db, { run: s.run, now, terminal: () => "t5" })).toBe(0); // once
   // Asked while Overwatch is live: typed at once.

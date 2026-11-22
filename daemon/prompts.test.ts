@@ -33,8 +33,11 @@ test("the built-in templates give the briefs the code used to build", () => {
   // The maintainer's brief: its whole territory and the request kinds (maintainer.md).
   const maintainer = readFileSync(join(import.meta.dir, "../agents/maintainer.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
   matchBrief("stageMaintainer", brief({ id: 10001, title: "Use a warmer accent" }, "maintain", maintainer, "/f", "maintain"));
-  matchBrief("overwatchNone", overwatchBrief({ name: "acme", dir: "/d", repo: null }));
-  matchBrief("overwatchRepo", overwatchBrief({ name: "acme", dir: "/d", repo: "/src/api" }));
+  // One Overwatch for every factory: its brief lists each, with its repos and data folder.
+  const acme = { name: "acme-api", dir: "/h/acme-api", repos: [{ slug: "acme/api", path: "/src/api", lead: true }, { slug: "acme/web", path: "/src/web", lead: false }] };
+  const shop = { name: "shop", dir: "/h/shop", repos: [{ slug: "acme/shop", path: "/src/shop", lead: true }] };
+  matchBrief("overwatchNone", overwatchBrief({ home: "/h", factories: [], neighbours: "MAP" }));
+  matchBrief("overwatchTwo", overwatchBrief({ home: "/h", factories: [acme, shop], neighbours: "MAP" }));
 });
 
 test("the fixture's default templates are the built-in ones, and each passes the validator", () => {
@@ -85,11 +88,12 @@ test("a file in .factory/prompts replaces the built-in for that factory only", (
   prompts(mine, { "stage.md": "#{{ticket.id}} {{stage}}: {{agent.prompt}}\n\nDone? factory stage-done {{ticket.id}}\n" });
   expect(brief({ id: 5, title: "t" }, "spec", "Be brief.", "/f", undefined, [], [], loadPrompt(mine, "stage"))).toBe("#5 spec: Be brief.\n\nDone? factory stage-done 5");
   expect(brief({ id: 5, title: "t" }, "spec", "Be brief.", "/f", undefined, [], [], loadPrompt(other, "stage"))).toContain("You run its spec stage.");
-  // grooming and overwatch find theirs the same way
-  prompts(mine, { "groom.md": "Groom {{ticket.id}} in {{repo}}. {{agent.prompt}}", "overwatch.md": "Watch {{name}}" });
+  // grooming finds its own the same way; Overwatch, one for every factory, never reads a repo's
+  prompts(mine, { "groom.md": "Groom {{ticket.id}} in {{repo}}. {{agent.prompt}}", "overwatch.md": "Watch {{home}}" });
   expect(triageBrief({ id: 5, title: "t" }, { slug: "a/b", repo: mine, folder: "/f", blueprints: [], prompt: "P" })).toBe(`Groom 5 in ${mine}. P`);
   expect(triageBrief({ id: 5, title: "t" }, { slug: "a/b", repo: other, folder: "/f", blueprints: [], prompt: "P" })).toContain("You groom it");
-  expect(overwatchBrief({ name: "acme", dir: "/d", repo: mine })).toBe("Watch acme");
+  expect(overwatchBrief({ home: "/h", factories: [{ name: "a", dir: "/h/a", repos: [{ slug: "a/b", path: mine, lead: true }] }] })).toContain("You are one Overwatch for every factory");
+  expect(validateDir(join(mine, ".factory")).find((r) => r.path === "prompts/overwatch.md")?.warnings?.[0]).toContain("ignored: Overwatch is one for every repo");
   // a typo in a file refuses to start, not a broken brief
   prompts(mine, { "stage.md": "Go {{ticket.idd}}" });
   expect(() => loadPrompt(mine, "stage")).toThrow(".factory/prompts/stage.md: {{ticket.idd}}: unknown placeholder");
@@ -154,7 +158,7 @@ test("every brief opens with the neighbour map, built from the agents' headers a
   expect(stage.startsWith(`${map}\n\nTicket #1: t.`)).toBe(true);
   matchBrief("stageNeighbours", stage);
   expect(triageBrief({ id: 5, title: "t" }, { slug: "acme/api", repo, folder: "/f", blueprints: [], prompt: "P", neighbours: map }).startsWith(`${map}\n\nTicket #5`)).toBe(true);
-  expect(overwatchBrief({ name: "acme", dir: "/d", repo, neighbours: map }).startsWith(`${map}\n\n`)).toBe(true);
+  expect(overwatchBrief({ home: "/h", factories: [], neighbours: map }).startsWith(`${map}\n\n`)).toBe(true);
   // A template of yours that doesn't place it still opens with it.
   prompts(repo, { "stage.md": "#{{ticket.id}} {{stage}}" });
   expect(brief({ id: 2, title: "t" }, "spec", null, "/f", undefined, [], [], loadPrompt(repo, "stage"), "", {}, map)).toBe(`${map}\n\n#2 spec`);
