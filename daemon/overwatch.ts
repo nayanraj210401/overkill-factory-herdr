@@ -29,6 +29,8 @@ export function overwatch(db: Database, o: { name: string; dir: string; run: Run
   const repo = leadRepo(db)?.path ?? null;
   const agent = repo ? loadAgent(repo, "overwatch") : null;
   const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, overwatchBrief({ name: o.name, dir: o.dir, repo }));
+  // Auto mode, like every factory agent: it still asks before acting (its brief), never at a permission prompt.
+  if (argv[0] === "claude") argv.splice(1, 0, "--permission-mode", "auto");
   const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f-overwatch-${o.name}`.slice(0, 32),
     "--cwd", o.dir, "--label", "factory.overwatch=1", ...withFactory(argv, o.dir)]);
   if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);

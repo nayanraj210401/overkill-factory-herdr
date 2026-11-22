@@ -208,3 +208,12 @@ test("planPct shows a dash when nothing reports the plan's usage", async () => {
   assert.equal(planPct({ window_5h: 0, source: "none" }, "window_5h"), "–");
   assert.equal(planPct({ week: 0.42 }, "week"), "42%"); // the sample has no source
 });
+
+test("an agent waiting on you in its terminal is in Needs you, first, whatever its stage", async () => {
+  const { groupOf, needsYou } = await import("../lib/model.js");
+  const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "Waiting on you in its terminal (t1): open it to answer" } };
+  assert.equal(groupOf(waiting), "needs");
+  assert.equal(groupOf({ id: 8, state: "running", stage: "spec", needs: null }), "running");
+  const order = needsYou([{ id: 1, state: "ready", needs: null }, { id: 2, state: "parked", needs: { kind: "parked", text: "" } }, waiting]);
+  assert.deepEqual(order.map((n) => [n.ticket.id, n.kind]), [[9, "attention"], [1, "merge"], [2, "parked"]]);
+});

@@ -49,12 +49,13 @@ test("triage runs in the ticket's folder with a brief naming the issue, the blue
   const argv = hc[0];
   expect(argv[argv.indexOf("--cwd") + 1]).toBe(join(dir, "tickets/412"));
   const brief = argv.at(-1)!;
-  // unattended, like every agent: `factory pick` / `factory question` never wait for approval
-  expect(argv.slice(argv.indexOf("claude"), argv.indexOf("claude") + 3)).toEqual(["claude", "--permission-mode", "acceptEdits"]);
+  // auto mode, like every agent: `factory pick` never waits for approval; questions are asked in the terminal
+  expect(argv.slice(argv.indexOf("claude"), argv.indexOf("claude") + 3)).toEqual(["claude", "--permission-mode", "auto"]);
   expect(JSON.parse(readFileSync(argv[argv.indexOf("--settings") + 1], "utf8")).permissions.allow).toContain("Bash(factory:*)");
   expect(brief).toContain("gh issue view 412 --repo acme/api --comments");
   expect(brief).toContain("one of address-review, bugfix, chore, feature");
-  expect(brief).toContain("factory question 412 product <question>");
+  expect(brief).toContain("ask the person here, in this session, with your question tool (AskUserQuestion)");
+  expect(brief).not.toContain("factory question");
   expect(brief).toContain("Read the issue and the code it touches"); // the triager agent's own prompt
   expect(ticket()).toMatchObject({ state: "grooming", stage: "groom" });
   expect(() => startGrooming(db, { dir, repo, id: 412, run, now })).toThrow("being groomed already");
