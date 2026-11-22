@@ -129,6 +129,34 @@ export function ask(db: Database, o: { id: number; kind: string; text: string; n
   return n;
 }
 
+// A question an agent asks mid-run (plan: a product question that turns up mid-run parks
+// the ticket). The ticket parks with it, its session ends, and a product question also
+// goes on the issue to the product owner. \`u\` (or factory answer) writes the answer to
+// GATES.md and restarts the stage, whose brief reads it there.
+export function askMidRun(db: Database, o: { repo: string; id: number; kind: string; text: string; run: Run; now: string }) {
+  const t = ticket(db, o.id);
+  if (t.state !== "running") throw new Error(`#${o.id} is ${t.state}; only a running ticket's agent asks mid-run`);
+  if (o.kind !== "product" && o.kind !== "engineering") throw new Error("a question is product or engineering");
+  const text = o.text.trim();
+  if (!text) throw new Error("type the question");
+  const n = ((db.query("SELECT MAX(n) AS m FROM questions WHERE ticket = ?").get(o.id) as { m: number | null }).m ?? 0) + 1;
+  db.query("INSERT INTO questions (ticket, n, kind, text, asked_at) VALUES (?, ?, ?, ?, ?)").run(o.id, n, o.kind, text, o.now);
+  const po = o.kind === "product" ? productOwner(db, o) : null;
+  const who = o.kind === "product" ? `product, for ${po ? `@${po}` : "the product owner"}` : "engineering";
+  db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?")
+    .run(`Q${n} from the ${t.stage} stage (${who}): ${text}`, o.now, o.id);
+  const ended = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
+  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'agent', ?, ?, ?)").run(o.id, `asked Q${n} mid-run and parked`, text, o.now);
+  if (o.kind === "product" && isIssue(o.id)) {
+    const body = `${po ? `@${po} ` : ""}The factory is building this and needs a product answer before it goes on:\n\n**Q${n}:** ${text}\n\nReply here with \`A${n}: …\`, or answer in Herdr.`;
+    const r = o.run(["gh", "issue", "comment", String(o.id), "--repo", needLead(db).slug, "--body", body]);
+    if (r.code !== 0) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)").run(o.id, `couldn't post Q${n} on the issue`, r.out.slice(0, 200), o.now);
+  }
+  return { n, terminals: ended.map((e) => e.terminal) };
+}
+
 function productOwner(db: Database, o: { repo: string; id: number; run: Run }) {
   const named = grooming(o.repo).product_owner;
   if (named) return named;

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta, setRepo } from "./db.ts";
 import { advance, answer, sh, type Run } from "./runner.ts";
-import { ask, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
+import { ask, askMidRun, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { recordUsage, transcriptDir } from "./usage.ts";
 
 const now = "2026-11-21T10:00:00Z";
@@ -172,4 +172,38 @@ test("an answer stays answered when the groomed ticket can't start yet; a later 
   expect(logs[0]).toStartWith("factory: #412 didn't start: hc run failed");
   expect(startGroomed(db, { dir, repo, run, now })).toEqual([412]);
   expect(ticket().state).toBe("running");
+});
+
+test("an agent's mid-run product question parks the ticket, goes on the issue, and the answer restarts the stage from GATES.md", () => {
+  const repo = mkdtempSync(join(tmpdir(), "repo-"));
+  for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
+  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
+  writeFileSync(join(repo, ".factory/factory.yaml"), "name: t\nquality_floor: ['true']\n");
+  sh(["git", "-C", repo, "add", "."]); sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
+  const dir = mkdtempSync(join(tmpdir(), "factory-"));
+  const db = open(join(dir, "factory.db"));
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
+  db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (7, 'Wire it', 'feature', '2026-11-21T10:00:00Z')").run();
+  const calls: string[][] = [];
+  let n = 0;
+  const run: Run = (argv, cwd) => {
+    if (argv[0] === "hc") return { code: 0, out: `{"address":"t${++n}"}` };
+    if (argv[0] === "gh") { calls.push(argv); return { code: 0, out: argv[2] === "view" ? "dana" : "" }; }
+    return sh(argv, cwd);
+  };
+  const { startTicket } = require("./runner.ts");
+  startTicket(db, { dir, repo, id: 7, run, now: "2026-11-21T10:00:00Z" });
+  const q = askMidRun(db, { repo, id: 7, kind: "product", text: "Per user or per IP?", run, now: "2026-11-21T10:05:00Z" });
+  expect(q).toEqual({ n: 1, terminals: ["t1"] });
+  expect(db.query("SELECT state, needs_text FROM tickets WHERE id = 7").get()).toEqual({ state: "parked", needs_text: "Q1 from the spec stage (product, for @dana): Per user or per IP?" });
+  expect(db.query("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL").get()).toEqual({ n: 0 });
+  const comment = calls.find((c) => c[2] === "comment")!;
+  expect(comment.at(-1)).toContain("@dana");
+  expect(comment.at(-1)).toContain("A1:");
+  expect(() => askMidRun(db, { repo, id: 7, kind: "product", text: "again?", run, now: "2026-11-21T10:06:00Z" })).toThrow("#7 is parked");
+  const r = answer(db, { dir, repo, id: 7, text: "Per user", run, now: "2026-11-21T10:10:00Z" });
+  expect(r).toMatchObject({ stage: "spec" });
+  const gates = readFileSync(join(dir, "tickets/7/GATES.md"), "utf8");
+  expect(gates).toContain("Q1 from the spec stage (product, for @dana): Per user or per IP?");
+  expect(gates).toContain("**Your answer:** Per user");
 });
