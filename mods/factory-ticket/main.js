@@ -1,9 +1,11 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
-import { theme, shared, readTextFile, nextCommand, checking, props } from "herdr";
+import { theme, shared, readTextFile, nextCommand, checking, props, exec, notify } from "herdr";
 import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, stageDetail, stageRounds, questionCards, ANSWER_HOW } from "./lib/model.js";
 import { root, status, state, peekAgent, act } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
+import { cliCommand } from "./lib/actions.js";
+import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
 // beside the live agent terminal once M2 starts agents (docs/layouts/02-ticket.png).
@@ -30,6 +32,21 @@ export default class FactoryTicket extends View {
       const dir = `${root()}/tickets/${id}`;
       for (const name of ["STATUS.md", ...TICKET_TABS.map((t) => t.file)]) this.files[name] = await readTextFile(`${dir}/${name}`);
       if (this.id === id) cx.notify();
+    });
+  }
+
+  // Refresh: the daemon's tick now (usage, agents, the PR on GitHub), then re-read the files.
+  refresh(ticket, cx) {
+    if (this.refreshing) return;
+    this.refreshing = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const c = cliCommand(CLI, root(), ["refresh", String(ticket.id)]);
+      const r = await exec(c.command, c.args, { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e) }));
+      this.refreshing = false;
+      if (r.code) notify({ title: "Refresh failed", body: String(r.stderr || r.stdout || "").trim().slice(0, 300), level: "error" });
+      this.at = null; // re-read STATUS.md and the tabs on the next render
+      cx.notify();
     });
   }
 
@@ -76,6 +93,7 @@ export default class FactoryTicket extends View {
       ...(asking ? [button("answer", "Answer  u", true, () => act({ kind: "answer" }, ticket))] : []),
       ...(ticket.state === "parked" ? [button("answer", "Answer and restart  u", true, () => act({ kind: "answer" }, ticket))] : []),
       ...(!["grooming", "queued"].includes(ticket.state) ? [button("diff", "Diff  d", false, () => act({ kind: "diff" }, ticket))] : []),
+      button("refresh", this.refreshing ? "Refreshing…" : "Refresh", false, () => this.refresh(ticket, cx)),
       ...(ticket.state === "running" || ticket.state === "paused" ? [button("pause", ticket.state === "paused" ? "Resume  p" : "Pause  p", false, () => act({ kind: "pause" }, ticket))] : []),
     ];
     // Several questions: numbered as the A1: answers are, each with its kind and who answers.

@@ -19,6 +19,7 @@ export default class FactoryConfig extends View {
     this.selected = null;
     this.error = null;
     this.editor = null;
+    this.editors = {}; // path → its read-only EditorState, made once
     this.checks = {};
     this.daemon = undefined; // undefined: not asked yet; null: the CLI didn't answer
     this.busy = null;
@@ -26,15 +27,21 @@ export default class FactoryConfig extends View {
     this.handle = cx.focus_handle();
     if (!checking()) {
       this.refreshDaemon(cx);
-      cx.timer.every(10000, (cx) => this.refreshDaemon(cx));
+      cx.timer.every(30000, (cx) => this.refreshDaemon(cx));
     }
+    const wait = (ms) => new Promise((done) => cx.timer.after(ms, done));
     cx.spawn(async (cx) => {
       await this.list();
       if (this.files.length) await this.select(this.files[0], cx);
       cx.notify();
       if (checking()) return;
       for (;;) {
-        await watchFolder(this.dir);
+        this.validate(cx); // the schema check fills in after the files show
+        // A missing folder has nothing to watch: look again soon rather than spin. (Before
+        // status.json loads, this.dir is the data folder's, which has no .factory.)
+        if (this.error) await wait(1000);
+        else await Promise.race([watchFolder(this.dir), wait(30000)]);
+        await wait(300); // one reload for a burst of saves
         await this.list();
         if (this.selected) await this.select(this.selected, cx);
         cx.notify();
@@ -136,20 +143,30 @@ export default class FactoryConfig extends View {
     }
     this.error = null;
     this.files = configFiles(r.stdout.split("\n").filter(Boolean).map((p) => p.replace(/^\.\//, "")));
-    // The daemon's schema check, per file: path → errors (undefined while unknown).
-    if (checking()) return;
-    const v = await this.factory(["validate", this.dir, "--json"]).catch(() => null);
-    try { this.checks = Object.fromEntries(JSON.parse(v.stdout).map((x) => [x.path, x.errors])); } catch { this.checks = {}; }
+  }
+
+  // The daemon's schema check, per file: path → errors (undefined while unknown).
+  validate(cx) {
+    if (this.error) return;
+    cx.spawn(async (cx) => {
+      const v = await this.factory(["validate", this.dir, "--json"]).catch(() => null);
+      try { this.checks = Object.fromEntries(JSON.parse(v.stdout).map((x) => [x.path, x.errors])); } catch { this.checks = {}; }
+      cx.notify();
+    });
   }
 
   async select(file, cx) {
     const t = theme();
     const text = (await readTextFile(`${this.dir}/${file.path}`)) ?? "";
-    // A file's language is fixed when its editor is made, so each selection gets its own.
-    if (this.selected?.path !== file.path || !this.editor) {
-      this.editor = EditorState.new({ language: file.language, value: text, readonly: true, soft_wrap: true,
+    // A file's language is fixed when its editor is made: one editor per file, kept, so
+    // clicking between files doesn't rebuild and re-highlight each one.
+    const key = `${this.dir}/${file.path}`;
+    let editor = this.editors[key];
+    if (!editor) {
+      editor = this.editors[key] = EditorState.new({ language: file.language, value: text, readonly: true, soft_wrap: true,
         syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, number: t.ansi3, constant: t.ansi4, boolean: t.ansi3 } });
-    } else if (this.editor.value() !== text) this.editor.set_value(text);
+    } else if (editor.value() !== text) editor.set_value(text);
+    this.editor = editor;
     this.selected = file;
     cx.notify();
   }
