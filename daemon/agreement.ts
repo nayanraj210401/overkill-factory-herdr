@@ -1,6 +1,7 @@
 // The agreement benchmark (plan: Away mode). Before the babysitter decides alone, it is
 // checked against you: your past review comments are judged again by the judge
-// (review.judge_model, the same prompt as prejudge.ts), and the share it gets the way you
+// (the babysitter's: review.judge_model or babysitter.md's model, with babysitter.md's
+// words, the same call as prejudge.ts), and the share it gets the way you
 // did is the agreement rate. Below away.min_agreement (85% unless set), no pushbacks while
 // you're away: clear-cut fixes still go through, and the rest is escalated.
 //
@@ -10,7 +11,7 @@
 import type { Database } from "bun:sqlite";
 import type { Run } from "./runner.ts";
 import { awayPolicy } from "./away.ts";
-import { judgeModel, judgePrompt, parseProposal } from "./prejudge.ts";
+import { askJudge, babysitter, judgeId, judgeModel } from "./prejudge.ts";
 import { VERDICTS } from "./comments.ts";
 
 export const DEFAULT_MIN_AGREEMENT = 0.85;
@@ -39,7 +40,7 @@ export function label(db: Database, o: { ticket: number; n: number; verdict: str
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(o.ticket, `labelled C${o.n} ${o.verdict}`, o.now);
 }
 
-export type AgreementRun = { id: number; model: string; examples: number; agreed: number; failed: number; rate: number; started_at: string; ended_at: string };
+export type AgreementRun = { id: number; model: string; prompt: string | null; examples: number; agreed: number; failed: number; rate: number; started_at: string; ended_at: string };
 
 // Judges every example, then records the run in one transaction (the calls are slow, and
 // the database stays free while they run). A call that fails or can't be read counts as
@@ -47,16 +48,13 @@ export type AgreementRun = { id: number; model: string; examples: number; agreed
 export function runAgreement(db: Database, o: { repo: string; run: Run; now: () => string; log?: (s: string) => void }) {
   const xs = examples(db);
   if (!xs.length) throw new Error("no labelled review comments yet: merge a factory PR that had review comments, or label some with factory label <id> C<n> <verdict>");
-  const model = judgeModel(o.repo);
+  const b = babysitter(o.repo);
+  const { model, prompt } = judgeId(o.repo, b);
   const started = o.now();
   const items = xs.map((x) => {
-    let got: Verdict | null = null, why: string | null = null;
-    try {
-      const r = o.run(["claude", "-p", "--model", model, judgePrompt(x)]);
-      const p = r.code === 0 ? parseProposal(r.out) : null;
-      if (p) [got, why] = [p.verdict, p.why || null];
-      else why = r.code === 0 ? "unreadable answer" : `exit ${r.code}: ${r.out.split("\n")[0].slice(0, 120)}`;
-    } catch (e) { why = (e as Error).message.slice(0, 120); }
+    const a = askJudge(o.run, model, x, b);
+    const got: Verdict | null = a.p?.verdict ?? null;
+    const why = a.p ? a.p.why || null : a.why;
     o.log?.(`agreement: #${x.ticket} C${x.n}: yours ${x.yours}, judge ${got ?? "none"}`);
     return { ...x, got, why };
   });
@@ -65,17 +63,18 @@ export function runAgreement(db: Database, o: { repo: string; run: Run; now: () 
   const rate = +(agreed / items.length).toFixed(3);
   let id = 0;
   db.transaction(() => {
-    id = Number(db.query("INSERT INTO agreement_runs (model, examples, agreed, failed, rate, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(model, items.length, agreed, failed, rate, started, o.now()).lastInsertRowid);
+    id = Number(db.query("INSERT INTO agreement_runs (model, prompt, examples, agreed, failed, rate, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(model, prompt, items.length, agreed, failed, rate, started, o.now()).lastInsertRowid);
     const add = db.query("INSERT INTO agreement_items (run, ticket, n, yours, source, got, why) VALUES (?, ?, ?, ?, ?, ?, ?)");
     for (const i of items) add.run(id, i.ticket, i.n, i.yours, i.source, i.got, i.why);
   })();
-  return latestAgreement(db, model)!;
+  return latestAgreement(db, { model, prompt })!;
 }
 
-export const latestAgreement = (db: Database, model?: string) =>
-  (model
-    ? db.query("SELECT * FROM agreement_runs WHERE model = ? ORDER BY id DESC LIMIT 1").get(model)
+// The newest run, or the newest on one judge (its model and the hash of its words).
+export const latestAgreement = (db: Database, judge?: { model: string; prompt: string }) =>
+  (judge
+    ? db.query("SELECT * FROM agreement_runs WHERE model = ? AND prompt = ? ORDER BY id DESC LIMIT 1").get(judge.model, judge.prompt)
     : db.query("SELECT * FROM agreement_runs ORDER BY id DESC LIMIT 1").get()) as AgreementRun | null;
 
 export const minAgreement = (repo: string) => awayPolicy(repo).min_agreement ?? DEFAULT_MIN_AGREEMENT;
@@ -83,12 +82,13 @@ export const minAgreement = (repo: string) => awayPolicy(repo).min_agreement ?? 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 
 // Whether the babysitter may push back while you're away, and why. Only a run on the judge
-// model in use now counts: a new model hasn't been checked against you yet.
+// in use now counts: a new model, or a changed babysitter.md, hasn't been checked against you yet.
 export function pushbackGate(db: Database, repo: string): { ok: boolean; why: string; min: number; run: AgreementRun | null } {
   const min = minAgreement(repo);
-  const run = latestAgreement(db, judgeModel(repo));
+  const judge = judgeId(repo);
+  const run = latestAgreement(db, judge);
   if (min <= 0) return { ok: true, why: "away.min_agreement is 0, so the gate is off", min, run };
-  if (!run) return { ok: false, why: `the judge (${judgeModel(repo)}) hasn't been checked against the person's verdicts yet (factory agreement)`, min, run };
+  if (!run) return { ok: false, why: `the judge (${judge.model}${latestAgreement(db, undefined)?.model === judge.model ? ", with babysitter.md as it is now" : ""}) hasn't been checked against the person's verdicts yet (factory agreement)`, min, run };
   if (run.examples < MIN_EXAMPLES) return { ok: false, why: `the judge was checked on only ${run.examples} past comment${run.examples === 1 ? "" : "s"}; the check needs ${MIN_EXAMPLES}`, min, run };
   if (run.rate < min) return { ok: false, why: `the judge matches the person's verdict on ${pct(run.rate)} of past comments, below away.min_agreement ${pct(min)}`, min, run };
   return { ok: true, why: `the judge matches the person's verdict on ${pct(run.rate)} of past comments (away.min_agreement ${pct(min)})`, min, run };

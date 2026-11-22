@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { Run } from "./runner.ts";
 import { ticketRepos } from "./db.ts";
 import { prComments } from "./watch.ts";
+import { babysitter } from "./prejudge.ts";
 
 type C = { n: number; repo: string | null; pr: number; gh_id: string; thread: string; author: string; place: string | null; body: string; hunk: string | null; verdict: string | null; reason: string | null; suggested: string | null; replied_at: string | null; fix_commit: string | null; url: string | null };
 
@@ -39,8 +40,11 @@ function acceptance(folder: string) {
 // REVIEW-ROUND-<n>.md: the comments to fix, each with the reviewer's words, file and line,
 // the diff hunk and the acceptance checks it touches (the ones naming its file; when none
 // does, all of them, since the fix must keep every check passing). A comment with no
-// verdict yet counts when the cheap model suggested fix.
-export function writeBrief(db: Database, o: { dir: string; ticket: number; round: number }) {
+// verdict yet counts when the cheap model suggested fix. The guidance on top is babysitter.md's
+// "Fix rounds" section; the verdict command under it is the daemon's own.
+const ROUND_GUIDANCE = "You are a fresh session for this round; don't look for the one that wrote the PR. Fix only the comments below, in this worktree, and keep every acceptance check passing.";
+
+export function writeBrief(db: Database, o: { dir: string; ticket: number; round: number; repo?: string }) {
   const folder = join(o.dir, "tickets", String(o.ticket));
   const checks = acceptance(folder);
   const fix = roundComments(db, o.ticket, o.round).filter((c) => c.verdict === "fix" || (c.verdict == null && c.suggested === "fix"));
@@ -59,7 +63,9 @@ export function writeBrief(db: Database, o: { dir: string; ticket: number; round
   writeFileSync(join(folder, `REVIEW-ROUND-${o.round}.md`), [
     `# Review round ${o.round}`,
     "",
-    `You are a fresh session for this round; don't look for the one that wrote the PR. Fix only the comments below, in this worktree, and keep every acceptance check passing. REVIEW.md lists the round's other comments: give each one a verdict (factory comment ${o.ticket} C<n> fix|pushback|escalate <reason>).`,
+    (o.repo ? babysitter(o.repo).rounds.replace(/^##[^\n]*\n+/, "").trim() : "") || ROUND_GUIDANCE,
+    "",
+    `REVIEW.md lists the round's other comments: give each one a verdict (factory comment ${o.ticket} C<n> fix|pushback|escalate <reason>).`,
     "",
     blocks.length ? blocks.join("\n\n") : "No comment is marked fix yet. Judge them in REVIEW.md.",
   ].join("\n") + "\n");

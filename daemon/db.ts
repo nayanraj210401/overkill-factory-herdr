@@ -201,6 +201,15 @@ export const MIGRATIONS = [
      ticket INTEGER NOT NULL REFERENCES tickets(id), file TEXT NOT NULL, url TEXT NOT NULL,
      kind TEXT NOT NULL CHECK (kind IN ('artifact', 'doc')), published_at TEXT NOT NULL, PRIMARY KEY (ticket, file)
    );`,
+  // Factory agents (M7): an agreement run names the judge's words too (a hash of its prompt
+  // from babysitter.md), and each learner run is kept with what it spent from budget.learning.
+  `ALTER TABLE agreement_runs ADD COLUMN prompt TEXT;
+   CREATE TABLE learner_runs (
+     id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT, model TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('done', 'failed', 'unreadable')), why TEXT,
+     merged INTEGER NOT NULL, tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, usd REAL,
+     proposals INTEGER NOT NULL DEFAULT 0, filed TEXT
+   );`,
   // The maintainer's request kinds (maintainer.ts), and the factory app's own checkout: a
   // repo the maintainer works in for a look request, never one tickets or watchers list.
   `ALTER TABLE tickets ADD COLUMN request_kind TEXT;
