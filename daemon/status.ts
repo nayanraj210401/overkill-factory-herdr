@@ -32,7 +32,7 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,
     terminal: r.terminal ?? null,
-    session: r.sessions || null, // "session 3 of #412": the sessions started for it so far
+    session: r.sessions || null, // "session 3 of #412": the live agent's session in its stage; null with no live agent
   };
 }
 
@@ -54,7 +54,9 @@ export function buildStatus(db: Database, now = new Date()) {
   const open = Map.groupBy(db.query("SELECT ticket, n, kind, text FROM questions WHERE answer IS NULL ORDER BY ticket, n").all() as Row[], (q) => q.ticket);
   const questionsOf = (id: number) => (open.get(id) ?? []).map((q) => ({ n: q.n, kind: q.kind, text: q.text }));
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal,
-    (SELECT COUNT(*) FROM sessions s WHERE s.ticket = t.id AND s.agent != 'cloud') AS sessions
+    -- the live agent's session number within its stage: a handoff starts the next one in the same stage
+    (SELECT COUNT(*) FROM sessions s, (SELECT stage FROM sessions l WHERE l.ticket = t.id AND l.ended_at IS NULL AND l.agent IS NOT 'cloud' ORDER BY l.id DESC LIMIT 1) live
+       WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ({
     ...ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null),
     // The open grooming questions, numbered as the `A1:` answers are.
