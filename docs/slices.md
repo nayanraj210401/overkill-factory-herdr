@@ -138,3 +138,4 @@ Status 2026-11-21: Q1 is settled by test (copy `lib/` into each mod; a symlink i
 3. **Blueprint in M1 or M2?** Plan M1's "done when" includes a blueprint picture. A static SVG from YAML (layout by a small script, or Graphviz `dot` via `exec`) is doable now, but it pulls in a graph-layout dependency early.
 4. **Getting the app.** `herdr-app` isn't installed here. M1 can't be checked without it.
 5. **Fixture source.** Use flow-stack v1 task folders as-is (real but messy), or hand-write a clean set first?
+- **One claude for every session** (#99): overwatch, triage, stages, handoffs and the daemon's `claude -p` calls all run the same binary: `claude.path` in `~/.factory/config.yaml`, else the newest found (PATH, `~/.local/bin`, Homebrew, nvm). `factory claude` and a Config card list the ones found. Agents also keep your PATH's order ahead of Homebrew's.

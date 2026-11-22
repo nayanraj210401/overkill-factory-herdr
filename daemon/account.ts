@@ -20,6 +20,7 @@ export type Account = {
   away?: Record<string, unknown>;
   cloud?: { on_sleep?: "move" | "off" };
   profile?: { taste?: string[]; rules?: string[] };
+  claude?: { path?: string };
 };
 
 export const accountFile = (home = process.env.FACTORY_HOME ?? join(homedir(), ".factory")) => join(home, "config.yaml");

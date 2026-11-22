@@ -75,6 +75,7 @@ export const ACCOUNT: Rule = {
     away: AWAY,
     cloud: CLOUD,
     profile: { object: { taste: strs, rules: strs } },
+    claude: { object: { path: str } }, // which claude every session runs (claude-bin.ts)
   },
 };
 

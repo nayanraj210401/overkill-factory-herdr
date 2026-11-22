@@ -3,6 +3,7 @@
 // and opens as an unnamed space, which Herdr nests under the repo's space. Each
 // stage's agent is a tab there. When the app isn't running (the daemon runs from
 // launchd), callers fall back to a free-floating `hc run`.
+import { resolveClaude } from "./claude-bin.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -35,7 +36,8 @@ export function withFactory(argv: string[], dir: string) {
     writeFileSync(file, script);
     chmodSync(file, 0o755);
   }
-  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${toolPath()}`, ...argv];
+  // Every terminal (overwatch, triage, stages, handoffs) starts the same claude (claude-bin.ts).
+  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${toolPath()}`, ...resolveClaude(argv)];
 }
 
 const appHome = () => process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");

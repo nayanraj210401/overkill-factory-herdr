@@ -2,6 +2,7 @@
 // `factory`: the CLI agents and people use to change factory state, and
 // `factory run`, the daemon. Every change is checked against the status.json
 // contract inside its transaction, so a bad write never lands.
+import { claudeChoice } from "./claude-bin.ts";
 import { homedir } from "node:os";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -110,6 +111,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   migrate flow-stack [--dry-run] [--propose <id>]  import past tasks, decisions and lessons from ~/.flow-stack and .flow/ (once each); --propose writes the profile, calibration and feature map into a maintainer request
   setup migrate                      accept setup's flow-stack offer: a maintainer request that migrates it, as a PR
   bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
+  claude [--json]                    which claude every factory session runs (claude.path in config.yaml, else the newest), and the others found
   validate [dir] [--json]            check .factory/ files (default ./.factory)
   refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
   status                             write status.json and print a summary
@@ -196,6 +198,16 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0], login: loginFlag ?? undefined });
+  if (cmd === "claude") {
+    // Which claude every factory session runs, and the others found. Changing it is a config
+    // change like any other: ask Overwatch, and the maintainer sets claude.path in config.yaml.
+    const c = claudeChoice();
+    if (json) return log(JSON.stringify(c));
+    log(c.why === "none" ? "no claude found; install Claude Code" : `the factory runs ${c.path} (${c.version ?? "unknown version"}): ${c.why === "configured" ? "claude.path in config.yaml" : "the newest found"}`);
+    for (const f of c.found) log(`  ${f.path === c.path ? "▸" : " "} ${f.path}  ${f.version ?? "?"}`);
+    if (c.found.length > 1) log("to use another, ask Overwatch (\"use <path> for claude\"); the maintainer sets claude.path in ~/.factory/config.yaml");
+    return;
+  }
   if (cmd === "validate") {
     // An account config (the maintainer's ACCOUNT-CONFIG.yaml proposal) is checked as one.
     const accountLike = sub && /(^|\/)(ACCOUNT-CONFIG|config)\.yaml$/.test(sub) && existsSync(sub) && statSync(sub).isFile();
