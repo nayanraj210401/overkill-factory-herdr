@@ -13,8 +13,9 @@ import { join } from "node:path";
 import { transcriptDir, parseTranscript, type Use } from "./usage.ts";
 import { flagFile, snapshotFile, withHandoffHook } from "./handoff-hook.ts";
 import { openAgent, withFactory } from "./herdr.ts";
-import { agentSettings, argvFor, brief, loadBlueprint, readFactory, type Run } from "./runner.ts";
+import { agentSettings, argvFor, brief, loadBlueprint, readFactory, shareFor, type Run } from "./runner.ts";
 import { factoryMap, loadAgent } from "./agents.ts";
+import { publishStep } from "./artifacts.ts";
 import { loadPrompt, render } from "./prompts.ts";
 import { settingOf } from "./learn.ts";
 import { ticketRepos } from "./db.ts";
@@ -155,9 +156,12 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
   const handoff = read("HANDOFF.md").trim();
   const lastCommit = out(o.run, o.s.cwd ?? o.s.worktree!, "log", "-1", "--format=%h %s");
   const own = (db.query("SELECT blueprint FROM tickets WHERE id = ?").get(t.id) as { blueprint: string } | null)?.blueprint;
-  let stagePrompt: string | undefined;
-  try { stagePrompt = own ? loadBlueprint(o.repo, own).stages[o.s.stage]?.prompt : undefined; } catch {}
-  const stageBrief = brief(t, o.s.stage, agent?.prompt ?? null, o.folder, agent?.role, repos, [], loadPrompt(o.repo, stagePrompt ?? "stage"));
+  let stagePrompt: string | undefined, output: string | undefined;
+  try { ({ prompt: stagePrompt, output } = own ? loadBlueprint(o.repo, own).stages[o.s.stage] ?? {} : {}); } catch {}
+  const share = shareFor(db, { repo: o.repo, id: t.id, folder: o.folder, output });
+  const stageBrief = brief(t, o.s.stage, agent?.prompt ?? null, o.folder, agent?.role, repos, [], loadPrompt(o.repo, stagePrompt ?? "stage"), "", share);
+  // The handoff this session starts from is renamed HANDOFF.session-<n-1>.md; it is shared as HANDOFF.md.
+  const kept = join(o.folder, `HANDOFF.session-${o.n - 1}.md`);
   return render(loadPrompt(o.repo, "handoff"), {
     neighbours: factoryMap(db), // the stage brief inside goes without it: the map leads once
     "ticket.id": String(t.id),
@@ -176,6 +180,7 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
     diff: stats.join("\n\n"),
     last_check: checks.join("\n"),
     snapshot: o.ceiling ? read("PRECOMPACT.md").replace(/^# PreCompact snapshot\s*/, "").trim() : "",
+    publish_handoff: !o.ceiling && handoff ? publishStep(share.policy, { id: t.id, file: "HANDOFF.md", path: kept, links: share.links, when: "After the check, before you change anything", what: "the handoff you start from" }) : "",
   });
 }
 
@@ -195,7 +200,7 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
   if (existsSync(snap)) renameSync(snap, join(o.folder, `PRECOMPACT.session-${n - 1}.md`));
   const agent = s.agent ? loadAgent(o.repo, s.agent) : null;
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
-  const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? [], [o.folder, ...ticketRepos(db, s.ticket).flatMap((r) => r.worktree ?? [])]);
+  const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? [], [o.folder, ...ticketRepos(db, s.ticket).flatMap((r) => r.worktree ?? [])], shareFor(db, { repo: o.repo, id: s.ticket, folder: o.folder }).allow);
   const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: s.ticket });
   run(["hc", "kill", s.terminal]);
   db.query("UPDATE sessions SET ended_at = ? WHERE id = ?").run(o.now, s.id);

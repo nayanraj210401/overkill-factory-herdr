@@ -12,8 +12,8 @@ const TICKET = ["ticket.id", "ticket.title"];
 // Every template may name {{neighbours}}, the map of the factory's agents (agents.ts).
 export const PLACEHOLDERS: Record<string, string[]> = {
   groom: [...TICKET, "neighbours", "repo", "slug", "folder", "blueprints", "agent.prompt", "repos", "issue"],
-  stage: [...TICKET, "neighbours", "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "fix_brief", "slice"],
-  handoff: [...TICKET, "neighbours", "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot"],
+  stage: [...TICKET, "neighbours", "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "fix_brief", "slice", "shared", "publish"],
+  handoff: [...TICKET, "neighbours", "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot", "publish_handoff"],
   overwatch: ["neighbours", "name", "dir", "repo", "repo_line"],
 };
 export const placeholdersFor = (name: string) => PLACEHOLDERS[name] ?? PLACEHOLDERS.stage;

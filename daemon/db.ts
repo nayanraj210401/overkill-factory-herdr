@@ -196,6 +196,20 @@ export const MIGRATIONS = [
      yours TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('you', 'kept')), got TEXT, why TEXT,
      PRIMARY KEY (run, ticket, n)
    );`,
+  // Shared plans: each ticket file an agent published to claude.ai, one stable link per file (artifacts.ts).
+  `CREATE TABLE ticket_artifacts (
+     ticket INTEGER NOT NULL REFERENCES tickets(id), file TEXT NOT NULL, url TEXT NOT NULL,
+     kind TEXT NOT NULL CHECK (kind IN ('artifact', 'doc')), published_at TEXT NOT NULL, PRIMARY KEY (ticket, file)
+   );`,
+  // Factory agents (M7): an agreement run names the judge's words too (a hash of its prompt
+  // from babysitter.md), and each learner run is kept with what it spent from budget.learning.
+  `ALTER TABLE agreement_runs ADD COLUMN prompt TEXT;
+   CREATE TABLE learner_runs (
+     id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT, model TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('done', 'failed', 'unreadable')), why TEXT,
+     merged INTEGER NOT NULL, tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, usd REAL,
+     proposals INTEGER NOT NULL DEFAULT 0, filed TEXT
+   );`,
   // Agents ask each other (factory ask): who asked whom, what and why, the ticket it is about,
   // and for the maintainer the request it filed. A note is delivered (typed into Overwatch's
   // terminal, or given to the learner's or babysitter's next run) and later marked done.

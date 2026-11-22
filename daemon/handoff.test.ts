@@ -10,6 +10,7 @@ import { CEILING, contextFill, contextWindow, handoffAt, handoffStep, missingSec
 import { flagFile, refusal, snapshotFile, snapshotOf, withHandoffHook } from "./handoff-hook.ts";
 import { validateStatus } from "../lib/status.js";
 import { matchBrief } from "./snap.ts";
+import { recordArtifact } from "./artifacts.ts";
 
 const use = (at: string, o: Partial<Use> = {}): Use => ({ id: at, at, model: "claude-sonnet-5-5", input: 0, w5m: 0, w1h: 0, read: 0, output: 0, ...o });
 
@@ -295,4 +296,22 @@ test("a session Claude Code starts compacting below the ceiling is stopped, and 
   expect((db.query("SELECT why FROM decisions WHERE what = 'started session 2'").get() as any).why).toContain("PreCompact snapshot");
   tick("2026-11-21T10:41:00Z"); // the new session isn't stopped again
   expect(db.query("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 2 });
+});
+
+test("with sharing on, the next session gets the links and republishes the handoff it starts from to HANDOFF.md's link", () => {
+  const { db, repo, calls, folder, fill, tick } = setup();
+  writeFileSync(join(repo, ".factory/factory.yaml"), readFileSync(join(repo, ".factory/factory.yaml"), "utf8") + "artifacts: { as: artifact }\n");
+  const url = "https://claude.ai/code/artifact/0b6c9e1a-0000-4000-8000-0000000000aa";
+  recordArtifact(db, { id: 412, file: "HANDOFF.md", url, now: "2026-11-21T10:01:00Z" });
+  fill(125_000);
+  tick("2026-11-21T10:32:00Z");
+  writeFileSync(join(folder, "HANDOFF.md"), FULL);
+  tick("2026-11-21T10:35:00Z");
+  const run = calls.findLast((c) => c[1] === "run")!;
+  const brief = run.at(-1)!;
+  expect(brief).toContain(`Shared copies on claude.ai, for sessions that can't see ${folder}: HANDOFF.md ${url}.`);
+  expect(brief).toContain(`After the check, before you change anything, share the handoff you start from on claude.ai as the ticket's HANDOFF.md, so cloud sessions read it by link: publish ${folder}/HANDOFF.session-1.md with your Artifact tool: action publish, file_path ${folder}/HANDOFF.session-1.md, url ${url}, so the link stays the same`);
+  expect(brief.indexOf("re-run the current check")).toBeLessThan(brief.indexOf("After the check, before you change anything"));
+  expect(existsSync(join(folder, "HANDOFF.session-1.md"))).toBe(true); // the file it names is there
+  expect(JSON.parse(readFileSync(run[run.indexOf("--settings") + 1], "utf8")).permissions.allow).toContain("Artifact");
 });

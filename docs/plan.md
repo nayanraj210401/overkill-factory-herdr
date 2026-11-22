@@ -409,7 +409,7 @@ Budgets are counted in tokens, input and output separately, not dollars. On a Pr
 
 - **Input and output, counted apart.** Output tokens cost more and run out faster, so each budget has both. Cache reads are counted as input but shown separately, since a well-cached session reads far more than it writes.
 - **Your plan limits are a guard of their own.** The daemon reads the agents' own usage reports (the way herdr-roundup's pane header shows Claude Code and Codex plan limits) and knows where your 5-hour and weekly windows stand. When the 5-hour window passes `plan.pause_at`, nothing new starts and running tickets finish their current stage; the status bar shows when the window resets. On API keys this guard is off and the dollar estimate is exact.
-- **A budget per ticket.** Grooming estimates a ticket's input and output tokens from past tickets on the same blueprint, and sets its budget to that times `headroom`. You can change it during grooming, or later with `b` on the ticket page. The sidebar and ticket page show use against it.
+- **A budget per ticket.** With fewer than 5 merged tickets on the blueprint, grooming doesn't guess: the ticket gets `budget.per_ticket`. With 5 or more, it takes the 80th percentile of their input and of their output (counted apart, so one tiny ticket can't drag it down; only tickets that reached a merged PR count) and multiplies by `headroom`. Either way there is a floor: `budget.floor` (default 50%) of `per_ticket`, or 150k input and 8k output for each stage run of the blueprint (a `per: slice` stage counts as 3 runs), whichever is larger. The decision log says how: "default: only 2 past feature tickets, need 5", or "p80 of 14 past feature tickets × 1.5, floor 1.5M in, 80k out"; Home and the ticket page show it. You can change it during grooming, or later with `b` on the ticket page. The sidebar and ticket page show use against it.
 - **What happens at the limit.** At 80% the ticket shows a warning. At 100% it stops at the next step boundary, never mid-edit, and parks in Needs you: raise the budget or drop the ticket.
 - **A daily cap,** also in tokens: when it's reached, nothing new starts.
 - **A separate learning budget.** Experiments and benchmarks spend only from `budget.learning`, never from a ticket's budget. The first `learn.warmup_tickets` tickets run on defaults with no experiments, only logging. Experiments also pause when the 5-hour window or the day's budget passes `learn.pause_above`. The Cost tab shows work and learning use apart.
@@ -419,6 +419,7 @@ Budgets are counted in tokens, input and output separately, not dollars. On a Pr
 budget:
   per_ticket: { input: 3M, output: 150k }   # the default; grooming sets each ticket's own
   headroom: 1.5
+  floor: 50%               # of per_ticket: grooming never sets a budget below this
   per_day: { input: 40M, output: 2M }
   learning: 10%            # of per_day, for experiments and benchmarks only
   show_cost: api_equivalent
@@ -507,6 +508,23 @@ Everything runs locally by default, so a sleeping laptop stops running tickets a
 - **What travels.** The branch, HANDOFF.md and the ticket's .md files, committed under `.factory-run/<ticket>/` on the branch and removed before the PR is marked ready. SQLite stays local: on return, the daemon reads that folder back into rows, including cost.
 
 Cloud runs keep the same gates, ready rules and hard stops.
+
+### Shared plans as Claude artifacts
+
+A ticket's spec and plan live as files in the factory's data folder, which a cloud session can't see. With sharing on, the agent that writes one also publishes it to claude.ai, so any session the person owns reads it by link.
+
+```yaml
+# .factory/factory.yaml, or ~/.factory/config.yaml for every factory
+artifacts:
+  as: artifact          # artifact (a page) | doc (a Claude Doc) | off (the default)
+  publish: [INTENT.md, SLICES.md, PR.md, HANDOFF.md]   # the default when as is set
+```
+
+- **Who publishes.** Only an agent: the Artifact tool and the Claude Docs connector exist inside an interactive Claude Code session signed in to claude.ai, and no command or API publishes from outside one. A stage whose `output:` is listed ends with publishing it, as is (Markdown renders as a page), then `factory artifact <id> <file> <url>`. A handoff's next session publishes the handoff it starts from as HANDOFF.md.
+- **One link per file.** The daemon keeps each link in SQLite (`ticket_artifacts`). Every later session (a new stage run, a slice, a review round, a handoff) is given the link and republishes to it, so it never changes. Links start private; the person shares one from the page if they want.
+- **Who reads.** Every brief that points at the files also gives the links: stage and handoff briefs, CLOUD.md for `⇧C`, and ROUTINE.md beside each watched PR. A cloud session reads the plan with its own Artifact tool; the pack's copies still travel.
+- **Best-effort.** The local files stay the source of truth, and no ready rule reads a link. A failed publish (`factory artifact <id> <file> --fail <why>`), or a stage that ends with no new link, adds one line to the decision log and nothing else.
+- **What you see.** The Ticket page shows "Shared on claude.ai" with a link per file; status.json carries them.
 
 ## Away mode
 

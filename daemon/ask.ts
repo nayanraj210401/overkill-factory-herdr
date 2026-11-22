@@ -54,13 +54,19 @@ export function noteText(a: Ask, name?: string) {
   return `Note #${a.id} from ${from}${a.about ? ` about #${a.about}` : ""}: ${a.text}${a.why ? ` (evidence: ${a.why})` : ""}. When it's handled: factory asks done ${a.id}${name ? ` --name ${name}` : ""}`;
 }
 
-// The learner's or babysitter's next run: the notes waiting for it, marked delivered. They stay
-// open (Config's Pending changes) until the agent runs `factory asks done <id>`.
+// The learner's or babysitter's run: the notes waiting for it. Its runs are one-shot answers, so
+// a note the run read is handled (delivered and done); read them with openAsks first, and take
+// them once the run has answered.
 export function takeNotes(db: Database, to: "learner" | "babysitter", now: string) {
-  const notes = openAsks(db, to).filter((a) => !a.delivered_at);
-  for (const a of notes) db.query("UPDATE asks SET delivered_at = ? WHERE id = ?").run(now, a.id);
+  const notes = openAsks(db, to);
+  for (const a of notes) db.query("UPDATE asks SET delivered_at = ?, done_at = ? WHERE id = ?").run(now, now, a.id);
   return notes;
 }
+
+// The notes, as a run's prompt carries them; "" with none.
+export const notesSection = (notes: Ask[]) => notes.length
+  ? ["Notes other agents left you (answer one with a proposal when the digest supports it; otherwise leave it):", ...notes.map((a) => `- Note #${a.id} from ${a.from === "you" ? "the person" : a.from}: ${a.text}${a.why ? ` (evidence: ${a.why})` : ""}`)].join("\n")
+  : "";
 
 // Notes to Overwatch: typed into its live terminal, once each. A terminal that's gone, or a
 // send that fails, leaves the note for the next tick; it is in Needs you either way.

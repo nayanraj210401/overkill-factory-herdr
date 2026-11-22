@@ -27,6 +27,7 @@ import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { accountPending, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount } from "./maintainer.ts";
 import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
+import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from "./artifacts.ts";
 import { factoryMap, loadAgent } from "./agents.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
@@ -78,7 +79,9 @@ export const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", neighbours = "") {
+// `share`: the claude.ai links and the publish step for the stage's output (artifacts.ts); "" when sharing is off.
+// `neighbours`: the map of the factory's agents (agents.ts), first in the brief.
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "") {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return render(template, {
     neighbours,
@@ -97,6 +100,8 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
     lessons: lessons.map((l) => `- ${l}`).join("\n"),
     fix_brief: latestBrief(folder),
     slice,
+    shared: share.shared,
+    publish: share.publish,
   });
 }
 
@@ -151,6 +156,32 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
   return startStage(db, { ...o, run, now, blueprint: b, stage: b.start });
 }
 
+// What a stage's brief says about shared copies on claude.ai: the links, the publish step for its
+// output, and the tool the session may use for it without asking.
+export function shareFor(db: Database, o: { repo: string; id: number; folder: string; output?: string }) {
+  const p = artifactPolicy(readFactory(o.repo));
+  const links = sharedLinks(db, o.id, p);
+  return {
+    policy: p, links,
+    shared: sharedLine(links, o.folder),
+    publish: o.output ? publishStep(p, { id: o.id, file: o.output, path: join(o.folder, o.output), links }) : "",
+    allow: p.as === "artifact" ? ["Artifact"] : p.as === "doc" ? ["mcp__claude_ai_Claude_Docs"] : [],
+  };
+}
+
+// At stage-done: a stage whose output is shared but wasn't published this stage gets a line in the
+// decision log. Never more: the stage passes on the local file, and a broken config can't stop it.
+export function notePublishGap(db: Database, o: { repo: string; id: number; now: string }) {
+  try {
+    const t = db.query("SELECT blueprint, stage FROM tickets WHERE id = ?").get(o.id) as { blueprint: string; stage: string | null } | null;
+    if (!t?.stage) return false;
+    const b = loadBlueprint(o.repo, t.blueprint);
+    const key = Object.keys(b.stages).find((k) => k.toLowerCase() === t.stage); // tickets.stage is the name, lowercased
+    const since = (db.query("SELECT started_at FROM stages WHERE ticket = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1").get(o.id) as { started_at: string } | null)?.started_at ?? null;
+    return publishGap(db, { id: o.id, file: key ? b.stages[key].output : undefined, since, policy: artifactPolicy(readFactory(o.repo)), now: o.now });
+  } catch { return false; }
+}
+
 export function startStage(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; blueprint: Blueprint; stage: string }) {
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
   const s = o.blueprint.stages[o.stage];
@@ -171,7 +202,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const intent = existsSync(join(folder, "INTENT.md")) ? readFileSync(join(folder, "INTENT.md"), "utf8") : "";
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
-  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, factoryMap(db))), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])]);
+  const share = shareFor(db, { repo: o.repo, id: o.id, folder, output: s.output });
+  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db))), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
   const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id }); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
@@ -196,7 +228,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");

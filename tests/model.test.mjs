@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { groupTickets, needsYou, subtitle, compact, parseTokens } from "../lib/model.js";
+import { groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks } from "../lib/model.js";
 
 const status = JSON.parse(readFileSync(new URL("../fixtures/acme-api/status.json", import.meta.url)));
 const now = Date.parse("2026-11-21T10:00:00Z");
@@ -246,4 +246,13 @@ test("notes between agents: Needs you shows the ones for Overwatch; Pending chan
   assert.deepEqual(overwatchNotes(undefined), []);
   const bad = { ...status, asks: [{ id: 1, from: "x", to: "overwatch", text: "t", at: "2026-11-21T09:00:00Z" }] };
   assert.deepEqual(validateStatus(bad), ["asks[0]: needs {id, from, to, text, why, ticket, at, delivered}"]);
+});
+
+test("the Ticket page's shared links: spec first, then the plan, each opening its claude.ai page", () => {
+  const t = status.tickets.find((x) => x.id === 412);
+  assert.deepEqual(sharedLinks(t).map((l) => [l.label, l.url]), [
+    ["INTENT.md ↗", "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000411"],
+    ["SLICES.md ↗", "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000412"],
+  ]);
+  assert.deepEqual(sharedLinks({ id: 1 }), []); // nothing shared: no row on the page
 });

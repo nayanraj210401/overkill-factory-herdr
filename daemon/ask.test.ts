@@ -80,9 +80,10 @@ test("asking the learner or the babysitter queues a note for its next run", () =
   const a = ask(s.db, { ...s.base, to: "learner", from: "overwatch", text: "Is Haiku enough for chores?", why: "the person asked" });
   ask(s.db, { ...s.base, to: "babysitter", from: "you", text: "Be gentler with the docs team's reviews" });
   expect(a).toMatchObject({ kind: "note", delivered: false });
+  expect(openAsks(s.db, "learner").map((n) => n.text)).toEqual(["Is Haiku enough for chores?"]); // waiting, on Pending changes
   expect(takeNotes(s.db, "learner", now).map((n) => n.text)).toEqual(["Is Haiku enough for chores?"]);
-  expect(takeNotes(s.db, "learner", now)).toEqual([]); // given once
-  expect(openAsks(s.db, "learner")).toHaveLength(1); // open until it's done
+  expect(takeNotes(s.db, "learner", now)).toEqual([]); // the run that read it handled it
+  expect(openAsks(s.db, "learner")).toEqual([]);
   expect(takeNotes(s.db, "babysitter", now).map((n) => n.from)).toEqual(["you"]);
   // The decision log has every hand-off.
   expect(s.db.query("SELECT who, what FROM decisions ORDER BY id").all()).toEqual([

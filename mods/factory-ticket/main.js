@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, shared, readTextFile, nextCommand, checking, props, exec, notify } from "herdr";
-import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, stageDetail, stageRounds, questionCards, ANSWER_HOW } from "./lib/model.js";
+import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW } from "./lib/model.js";
 import { root, status, state, peekAgent, act } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 import { cliCommand } from "./lib/actions.js";
@@ -83,6 +83,12 @@ export default class FactoryTicket extends View {
         .child(div().font_semibold().text_color(t.foreground).child("Cross-repo check"))
         .child(div().text_color(t.muted).child("factory.yaml's cross_check runs with every branch checked out together."))
         .child(div().text_color(t.muted).child(`Ready only when all ${cards.length} PRs and this check pass; m merges them in order.`)));
+    // The ticket's files an agent shared on claude.ai: each opens in the browser.
+    const links = sharedLinks(ticket);
+    const sharedRow = links.length > 0 && h_flex().id("shared").gap(6).flex_wrap().items_center()
+      .child(div().text_size(12).text_color(t.muted).child("Shared on claude.ai"))
+      .children(links.map((l) => div().id(`shared-${l.file}`).px(8).py(2).rounded(6).border(1).border_color(t.border).text_size(12)
+        .text_color(t.accent).cursor_pointer().hover((st) => st.bg(t.hover)).on_click(() => exec("open", [l.url])).child(l.label)));
     const live = Boolean(ticket.terminal);
     const questions = questionCards(ticket);
     const asking = ticket.state === "grooming" && ticket.needs?.kind === "question";
@@ -139,6 +145,7 @@ export default class FactoryTicket extends View {
             .child(`${x.key} ${x.title}`)))
           .child(div().flex_1())
           .child(div().text_size(11.5).text_color(t.dim).child("⌘⌥1–4")))
+        .when(!!sharedRow, (el) => el.child(sharedRow))
         .child(body ? TextView.markdown(`md-${ticket.id}-${tab.file}`, body) : div().text_color(t.dim).child(`No ${tab.file} yet.`)))
       // The live column exists only while an agent runs; otherwise the page gets the width.
       .when(live, (el) => el.child(v_flex().w(380).flex_none().h_full().p(14).gap(8).rounded(10).bg(t.surface).border(1).border_color(t.border).text_color(t.muted)

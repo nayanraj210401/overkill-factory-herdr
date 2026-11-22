@@ -157,6 +157,10 @@
       "needs": null,
       "session": 2,
       "terminal": "t7",
+      "artifacts": [
+        { "file": "SLICES.md", "url": "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000412", "kind": "artifact", "at": "2026-11-21T09:20:00Z" },
+        { "file": "INTENT.md", "url": "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000411", "kind": "artifact", "at": "2026-11-21T09:12:00Z" }
+      ],
       "repos": [
         {
           "slug": "acme/api",

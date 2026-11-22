@@ -147,14 +147,14 @@ test("every brief opens with the neighbour map, built from the agents' headers a
   expect(map).toContain("- spec-writer (spec): INTENT.md for its ticket."); // no territory: its role's
   expect(map).not.toContain("- maintainer (maintain)"); // a factory agent isn't listed as the repo's
   // The stable map first, the ticket after it (plan: Cache-friendly order).
-  const stage = brief({ id: 1, title: "t" }, "spec", "P", "/f", undefined, [], [], loadPrompt(repo, "stage"), "", map);
+  const stage = brief({ id: 1, title: "t" }, "spec", "P", "/f", undefined, [], [], loadPrompt(repo, "stage"), "", {}, map);
   expect(stage.startsWith(`${map}\n\nTicket #1: t.`)).toBe(true);
   matchBrief("stageNeighbours", stage);
   expect(triageBrief({ id: 5, title: "t" }, { slug: "acme/api", repo, folder: "/f", blueprints: [], prompt: "P", neighbours: map }).startsWith(`${map}\n\nTicket #5`)).toBe(true);
   expect(overwatchBrief({ name: "acme", dir: "/d", repo, neighbours: map }).startsWith(`${map}\n\n`)).toBe(true);
   // A template of yours that doesn't place it still opens with it.
   prompts(repo, { "stage.md": "#{{ticket.id}} {{stage}}" });
-  expect(brief({ id: 2, title: "t" }, "spec", null, "/f", undefined, [], [], loadPrompt(repo, "stage"), "", map)).toBe(`${map}\n\n#2 spec`);
+  expect(brief({ id: 2, title: "t" }, "spec", null, "/f", undefined, [], [], loadPrompt(repo, "stage"), "", {}, map)).toBe(`${map}\n\n#2 spec`);
   // A territory is the header's; a broken agent file still gets a line, never a broken brief.
   writeFileSync(join(repo, ".factory/agents/reviewer.md"), '---\nrole: review\nterritory: "Payments diffs, strictly"\n---\nBe strict.\n');
   writeFileSync(join(repo, ".factory/agents/broken.md"), "no header");
