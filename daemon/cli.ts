@@ -482,7 +482,11 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       log(`${s.factory.name}: ${s.tickets.length} tickets, daemon ${s.factory.daemon ? "on" : "off"} → ${p.status}`);
       return;
     } else if (cmd === "run") {
-      const tick = () => { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); };
+      // A tick that fails (a locked database, a gh hiccup) is logged; the next one tries again.
+      const tick = () => {
+        try { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); }
+        catch (e) { log(`factory: tick failed: ${(e as Error).message}`); }
+      };
       tick();
       log(`factory ${name}: writing ${p.status} every ${interval}s`);
       setInterval(tick, interval * 1000);

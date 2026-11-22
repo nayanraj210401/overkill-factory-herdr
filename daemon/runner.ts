@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { openPr, prBody, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
-import { closeSpace, openAgent, openTab, withFactory, worktreePath } from "./herdr.ts";
+import { closeSpace, openAgent, openTab, toolPath, withFactory, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
 import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
@@ -207,7 +207,7 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     if (!commands.length) { record(o.check, false, "factory.yaml has no quality_floor commands"); return false; }
     let ok = true;
     for (const c of commands) {
-      const r = o.run(["sh", "-c", c], o.worktree);
+      const r = o.run(["env", `PATH=${toolPath()}`, "sh", "-c", c], o.worktree);
       // Agents see the first failing lines; full logs stay out of the prompt (PRD 6.10).
       const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
       record(c, r.code === 0, r.code === 0 ? "passed" : `exit ${r.code}: ${tail}`);

@@ -18,6 +18,10 @@ if (process.env.NODE_ENV === "test" && !process.env.FACTORY_TEST_SANDBOX)
 // folder or a worktree) doesn't name one. \`dir\` is the factory's data folder,
 // <FACTORY_HOME>/<name>; the command is a small script in <FACTORY_HOME>/bin that runs
 // this checkout's CLI with bun.
+// The PATH agents and checks run with: bun's own folder and Homebrew's first, so a
+// daemon started by launchd (whose PATH is /usr/bin:/bin) still finds the repo's tools.
+export const toolPath = () => [...new Set([dirname(process.execPath), "/opt/homebrew/bin", "/usr/local/bin", ...(process.env.PATH ?? "/usr/bin:/bin").split(":")])].join(":");
+
 export function withFactory(argv: string[], dir: string) {
   const home = dirname(dir);
   const bin = join(home, "bin");
@@ -28,7 +32,7 @@ export function withFactory(argv: string[], dir: string) {
     writeFileSync(file, script);
     chmodSync(file, 0o755);
   }
-  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, ...argv];
+  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${toolPath()}`, ...argv];
 }
 
 const appHome = () => process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");

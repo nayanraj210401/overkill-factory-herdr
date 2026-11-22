@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { open, setMeta, setRepo } from "./db.ts";
 import { advance, runCheck, sh, startTicket, type Run } from "./runner.ts";
 import { watchSessions } from "./cli.ts";
@@ -130,9 +130,12 @@ test("the evidence check runs the quality floor itself, and its own earlier fail
   setRepo(db, { slug: "acme/api", path: repo, lead: true });
   let pass = false;
   writeFileSync(join(repo, ".factory/factory.yaml"), "name: t\nquality_floor: [bun test]\n");
-  const run: Run = (argv) => (argv[0] === "sh" ? { code: pass ? 0 : 1, out: pass ? "3 pass" : "1 fail" } : { code: 0, out: "" });
+  const calls: string[][] = [];
+  const run: Run = (argv) => (calls.push(argv), argv.includes("bun test") ? { code: pass ? 0 : 1, out: pass ? "3 pass" : "1 fail" } : { code: 0, out: "" });
   const check = (now: string) => runCheck(db, { id: 1, repo, worktree: repo, check: "evidence", run, now });
   expect(check("2026-11-21T10:01:00Z")).toBe(false); // the tests fail
+  // The command runs with bun's own folder on its PATH, as a launchd daemon's minimal PATH lacks it.
+  expect(calls[0].slice(0, 2)).toEqual(["env", expect.stringContaining(`PATH=${dirname(process.execPath)}:`)]);
   pass = true;
   expect(check("2026-11-21T10:02:00Z")).toBe(true);  // fixed: the floor ran again, and the earlier FAIL of evidence itself doesn't count
   expect(db.query("SELECT check_name, result FROM evidence ORDER BY id").all()).toEqual([
