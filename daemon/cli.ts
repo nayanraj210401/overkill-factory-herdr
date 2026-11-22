@@ -21,6 +21,7 @@ import { login, newTicket, pollQueue } from "./intake.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
 import { judge } from "./comments.ts";
+import { importRoutine, LOG_BRANCH, routineDue, routineSteps, writeRoutine } from "./routine.ts";
 import { isAway, setAway } from "./away.ts";
 import { startHold } from "./budget.ts";
 import { toCloud, toLocal } from "./cloud.ts";
@@ -65,6 +66,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   sessions <id>                      the agent sessions started for a ticket, with their tokens
   cloud <id> | --all                 hand a running ticket (or every one) to a Claude Code cloud session
   local <id>                         bring a ticket back from the cloud and resume it here
+  routine [brief]                    write ROUTINE.md, the prompt for a Claude Code scheduled task that watches PRs while you sleep, and print how to set it up
+  routine on|off|import              read the task's log branch back every 10 minutes (on), stop (off), or now (import)
   away on|off                        you're away, in every factory: away: (config.yaml, then factory.yaml) applies; Home shows a digest when you're back
   learn set <key> <value> [--why reason]  tune a setting learn.tunable lists, for tickets that start from now on
   learn undo <key> | learn list      drop an override / show the active ones beside the file's value
@@ -427,6 +430,23 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (!ids.length) log("no running tickets to move");
       writeStatus(db, p.status);
       return;
+    } else if (cmd === "routine") {
+      const lead = needLead(db);
+      if (!sub || sub === "brief") {
+        let me = "you";
+        try { me = login(db, sh, "me"); } catch (e) { log(`(gh login unknown: ${(e as Error).message}; the brief says @you)`); }
+        const path = writeRoutine(db, { dir: p.dir, repo: lead.path, slug: lead.slug, me, now: now() });
+        for (const l of routineSteps({ path, slug: lead.slug, name })) log(l);
+        return;
+      } else if (sub === "on" || sub === "off") {
+        change(db, () => setMeta(db, "routine_on", sub === "on" ? "1" : "0"));
+        log(sub === "on" ? `reading ${LOG_BRANCH} back every 10 minutes` : "not reading the routine's log any more");
+      } else if (sub === "import") {
+        let r: ReturnType<typeof importRoutine> | null = null;
+        change(db, () => { r = importRoutine(db, { dir: p.dir, repo: lead.path, run: sh, now: now() }); });
+        log(routineSummary(r!));
+        for (const id of r!.tickets) writeTicketFiles(db, p.dir, id);
+      } else throw new Error("usage: factory routine [brief|on|off|import]");
     } else if (cmd === "away") {
       if (sub !== "on" && sub !== "off") throw new Error("usage: factory away on|off");
       // You are away, not a repo: every factory under FACTORY_HOME follows.
@@ -655,6 +675,14 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     try { change(db, () => { readIssueAnswers(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
     catch (e) { log(`factory: reading issue answers: ${(e as Error).message}`); }
   }
+  // What the cloud PR watch did while the laptop slept, before the watcher sees the same comments.
+  if (routineDue(db, Date.now())) {
+    try {
+      let r: ReturnType<typeof importRoutine> | null = null;
+      change(db, () => { r = importRoutine(db, { dir: p.dir, repo: repoDir, run, now: nowIso }); });
+      if (r!.applied || r!.bad) log(`factory: ${routineSummary(r!)}`);
+    } catch (e) { log(`factory: reading the routine's log: ${(e as Error).message}`); }
+  }
   runTriggers(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso, log });
   // Issues of running and queued tickets: blocked, scope changed, pulled back (every 5 minutes).
   try { followIssues(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }
@@ -722,6 +750,10 @@ export function writeMetrics(db: Database, path: string, now = new Date()) {
   writeIfChanged(path, JSON.stringify(doc) + "\n");
   return doc;
 }
+
+const routineSummary = (r: ReturnType<typeof importRoutine>) => r.missing
+  ? `no ${LOG_BRANCH} branch on origin yet`
+  : `routine log: ${r.applied} comment${r.applied === 1 ? "" : "s"} handled in the cloud${r.tickets.length ? ` (${r.tickets.map((t) => `#${t}`).join(", ")})` : ""}, ${r.known} already judged here${r.unknown ? `, ${r.unknown} on PRs this factory doesn't know` : ""}${r.bad ? `, ${r.bad} unreadable lines` : ""}`;
 
 // owner/name from a checkout's origin on GitHub (ssh or https), for init without --repo.
 export function originSlug(path: string) {

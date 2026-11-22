@@ -737,6 +737,7 @@ Open questions:
 - Can a mod draw the blueprint graph and the Metrics charts itself, or does the daemon render SVGs the mod shows with `image()`? The SVG path works today.
 - Does the orchestrator run as its own long-lived agent per ticket, or does the daemon call it once per stage change?
 - Which Claude Code interface does the daemon use to start a cloud session from a branch and to fetch one back, and can it start worker sessions with the flow-stack plugin turned off? Both need checking before M3.
+- The scheduled cloud agent that watches PRs is a Claude Code cloud scheduled task (formerly a routine). It can be made only on claude.ai/code/routines, in the Desktop app, or with `/schedule` in an interactive session, and runs at most hourly. Still to check: whether its session can read review comments and reply through `gh` or the GitHub connector (docs/slices.md, M3).
 
 ## Sources
 
