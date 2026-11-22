@@ -224,6 +224,8 @@ export const MIGRATIONS = [
      about INTEGER, request INTEGER REFERENCES tickets(id), at TEXT NOT NULL, delivered_at TEXT, done_at TEXT
    );
    CREATE INDEX asks_open ON asks(to_agent) WHERE done_at IS NULL;`,
+  // What a babysitter note has been used for: the fix round that carried a ticket's note, or how many judgements a general note has been in.
+  `ALTER TABLE asks ADD COLUMN used INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export function open(path: string): Database {

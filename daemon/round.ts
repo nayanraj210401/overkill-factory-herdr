@@ -13,6 +13,7 @@ import { ticketRepos } from "./db.ts";
 import { prComments } from "./watch.ts";
 import { FACTORY_MARK } from "./comments.ts";
 import { babysitter } from "./prejudge.ts";
+import { roundNotes, useRoundNotes } from "./ask.ts";
 
 type C = { n: number; repo: string | null; pr: number; gh_id: string; thread: string; author: string; place: string | null; body: string; hunk: string | null; verdict: string | null; reason: string | null; suggested: string | null; replied_at: string | null; fix_commit: string | null; url: string | null };
 
@@ -45,7 +46,7 @@ function acceptance(folder: string) {
 // "Fix rounds" section; the verdict command under it is the daemon's own.
 const ROUND_GUIDANCE = "You are a fresh session for this round; don't look for the one that wrote the PR. Fix only the comments below, in this worktree, and keep every acceptance check passing.";
 
-export function writeBrief(db: Database, o: { dir: string; ticket: number; round: number; repo?: string }) {
+export function writeBrief(db: Database, o: { dir: string; ticket: number; round: number; repo?: string; now?: string }) {
   const folder = join(o.dir, "tickets", String(o.ticket));
   const checks = acceptance(folder);
   const fix = roundComments(db, o.ticket, o.round).filter((c) => c.verdict === "fix" || (c.verdict == null && c.suggested === "fix"));
@@ -61,6 +62,12 @@ export function writeBrief(db: Database, o: { dir: string; ticket: number; round
       list.length ? `\nAcceptance ${touched.length ? "check it touches" : "checks to keep passing"}:\n${list.join("\n")}` : "",
     ].filter((x) => x !== "").join("\n");
   });
+  // Notes other agents sent the babysitter about this ticket: the round uses them, so they're done.
+  const notes = roundNotes(db, o.ticket, o.round);
+  const notesBlock = notes.length
+    ? ["## Notes from other agents", "", ...notes.map((a) => `- ${a.from === "you" ? "the person" : a.from}: ${a.text}${a.why ? ` (evidence: ${a.why})` : ""}`), ""].join("\n")
+    : "";
+  useRoundNotes(db, notes, o.round, o.now ?? new Date().toISOString());
   writeFileSync(join(folder, `REVIEW-ROUND-${o.round}.md`), [
     `# Review round ${o.round}`,
     "",
@@ -68,6 +75,7 @@ export function writeBrief(db: Database, o: { dir: string; ticket: number; round
     "",
     `REVIEW.md lists the round's other comments: give each one a verdict (factory comment ${o.ticket} C<n> fix|pushback|escalate <reason>).`,
     "",
+    ...(notesBlock ? [notesBlock, ""] : []),
     blocks.length ? blocks.join("\n\n") : "No comment is marked fix yet. Judge them in REVIEW.md.",
   ].join("\n") + "\n");
   return fix.map((c) => c.n);

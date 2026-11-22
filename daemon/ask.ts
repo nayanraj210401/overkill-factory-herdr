@@ -64,6 +64,27 @@ export function takeNotes(db: Database, to: "learner" | "babysitter", now: strin
   return notes;
 }
 
+// Notes to the babysitter. One about a ticket goes into that ticket's next fix-round brief and is
+// done once the round has used it (`used` keeps the round, so a rewritten brief still has it).
+// A general one (no ticket) goes into the judge's prompt for its next JUDGE_NOTE_RUNS judgements,
+// or until it is closed.
+export const JUDGE_NOTE_RUNS = 5;
+export const roundNotes = (db: Database, ticket: number, round: number): Ask[] =>
+  (db.query("SELECT * FROM asks WHERE to_agent = 'babysitter' AND request IS NULL AND about = ? AND (done_at IS NULL OR used = ?) ORDER BY id").all(ticket, round) as any[]).map(row);
+export function useRoundNotes(db: Database, notes: Ask[], round: number, now: string) {
+  for (const a of notes) db.query("UPDATE asks SET delivered_at = COALESCE(delivered_at, ?), done_at = COALESCE(done_at, ?), used = ? WHERE id = ?").run(now, now, round, a.id);
+}
+export const judgeNotes = (db: Database): Ask[] =>
+  (db.query("SELECT * FROM asks WHERE to_agent = 'babysitter' AND request IS NULL AND about IS NULL AND done_at IS NULL ORDER BY id DESC LIMIT 3").all() as any[]).map(row).reverse();
+// Counts `n` judgements against the notes given to them; a note that has had its share is done.
+export function usedJudgeNotes(db: Database, notes: Ask[], n: number, now: string) {
+  if (!n) return;
+  for (const a of notes) db.query("UPDATE asks SET delivered_at = COALESCE(delivered_at, ?), used = used + ?, done_at = CASE WHEN used + ? >= ? THEN ? ELSE done_at END WHERE id = ?").run(now, n, n, JUDGE_NOTE_RUNS, now, a.id);
+}
+// Handled notes to one agent, newest first, for `factory asks <agent>`.
+export const doneAsks = (db: Database, to: string, limit = 10): Ask[] =>
+  (db.query("SELECT * FROM asks WHERE done_at IS NOT NULL AND request IS NULL AND to_agent = ? ORDER BY id DESC LIMIT ?").all(to, limit) as any[]).map(row);
+
 // The notes, as a run's prompt carries them; "" with none.
 export const notesSection = (notes: Ask[]) => notes.length
   ? ["Notes other agents left you (answer one with a proposal when the digest supports it; otherwise leave it):", ...notes.map((a) => `- Note #${a.id} from ${a.from === "you" ? "the person" : a.from}: ${a.text}${a.why ? ` (evidence: ${a.why})` : ""}`)].join("\n")
