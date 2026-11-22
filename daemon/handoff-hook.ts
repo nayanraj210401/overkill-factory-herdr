@@ -67,7 +67,8 @@ export function refusal(flag: { message?: string } | null, input: { tool_name?: 
 // `dirs` are the folders the session works in besides its own (the ticket folder, the repos and
 // worktrees): Claude Code asks before touching a folder outside its working directories, even in
 // auto mode, so they go in additionalDirectories.
-export function withHandoffHook(argv: string[], dir: string, id: number, also?: string | null, commands: string[] = [], dirs: string[] = []) {
+// `allow`: tools beyond agentAllow, such as Artifact when the factory shares plans (artifacts.ts).
+export function withHandoffHook(argv: string[], dir: string, id: number, also?: string | null, commands: string[] = [], dirs: string[] = [], allow: string[] = []) {
   const flag = flagFile(dir, id);
   for (const f of [flag, snapshotFile(dir, id)]) if (existsSync(f)) unlinkSync(f);
   if (argv[0] !== "claude") return argv;
@@ -82,7 +83,7 @@ export function withHandoffHook(argv: string[], dir: string, id: number, also?: 
   const statusLine = { type: "command", command: `${quote(process.execPath)} ${quote(join(dirname(import.meta.path), "planline.ts"))} ${quote(planFile())}` };
   // skipAutoPermissionPrompt: registering a repo with the factory is the consent to auto mode, so
   // Claude Code's one-time "Enable auto mode?" dialog never holds up an agent.
-  writeFileSync(settings, JSON.stringify({ skipAutoPermissionPrompt: true, permissions: { allow: agentAllow(commands), additionalDirectories: [...new Set(dirs.filter(Boolean))] }, hooks: { PreToolUse: [...others, ours], PreCompact: [precompact] }, statusLine }, null, 2) + "\n");
+  writeFileSync(settings, JSON.stringify({ skipAutoPermissionPrompt: true, permissions: { allow: [...agentAllow(commands), ...allow], additionalDirectories: [...new Set(dirs.filter(Boolean))] }, hooks: { PreToolUse: [...others, ours], PreCompact: [precompact] }, statusLine }, null, 2) + "\n");
   return ["claude", "--permission-mode", "auto", "--settings", settings, ...argv.slice(1)];
 }
 
