@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Run } from "./runner.ts";
+import { needLead } from "./db.ts";
+import { LOCAL_IDS } from "./intake.ts";
 
 export type Rule = { rule: string; result: "pass" | "fail" | "skipped"; detail: string };
 
@@ -101,7 +103,6 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktrees
 
 export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fail");
 
-// The PR body: PR.md, the other repos' PRs of a cross-repo change, and the rule results.
 // PR.md, then the blueprint dry run when the maintainer's check wrote one.
 export function prText(dir: string, id: number) {
   const folder = join(dir, "tickets", String(id));
@@ -109,20 +110,30 @@ export function prText(dir: string, id: number) {
   return readFileSync(join(folder, "PR.md"), "utf8").trim() + (existsSync(dry) ? `\n\n${readFileSync(dry, "utf8").trim()}` : "");
 }
 
-export function prBody(md: string, rules: Rule[], others: { repo: string; pr: number | null }[] = []) {
+// The PR body: PR.md, the other repos' PRs of a cross-repo change, the issue it closes,
+// and the rule results.
+export function prBody(md: string, rules: Rule[], others: { repo: string; pr: number | null }[] = [], closes: string | null = null) {
   const table = rules.map((r) => `- ${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`).join("\n");
   const part = others.length ? `\n\n**Part of one change across repos:** ${others.map((x) => (x.pr ? `${x.repo}#${x.pr}` : x.repo)).join(", ")}` : "";
-  return `${md.trim()}${part}\n\n**Ready rules**\n${table}\n`;
+  return `${md.trim()}${part}${closes ? `\n\n${closes}` : ""}\n\n**Ready rules**\n${table}\n`;
+}
+
+// A ticket from an issue closes it when its PR merges, so tickets blocked by that issue
+// go on (followIssues). The issue is in the lead repo: a cross-repo change closes it from
+// the lead's PR only, by its full name. A goal has no issue to close.
+export function closesIssue(db: Database, id: number, repo: { lead: number }, cross: boolean) {
+  if (id >= LOCAL_IDS || !repo.lead) return null;
+  return cross ? `Closes ${needLead(db).slug}#${id}` : `Closes #${id}`;
 }
 
 // All rules pass: push the ticket's branch and open the PR from PR.md, as a draft
 // with the rule results appended. Agents can't push; only the daemon does (plan: Hard stops).
-export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null; others?: { repo: string; pr: number | null }[] }) {
+export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null; others?: { repo: string; pr: number | null }[]; closes?: string | null }) {
   const t = db.query("SELECT title FROM ticket_lead WHERE id = ?").get(o.id) as { title: string };
   const md = prText(o.dir, o.id);
   const bodyFile = join(o.dir, "tickets", String(o.id), ".pr-body.md");
   mkdirSync(join(o.dir, "tickets", String(o.id)), { recursive: true });
-  writeFileSync(bodyFile, prBody(md, o.rules, o.others));
+  writeFileSync(bodyFile, prBody(md, o.rules, o.others, o.closes));
   const push = o.run(["git", "-C", o.worktree, "push", "-u", "origin", o.branch]);
   if (push.code !== 0) throw new Error(`git push failed: ${push.out}`);
   // A PR this branch already has: one a failed run opened before its rows rolled back.

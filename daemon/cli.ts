@@ -28,6 +28,8 @@ import { importRoutine, LOG_BRANCH, routineDue, routineSteps, writeRoutine } fro
 import { isAway, setAway } from "./away.ts";
 import { startHold } from "./budget.ts";
 import { toCloud, toLocal } from "./cloud.ts";
+import { bringAll, cloudPolicy, moveAll, noteGap, onSleep, onWake, wakeTick } from "./sleep.ts";
+import { powerWatcher } from "./power.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { watchContext } from "./handoff.ts";
@@ -72,8 +74,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   merge-order <id> owner/name…       the order a cross-repo ticket's PRs merge in (default: the others, then the lead)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
   sessions <id>                      the agent sessions started for a ticket, with their tokens
-  cloud <id> | --all                 hand a running ticket (or every one) to a Claude Code cloud session
-  local <id>                         bring a ticket back from the cloud and resume it here
+  cloud <id> | all                   hand a running ticket (or every one) to a Claude Code cloud session; skips what can't move, with a reason
+  local <id> | all                   bring a ticket (or every one in the cloud) back and resume it here
   routine [brief]                    write ROUTINE.md, the prompt for a Claude Code scheduled task that watches PRs while you sleep, and print how to set it up
   routine on|off|import              read the task's log branch back every 10 minutes (on), stop (off), or now (import)
   away on|off                        you're away, in every factory: away: (config.yaml, then factory.yaml) applies; Home shows a digest when you're back
@@ -476,20 +478,24 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       return;
     } else if (cmd === "cloud" || cmd === "local") {
       const repoDir = needLead(db).path;
-      const ids = cmd === "cloud" && all
-        ? (db.query("SELECT id FROM ticket_lead WHERE state = 'running' AND location = 'local' AND worktree IS NOT NULL ORDER BY id").all() as { id: number }[]).map((r) => r.id)
-        : [Number(sub)];
-      if (!ids.every(Number.isInteger)) throw new Error(`usage: factory ${cmd} <id>${cmd === "cloud" ? " | --all" : ""}`);
-      for (const id of ids) {
-        let r: any = null;
-        // One at a time: a ticket that fails to move stays local; the others still go.
-        try { change(db, () => { r = (cmd === "cloud" ? toCloud : toLocal)(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); }); }
-        catch (e) { if (ids.length === 1) throw e; log(`#${id}: ${(e as Error).message}`); continue; }
-        log(cmd === "cloud" ? `#${id}: in a cloud session from ${r.stage}; claude --cloud runs in ${r.terminal}`
-          : `#${id}: back${r.parked ? ", parked on the cloud's questions" : ` at ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`}`);
-        writeTicketFiles(db, p.dir, id);
+      const ctx = { dir: p.dir, repo: repoDir, run: sh, now: now(), change };
+      if (all || sub === "all") {
+        // Every ticket at once; each is its own step, so one that can't move is said and the rest go.
+        const r = cmd === "cloud" ? moveAll(db, ctx) : bringAll(db, ctx);
+        for (const id of r.done) { log(`#${id}: ${cmd === "cloud" ? "in a cloud session" : "back here"}`); writeTicketFiles(db, p.dir, id); }
+        for (const x of r.skipped) log(`#${x.id}: skipped: ${x.why}`);
+        for (const x of r.failed) log(`#${x.id}: failed: ${x.why}`);
+        if (!r.done.length && !r.skipped.length && !r.failed.length) log(cmd === "cloud" ? "no running tickets to move" : "no tickets in the cloud");
+        writeStatus(db, p.status);
+        return;
       }
-      if (!ids.length) log("no running tickets to move");
+      const id = Number(sub);
+      if (!Number.isInteger(id)) throw new Error(`usage: factory ${cmd} <id>|all`);
+      let r: any = null;
+      change(db, () => { r = (cmd === "cloud" ? toCloud : toLocal)(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); });
+      log(cmd === "cloud" ? `#${id}: in a cloud session from ${r.stage}; claude --cloud runs in ${r.terminal}`
+        : `#${id}: back${r.parked ? ", parked on the cloud's questions" : ` at ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`}`);
+      writeTicketFiles(db, p.dir, id);
       writeStatus(db, p.status);
       return;
     } else if (cmd === "routine") {
@@ -847,14 +853,44 @@ export function factories(home = factoryHome()) {
   return readdirSync(home).filter((n) => existsSync(join(home, n, "factory.db")));
 }
 
+// Sleep and wake, for every factory whose cloud.on_sleep is move (daemon/sleep.ts).
+function sleepWake(open_: Record<string, Database>, factoryHome_: string, interval: number, log: (s: string) => void) {
+  const each = (fn: (db: Database, p: ReturnType<typeof paths>, repo: string) => void) => {
+    for (const name of factories()) {
+      const p = paths(name);
+      const db = (open_[name] ??= open(p.db));
+      const lead = leadRepo(db);
+      if (!lead) continue;
+      try { fn(db, p, lead.path); } catch (e) { log(`factory ${name}: ${(e as Error).message}`); }
+    }
+  };
+  const ctx = (p: ReturnType<typeof paths>, repo: string) => ({ dir: p.dir, repo, run: sh, now: new Date().toISOString(), log, change });
+  const ensure = powerWatcher({
+    factoryHome: factoryHome_, log,
+    wanted: () => { let w = false; each((_, __, repo) => { if (cloudPolicy(repo).on_sleep === "move") w = true; }); return w; },
+    handlers: {
+      sleep: () => each((db, p, repo) => { const r = onSleep(db, ctx(p, repo)); if (r) { log(`factory: sleeping: ${r.done.length} to the cloud, ${r.skipped.length} stay, ${r.failed.length} failed`); writeAll(db, p); } }),
+      wake: () => setTimeout(() => each((db, p, repo) => { const r = onWake(db, ctx(p, repo)); if (r) { log(`factory: woke: ${r.done.length} back, ${r.failed.length} to retry`); writeAll(db, p); } }), 8000), // the network needs a moment
+    },
+  });
+  return (db: Database, p: ReturnType<typeof paths>, repo: string) => {
+    noteGap(db, { ...ctx(p, repo), interval });
+    wakeTick(db, ctx(p, repo));
+    ensure();
+  };
+}
+
 function runAll(interval: number, log: (s: string) => void) {
   const open_: Record<string, Database> = {};
+  const power = sleepWake(open_, factoryHome(), interval, log);
   const tick = () => {
     for (const name of factories()) {
       const p = paths(name);
       const db = (open_[name] ??= open(p.db));
       try {
         setMeta(db, "heartbeat", new Date().toISOString());
+        const lead0 = leadRepo(db);
+        if (lead0) power(db, p, lead0.path);
         recordUsage(db, log);
         watchSessions(db, p, sh, log);
         const lead = leadRepo(db);

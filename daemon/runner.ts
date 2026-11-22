@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncate
 import { dirname, join } from "node:path";
 import { validateDir, validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
-import { openPr, prBody, prText, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
+import { closesIssue, openPr, prBody, prText, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
 import { closeSpace, openAgent, openTab, toolPath, withFactory, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
@@ -197,7 +197,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; cloud?: { on_sleep?: "move" | "off" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -341,11 +341,13 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   // The stage's agent proposed a split: it stops for you, or the parts are made now.
   const split = o.failed ? null : splitGate(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
   if (split) return { ...split, stage: at };
+  // Past the stop, a gate can only have failed the stage: a park returned above.
+  const gateFailed = gate && "failed" in gate ? gate.failed : null;
   const verdict = o.failed || gate ? null : stageVerdict(db, { dir: o.dir, repo: o.repo, id: o.id, stage: at, s: b.stages[at], now });
   // per: slice: a slice is built; the next one gets a fresh session in the same stage.
-  if (!o.failed && !gate?.failed && !verdict?.failed && b.stages[at]?.per === "slice" && finishSlice(db, { dir: o.dir, id: o.id, stage: at, now }))
+  if (!o.failed && !gateFailed && !verdict?.failed && b.stages[at]?.per === "slice" && finishSlice(db, { dir: o.dir, id: o.id, stage: at, now }))
     return { terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, blueprint: b, stage: at }), stage: at };
-  return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? gate?.failed ?? verdict?.failed ?? null }));
+  return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? gateFailed ?? verdict?.failed ?? null }));
 }
 
 function follow(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; b: Blueprint; t: Record<string, any>; at: string; failed: string | null; opened?: boolean }) {
@@ -448,11 +450,11 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   const repos = ticketRepos(db, o.id);
   const prs = repos.map((r) => {
     const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number,
-      others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })) });
+      others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })), closes: closesIssue(db, o.id, r, repos.length > 1) });
     setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now }, r.repo);
     return { ...r, pr_number: number };
   });
-  if (prs.length > 1 && prs.some((p, i) => repos[i].pr_number == null)) linkPrs(o, prs, rules, run);
+  if (prs.length > 1 && prs.some((p, i) => repos[i].pr_number == null)) linkPrs(db, o, prs, rules, run);
   // A review round's fixes are pushed: its replies and summary go on the PRs.
   closeRound(db, { ticket: o.id, run, now });
   const others = prs.slice(1).map((p) => `${p.repo}#${p.pr_number}`).join(", ");
@@ -462,11 +464,11 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
 }
 
 // New PRs of a cross-repo change didn't know each other's numbers: every body gets them.
-function linkPrs(o: { dir: string; id: number }, prs: { repo: string; worktree: string | null; pr_number: number }[], rules: ReturnType<typeof checkReady>, run: Run) {
+function linkPrs(db: Database, o: { dir: string; id: number }, prs: { repo: string; lead: number; worktree: string | null; pr_number: number }[], rules: ReturnType<typeof checkReady>, run: Run) {
   const md = prText(o.dir, o.id);
   const bodyFile = join(o.dir, "tickets", String(o.id), ".pr-body.md");
   for (const p of prs) {
-    writeFileSync(bodyFile, prBody(md, rules, prs.filter((x) => x !== p).map((x) => ({ repo: x.repo, pr: x.pr_number }))));
+    writeFileSync(bodyFile, prBody(md, rules, prs.filter((x) => x !== p).map((x) => ({ repo: x.repo, pr: x.pr_number })), closesIssue(db, o.id, p, true)));
     const edit = run(["gh", "pr", "edit", String(p.pr_number), "--body-file", bodyFile], p.worktree!);
     if (edit.code !== 0) throw new Error(`gh pr edit failed in ${p.repo}: ${edit.out}`);
   }
