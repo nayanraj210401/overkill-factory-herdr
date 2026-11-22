@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import { whyNotTunable } from "./learn.ts";
 import { PLACEHOLDERS, templateErrors } from "./prompts.ts";
 import { featureErrors } from "./features.ts";
+import { FACTORY_AGENTS, isFactoryAgent } from "./agents.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -47,7 +48,9 @@ export const KINDS: Record<string, Rule> = {
   blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },
   agent: {
     object: {
-      role: { enum: ["orchestrator", "triage", "spec", "plan", "build", "review", "verify", "scorer", "maintain"] },
+      // overwatch, babysit, maintain and learn are the factory agents' roles (agents.ts).
+      role: { enum: ["orchestrator", "triage", "spec", "plan", "build", "review", "verify", "scorer", "maintain", "overwatch", "babysit", "learn"] },
+      territory: str, // one line: what only this agent acts on, for every brief's neighbour map
       harness: str, model: str, effort: str, from: str, tools: strs, mcp: strs, skills: strs, context: strs,
     },
   },
@@ -247,7 +250,8 @@ function files(dir: string): string[] {
 // no file would break the first run, so it fails here for every user's factory.
 function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
   const base = (p: string, folder: string) => p.startsWith(`${folder}/`) ? p.slice(folder.length + 1).replace(/\.(md|ya?ml)$/, "") : null;
-  const agents = new Set(paths.map((p) => base(p, "agents")).filter(Boolean));
+  // A factory agent (the maintainer, say) is there for every repo, with or without a file here.
+  const agents = new Set([...paths.map((p) => base(p, "agents")).filter(Boolean), ...FACTORY_AGENTS]);
   const blueprints = new Set(paths.map((p) => base(p, "blueprints")).filter(Boolean));
   const prompts = new Set([...paths.map((p) => base(p, "prompts")).filter(Boolean), "stage"]); // stage.md is built in
   const parse = (p: string) => { try { return Bun.YAML.parse(readFileSync(join(dir, p), "utf8")) as any; } catch { return null; } };
@@ -281,5 +285,16 @@ export function validateDir(dir: string) {
     .filter((p) => !p.split("/").some((part) => part.startsWith(".")))
     .sort();
   const dangling = danglingNames(dir, paths);
-  return paths.map((path) => ({ path, errors: [...validateFile(path, readFileSync(join(dir, path), "utf8")), ...(dangling[path] ?? [])] }));
+  return paths.map((path) => {
+    const r: { path: string; errors: string[]; warnings?: string[] } = { path, errors: [...validateFile(path, readFileSync(join(dir, path), "utf8")), ...(dangling[path] ?? [])] };
+    const w = warningOf(path);
+    if (w) r.warnings = [w];
+    return r;
+  });
+}
+
+// Files that pass but do nothing: a repo's copy of a factory agent is never read.
+function warningOf(path: string) {
+  const name = path.match(/^agents\/([^/]+)\.md$/)?.[1];
+  return name && isFactoryAgent(name) ? `ignored: ${name} is a factory agent, one for every repo; change ~/.factory/agents/${name}.md instead (through the maintainer)` : null;
 }

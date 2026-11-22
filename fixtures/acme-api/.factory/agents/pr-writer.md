@@ -1,5 +1,6 @@
 ---
 role: build
+territory: "PR.md for its ticket, the description a reviewer reads first"
 model: claude-sonnet-5-5
 context: [INTENT.md, SLICES.md, EVIDENCE.md, GATES.md, HANDOFF.md]
 ---

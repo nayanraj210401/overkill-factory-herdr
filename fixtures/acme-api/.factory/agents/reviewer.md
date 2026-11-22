@@ -1,5 +1,6 @@
 ---
 role: review
+territory: "Grading its ticket's diff against INTENT.md, and the review verdict"
 model: claude-opus-5-5
 context: [INTENT.md, EVIDENCE.md, lessons/auth.md]
 ---

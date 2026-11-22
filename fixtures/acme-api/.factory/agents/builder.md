@@ -1,5 +1,6 @@
 ---
 role: build
+territory: "Its ticket's code, one slice at a time, in the ticket's worktree"
 model: claude-sonnet-5-5
 context: [INTENT.md, SLICES.md, HANDOFF.md]
 ---
