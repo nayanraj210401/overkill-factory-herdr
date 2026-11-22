@@ -68,7 +68,7 @@ test("the fix brief holds only the fix comments, with their words, lines, hunk a
   s.watch("2026-11-21T10:30:00Z");
   // The judge is a one-shot claude -p on the judge model, and sees the comment and its lines only.
   expect(s.claude).toHaveLength(2);
-  expect(s.claude[0].slice(0, 4)).toEqual(["claude", "-p", "--model", "haiku"]);
+  expect(s.claude[0].slice(0, 4)).toEqual(["claude", "-p", "--model", "claude-haiku-5-5"]);
   expect(s.claude[0][4]).toContain("Use the user id.");
   expect(s.claude[0][4]).toContain("+const key = email;  // line 50");
   expect(s.claude[0][4]).not.toContain("Rate-limit login");
@@ -91,7 +91,7 @@ test("review.judge_model picks the model; an unreadable answer leaves no suggest
   s.say.out = () => "I think maybe both verdict: fix and verdict: pushback";
   s.set({ state: "OPEN", comments: [], reviews: [] }, [s.inl(50, "One.", "a.ts", 1, "2026-11-21T10:20:00Z")]);
   s.watch("2026-11-21T10:30:00Z");
-  expect(s.claude[0].slice(0, 4)).toEqual(["claude", "-p", "--model", "sonnet"]);
+  expect(s.claude[0].slice(0, 4)).toEqual(["claude", "-p", "--model", "claude-sonnet-5-5"]);
   expect(s.db.query("SELECT suggested FROM comments WHERE n = 1").get()).toEqual({ suggested: null });
   expect(parseProposal("**VERDICT:** `Fix`\nclear: YES\nwhy: typo")).toEqual({ verdict: "fix", why: "typo", clear: true });
   expect(parseProposal("VERDICT: fix | pushback | escalate")).toBeNull();
@@ -106,7 +106,7 @@ test("while away, a clear-cut fix is applied; a pushback, an escalation and an u
   s.watch("2026-11-21T10:30:00Z");
   const rows = s.db.query("SELECT n, verdict, suggested, reason FROM comments ORDER BY n").all() as any[];
   expect(rows[0]).toMatchObject({ verdict: "fix", suggested: "fix" });
-  expect(rows[0].reason).toContain("auto: haiku judged it a clear fix");
+  expect(rows[0].reason).toContain("auto: claude-haiku-5-5 judged it a clear fix");
   expect(rows[1]).toMatchObject({ verdict: null, suggested: "fix" });
   expect(rows[2]).toMatchObject({ verdict: null, suggested: "pushback" });
   // `factory comment` still decides, and min_agreement still refuses a pushback while away.

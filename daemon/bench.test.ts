@@ -99,10 +99,10 @@ test("a variant's dotted paths change this run's settings and never .factory/", 
   const { repo, run } = setup();
   const before = sh(["git", "-C", repo, "status", "--porcelain"]).out;
   const suite = readSuite(repo, "impl");
-  expect(resolveVariant(repo, suite, {})).toMatchObject([{ stage: "implement", agent: "builder", harness: "claude", model: "sonnet" }]);
+  expect(resolveVariant(repo, suite, {})).toMatchObject([{ stage: "implement", agent: "builder", harness: "claude", model: "claude-sonnet-5-5" }]);
   expect(resolveVariant(repo, suite, { "agents.builder.model": "opus", "agents.builder.harness": "codex" })).toMatchObject([{ harness: "codex", model: "opus" }]);
   // factory.defaults.model reaches an agent that names no model; an agent's own model wins over it.
-  expect(resolveVariant(repo, suite, { "factory.defaults.model": "haiku" })[0].model).toBe("sonnet");
+  expect(resolveVariant(repo, suite, { "factory.defaults.model": "haiku" })[0].model).toBe("claude-sonnet-5-5");
   expect(resolveVariant(repo, suite, { "factory.defaults.model": "haiku", "agents.builder.model": null as any })[0].model).toBe("haiku");
   // a variant can swap the stage's agent through the blueprint
   expect(resolveVariant(repo, suite, { "blueprints.feature.stages.implement.agent": "reviewer" })[0]).toMatchObject({ agent: "reviewer" });
@@ -125,9 +125,9 @@ test("a replay holds the tests out, applies the variant, restores the tests and 
   // The agents saw the checkout at the commit before the PR, with no held-out test, in a throwaway worktree.
   expect(seen.map((s) => s.holdoutVisible)).toEqual([false, false]);
   expect(seen[0].cwd.startsWith(process.env.FACTORY_WORKTREES!)).toBe(true);
-  expect(seen[1].argv).toContain("opus");
-  expect(seen[1].argv[seen[1].argv.indexOf("--model") + 1]).toBe("opus");
-  expect(seen[0].argv[seen[0].argv.indexOf("--model") + 1]).toBe("sonnet");
+  expect(seen[1].argv).toContain("claude-opus-5-5");
+  expect(seen[1].argv[seen[1].argv.indexOf("--model") + 1]).toBe("claude-opus-5-5");
+  expect(seen[0].argv[seen[0].argv.indexOf("--model") + 1]).toBe("claude-sonnet-5-5");
   expect(seen[0].argv).toContain("-p"); // unattended
   expect(sh(["git", "-C", repo, "worktree", "list"]).out.split("\n")).toHaveLength(1); // every throwaway worktree is gone
   expect(sh(["git", "-C", repo, "status", "--porcelain"]).out).toBe(""); // and .factory/ was never touched

@@ -1,6 +1,6 @@
 ---
 role: verify
-model: sonnet
+model: claude-sonnet-5-5
 context: [INTENT.md, EVIDENCE.md]
 ---
 Turn each acceptance check in INTENT.md into a test the builder hasn't seen.

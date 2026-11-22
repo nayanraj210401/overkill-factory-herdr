@@ -87,7 +87,7 @@ test("the runner starts the agent on the overridden model, and on the file's whe
     startTicket(db, { dir, repo: r, id: 1, run: fake, now: NOW });
     const argv = calls[0];
     const i = argv.indexOf("claude");
-    expect(argv[argv.indexOf("--model", i) + 1]).toBe(model ?? "haiku");
+    expect(argv[argv.indexOf("--model", i) + 1]).toBe(model ? "claude-opus-5-5" : "claude-haiku-5-5"); // aliases launch pinned
   }
 });
 
@@ -102,7 +102,7 @@ test("learn export prints the edits as a patch, for agent headers, nested keys a
   const before = readFileSync(join(r, ".factory/factory.yaml"), "utf8");
   const ov = (key: string, value: unknown) => ({ key, value, reason: null, at: NOW });
   const { patch, notes } = exportPatch(r, [ov("agents.reviewer.model", "sonnet"), ov("budget.handoff_at_context", "50%"), ov("agents.spec-writer.effort", "high"), ov("defaults.model", "opus"), ov("agents.ghost.model", "x")]);
-  expect(patch).toContain("--- a/.factory/agents/reviewer.md\n+++ b/.factory/agents/reviewer.md\n@@ -3 +3 @@\n-model: opus\n+model: sonnet");
+  expect(patch).toContain("--- a/.factory/agents/reviewer.md\n+++ b/.factory/agents/reviewer.md\n@@ -3 +3 @@\n-model: claude-opus-5-5\n+model: sonnet");
   expect(patch).toContain("--- a/.factory/agents/spec-writer.md");
   expect(patch).toContain("+effort: high"); // not in the file: added to the header
   expect(patch).toContain("--- a/.factory/factory.yaml");
@@ -132,14 +132,14 @@ test("factory learn: set refuses a non-tunable key, list/undo/export work, and s
   const status = buildStatus(db);
   expect(validateStatus(status)).toEqual([]);
   expect(status.overrides).toEqual([
-    { key: "agents.reviewer.model", value: "sonnet", file: "opus", reason: "cheaper and as good", at: expect.any(String) },
+    { key: "agents.reviewer.model", value: "sonnet", file: "claude-opus-5-5", reason: "cheaper and as good", at: expect.any(String) },
     { key: "budget.handoff_at_context", value: 0.5, file: null, reason: null, at: expect.any(String) },
   ]);
   db.close();
 
   out.length = 0;
   run("learn", "export");
-  expect(out.join("\n")).toContain("-model: opus\n+model: sonnet");
+  expect(out.join("\n")).toContain("-model: claude-opus-5-5\n+model: sonnet");
   run("learn", "undo", "agents.reviewer.model");
   expect(() => run("learn", "undo", "agents.reviewer.model")).toThrow("no override to undo");
   out.length = 0;

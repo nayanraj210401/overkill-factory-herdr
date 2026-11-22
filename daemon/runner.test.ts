@@ -65,7 +65,25 @@ test("start refuses tickets that aren't ready, and names a missing blueprint", (
 });
 
 test("argv: claude and codex get --model; any other program gets the brief last", () => {
-  expect(argvFor(null, { harness: "claude", model: "sonnet" }, "go")).toEqual(["claude", "--model", "sonnet", "go"]);
+  expect(argvFor(null, { harness: "claude", model: "sonnet" }, "go")).toEqual(["claude", "--model", "claude-sonnet-5-5", "go"]); // the alias, pinned (models.ts)
   expect(argvFor({ harness: "codex" }, { harness: "claude" }, "go")).toEqual(["codex", "go"]);
   expect(argvFor({ harness: "echo" }, { harness: "claude", model: "sonnet" }, "go")).toEqual(["echo", "go"]);
+});
+
+test("models: aliases launch as exact IDs, so Claude Code's version can't pick an older model", async () => {
+  const { pinModel, MODELS } = await import("./models.ts");
+  expect(pinModel("sonnet")).toBe(MODELS.sonnet);
+  expect(pinModel(" Opus ")).toBe(MODELS.opus);
+  expect(pinModel("claude-sonnet-5-5")).toBe("claude-sonnet-5-5");
+  expect(pinModel(undefined)).toBe(undefined);
+  expect(argvFor({ harness: "codex", model: "gpt-5" }, { harness: "claude" }, "go")).toEqual(["codex", "--model", "gpt-5", "go"]); // other harnesses untouched
+  // what ships names exact models
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const dir = `${import.meta.dir}/../fixtures/acme-api/.factory`;
+  const ids = new Set(Object.values(MODELS));
+  for (const f of readdirSync(`${dir}/agents`)) {
+    const m = readFileSync(`${dir}/agents/${f}`, "utf8").match(/^model: (.+)$/m)?.[1];
+    if (m) expect(ids.has(m)).toBe(true);
+  }
+  expect(readFileSync(`${dir}/factory.yaml`, "utf8")).toContain(`model: ${MODELS.sonnet}`);
 });

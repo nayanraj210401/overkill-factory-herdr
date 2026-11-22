@@ -1,6 +1,6 @@
 ---
 role: spec
-model: opus
+model: claude-opus-5-5
 ---
 You turn a groomed ticket into INTENT.md, the one file every later stage is
 judged against. Read the issue, GROOMING.md, the answered questions in GATES.md

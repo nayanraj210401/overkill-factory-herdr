@@ -1,6 +1,7 @@
 // The overwatch agent (plan: Overwatch): one long-lived session per factory, in the
 // factory's folder, that answers questions from the state files and acts only
 // through the `factory` CLI. `factory overwatch` starts it, or finds the live one.
+import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { getMeta, leadRepo, setMeta } from "./db.ts";
@@ -27,7 +28,7 @@ export function overwatch(db: Database, o: { name: string; dir: string; run: Run
   if (known && alive(o.run, known)) return { terminal: known, started: false };
   const repo = leadRepo(db)?.path ?? null;
   const agent = repo ? loadAgent(repo, "overwatch") : null;
-  const argv = argvFor(agent, { harness: "claude", model: "sonnet" }, overwatchBrief({ name: o.name, dir: o.dir, repo }));
+  const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, overwatchBrief({ name: o.name, dir: o.dir, repo }));
   const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f-overwatch-${o.name}`.slice(0, 32),
     "--cwd", o.dir, "--label", "factory.overwatch=1", ...withFactory(argv, o.dir)]);
   if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);

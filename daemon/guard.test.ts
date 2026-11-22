@@ -63,8 +63,8 @@ test("a Claude worker gets the guard through --settings; Codex and other program
   const hook = JSON.parse(settings).hooks.PreToolUse[0];
   expect(hook.matcher).toBe("Bash|Edit|Write|MultiEdit|NotebookEdit");
   expect(hook.hooks[0].command).toBe("'/usr/bin/bun' '/d/guard.ts' --stops 'push-to-main' --roots '/a:/b' --log '/l/hard-stops.jsonl'");
-  expect(argvFor(null, { harness: "claude", model: "sonnet" }, "go", settings)).toEqual(["claude", "--model", "sonnet", "--settings", settings, "go"]);
-  expect(argvFor(null, { harness: "claude", model: "sonnet" }, "go")).toEqual(["claude", "--model", "sonnet", "go"]);
+  expect(argvFor(null, { harness: "claude", model: "sonnet" }, "go", settings)).toEqual(["claude", "--model", "claude-sonnet-5-5", "--settings", settings, "go"]);
+  expect(argvFor(null, { harness: "claude", model: "sonnet" }, "go")).toEqual(["claude", "--model", "claude-sonnet-5-5", "go"]);
   expect(argvFor({ harness: "codex" }, { harness: "claude" }, "go", settings)).toEqual(["codex", "go"]);
 });
 
