@@ -24,6 +24,8 @@ export type Account = {
 };
 
 export const accountFile = (home = process.env.FACTORY_HOME ?? join(homedir(), ".factory")) => join(home, "config.yaml");
+// The factory agents (Overwatch, babysitter, maintainer, learner): one each for every repo.
+export const factoryAgentsDir = (home = process.env.FACTORY_HOME ?? join(homedir(), ".factory")) => join(home, "agents");
 
 // The file, checked; none is {}. A bad file is an error, so a typo never silently does nothing.
 export function readAccount(file = accountFile()): Account {

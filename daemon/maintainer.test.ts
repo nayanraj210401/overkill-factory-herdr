@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import { advance, loadAgent, loadBlueprint, mergeTicket, sh, startTicket, type Run } from "./runner.ts";
-import { ACCOUNT_PROPOSAL, applyMergedAccounts, proposeAccount, request } from "./maintainer.ts";
+import { ACCOUNT_PROPOSAL, applyMerged, proposeAccount, request } from "./maintainer.ts";
 import { learnerSuggest, promoteOverrides } from "./learner.ts";
 import { addLesson, setOverride } from "./learn.ts";
 import { buildStatus } from "./status.ts";
@@ -148,18 +148,18 @@ test("an account config change is checked, its diff rides on the PR, and it appl
   expect(s.bodies[0]).toContain("+profile: { taste: [small diffs over clever ones] }");
   expect(s.ticket(id)).toMatchObject({ stage: "merge", state: "ready", pr_number: 9 });
   // Waiting at the gate, nothing is applied, however often the daemon looks.
-  applyMergedAccounts(s.db, { dir: s.dir, now });
+  applyMerged(s.db, { dir: s.dir, run: s.run, now });
   expect(readFileSync(accountPath(), "utf8")).toBe(BEFORE);
   // You merge: the checked copy is written, the old file kept beside it; a second pass does nothing.
   mergeTicket(s.db, { repo: s.repo, id, run: s.run, now, dir: s.dir });
   const log: string[] = [];
-  applyMergedAccounts(s.db, { dir: s.dir, now, log: (l) => log.push(l) });
+  applyMerged(s.db, { dir: s.dir, run: s.run, now, log: (l) => log.push(l) });
   expect(readFileSync(accountPath(), "utf8")).toContain("small diffs over clever ones");
   const backups = readdirSync(process.env.FACTORY_HOME!).filter((f) => f.startsWith("config.yaml.bak-"));
   expect(backups).toHaveLength(1);
   expect(readFileSync(join(process.env.FACTORY_HOME!, backups[0]), "utf8")).toBe(BEFORE);
   expect(log[0]).toContain("applied the account config");
-  applyMergedAccounts(s.db, { dir: s.dir, now, log: (l) => log.push(l) });
+  applyMerged(s.db, { dir: s.dir, run: s.run, now, log: (l) => log.push(l) });
   expect(log).toHaveLength(1);
   expect(readdirSync(process.env.FACTORY_HOME!).filter((f) => f.startsWith("config.yaml.bak-"))).toHaveLength(1);
 });
@@ -187,7 +187,7 @@ test("an account-only request opens no PR: it waits at the merge gate, and m app
   expect(existsSync(join(s.dir, "tickets", String(id), "ACCOUNT-CONFIG.md"))).toBe(true);
   expect(existsSync(accountPath())).toBe(false);
   expect(mergeTicket(s.db, { repo: s.repo, id, run: s.run, now, dir: s.dir })).toMatchObject({ pr: null });
-  applyMergedAccounts(s.db, { dir: s.dir, now });
+  applyMerged(s.db, { dir: s.dir, run: s.run, now });
   expect(readFileSync(accountPath(), "utf8")).toBe("profile: { rules: [never push to main] }\n");
   expect(s.ticket(id).state).toBe("merged");
 });
@@ -202,7 +202,7 @@ test("an account config someone changed after the check is left alone", () => {
   writeFileSync(accountPath(), BEFORE + "cloud: { on_sleep: off }\n"); // your own edit, meanwhile
   mergeTicket(s.db, { repo: s.repo, id, run: s.run, now, dir: s.dir });
   const log: string[] = [];
-  applyMergedAccounts(s.db, { dir: s.dir, now, log: (l) => log.push(l) });
+  applyMerged(s.db, { dir: s.dir, run: s.run, now, log: (l) => log.push(l) });
   expect(readFileSync(accountPath(), "utf8")).toBe(BEFORE + "cloud: { on_sleep: off }\n");
   expect(log[0]).toContain("changed after the check; nothing was applied");
   expect(s.db.query("SELECT what FROM decisions WHERE ticket = ? AND who = 'daemon' ORDER BY id DESC LIMIT 1").get(id)).toEqual({ what: "account config not applied" });
