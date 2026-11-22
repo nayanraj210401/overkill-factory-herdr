@@ -135,8 +135,8 @@ test("away: no pushbacks, and past away.review_rounds new comments park instead 
   set({ state: "OPEN", comments: [{ id: 1, author: { login: "sam" }, body: "Rename it.", createdAt: "2026-11-21T10:20:00Z" }], reviews: [] });
   expect(watch("2026-11-21T10:30:00Z")).toEqual([{ id: 7, event: "1 comment" }]); // round 1 of 1
   expect(() => judge(db, { ticket: 7, n: 1, verdict: "pushback", reason: "no", now: "x", repo })).toThrow("no pushbacks while the person is away");
-  writeFileSync(join(repo, ".factory/factory.yaml"), 'name: t\nquality_floor: ["true"]\nready: [template]\naway: { review_rounds: 1 }\n');
-  judge(db, { ticket: 7, n: 1, verdict: "pushback", reason: "the benchmark is off, so pushbacks are allowed", now: "x", repo });
+  writeFileSync(join(repo, ".factory/factory.yaml"), 'name: t\nquality_floor: ["true"]\nready: [template]\naway: { review_rounds: 1, min_agreement: 0 }\n');
+  judge(db, { ticket: 7, n: 1, verdict: "pushback", reason: "the agreement gate is off, so pushbacks are allowed", now: "x", repo });
   advance(db, { dir, repo, id: 7, run });
   expect(ticket().state).toBe("ready");
   set({ state: "OPEN", comments: [{ id: 2, author: { login: "sam" }, body: "And this.", createdAt: "2026-11-21T11:20:00Z" }], reviews: [] });

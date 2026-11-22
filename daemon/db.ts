@@ -167,6 +167,35 @@ export const MIGRATIONS = [
      PRIMARY KEY (ticket, round)
    );
    CREATE TABLE review_posts (ticket INTEGER NOT NULL, round INTEGER NOT NULL, repo TEXT NOT NULL, posted_at TEXT NOT NULL, PRIMARY KEY (ticket, round, repo));`,
+  // Split: the parts an agent proposed for a ticket, in order, and what became of them; a
+  // part's ticket names its parent, and the one that keeps the work starts from its branch (base).
+  `CREATE TABLE splits (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id), n INTEGER NOT NULL,
+     title TEXT NOT NULL, scope TEXT, keeps_work INTEGER NOT NULL DEFAULT 0, proposed_by TEXT NOT NULL, proposed_at TEXT NOT NULL,
+     decided TEXT CHECK (decided IN ('created', 'rejected')), child INTEGER, UNIQUE (ticket, n)
+   );
+   ALTER TABLE tickets ADD COLUMN parent INTEGER;
+   ALTER TABLE tickets ADD COLUMN base TEXT;`,
+  // per: slice: the slice of SLICES.md each session built (by its S<n>, or its place), and
+  // the slices a stage finished.
+  `ALTER TABLE sessions ADD COLUMN slice TEXT;
+   CREATE TABLE slices (
+     ticket INTEGER NOT NULL REFERENCES tickets(id), stage TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL,
+     session INTEGER REFERENCES sessions(id), done_at TEXT, PRIMARY KEY (ticket, stage, key)
+   );`,
+  // Agreement benchmark: your own verdict on a comment (`factory label`), and each run that
+  // re-judged the labelled comments, with what the judge said for each.
+  `ALTER TABLE comments ADD COLUMN label TEXT CHECK (label IN ('fix', 'pushback', 'escalate'));
+   ALTER TABLE comments ADD COLUMN labelled_at TEXT;
+   CREATE TABLE agreement_runs (
+     id INTEGER PRIMARY KEY, model TEXT NOT NULL, examples INTEGER NOT NULL, agreed INTEGER NOT NULL, failed INTEGER NOT NULL,
+     rate REAL NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL
+   );
+   CREATE TABLE agreement_items (
+     run INTEGER NOT NULL REFERENCES agreement_runs(id), ticket INTEGER NOT NULL, n INTEGER NOT NULL,
+     yours TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('you', 'kept')), got TEXT, why TEXT,
+     PRIMARY KEY (run, ticket, n)
+   );`,
 ];
 
 export function open(path: string): Database {

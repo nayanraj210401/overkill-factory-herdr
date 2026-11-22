@@ -4,9 +4,9 @@
 // blueprints: only these start while you're away. budget: a lower cap per ticket.
 // review_rounds: rounds of review comments a PR may take before it waits for you.
 // never: paths no unattended run may touch; a ticket that does parks.
-// min_agreement: the agreement benchmark's bar (off unless set). The benchmark isn't
-// built, so setting it means no pushbacks while away and no cloud moves. Grooming
-// questions still wait, and merge stays human.
+// min_agreement: the agreement benchmark's bar (0.85 unless set, 0 turns it off). Below it,
+// no pushbacks while away (daemon/agreement.ts). Grooming questions still wait, and merge
+// stays human.
 import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
 import { parseTokens } from "../lib/model.js";

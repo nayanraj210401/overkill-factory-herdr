@@ -10,6 +10,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { join } from "node:path";
 import { getMeta, ticketRepos } from "./db.ts";
 import { openAgent } from "./herdr.ts";
+import { pushbackGate } from "./agreement.ts";
 import { enterStage } from "./ticket.ts";
 import { loadBlueprint, plannedPath, readFactory, restartStage, startStage, title, type Run } from "./runner.ts";
 
@@ -26,7 +27,7 @@ const RULES: Record<string, string> = {
 export const runDir = (id: number) => join(".factory-run", String(id));
 
 export function handoffMd(o: { id: number; title: string; branch: string; blueprint: string; stage: string; left: string[]; agent: string | null;
-  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[] }) {
+  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[]; noPushbacks?: string | null }) {
   const here = runDir(o.id);
   const others = o.others ?? [];
   return `# #${o.id} ${o.title}: continue in the cloud
@@ -48,7 +49,7 @@ This ticket changes ${others.length + 1} repos, each on the same branch \`${o.br
 - Quality floor, run before you stop: ${o.floor.length ? o.floor.map((c) => `\`${c}\``).join(", ") : "none set"}.
 - Hard stops: ${o.hardStops.length ? o.hardStops.join(", ") : "push-to-main, outside-worktree, destructive-commands, secrets-in-output"}.
 - A product question (what to build, for whom, wording, scope) isn't yours to answer: write it under Questions and stop.
-- When the work is ready for review, write \`${here}/PR.md\`: one plain sentence, then **What changed:**, **Why:**, **How it was verified:**, **Risk:**.
+${o.noPushbacks ? `- Don't push back on a review comment: ${o.noPushbacks}. Fix a comment only when the fix is clear-cut; put every other one under Questions.\n` : ""}- When the work is ready for review, write \`${here}/PR.md\`: one plain sentence, then **What changed:**, **Why:**, **How it was verified:**, **Risk:**.
 
 ## When you stop
 
@@ -93,8 +94,8 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.location === "cloud") throw new Error(`#${o.id} is in the cloud already`);
   if (t.state !== "running" || !t.worktree) throw new Error(`#${o.id} is ${t.state}; only a running ticket moves to the cloud`);
-  const away = (readFactory(o.repo) as any).away ?? {};
-  if (away.min_agreement != null) throw new Error("away.min_agreement is set, and the babysitter's agreement with you isn't measured yet; remove it from factory.yaml to move tickets to the cloud");
+  // Nobody is there to ask in the cloud: below the agreement bar, the pack says no pushbacks.
+  const gate = pushbackGate(db, o.repo);
   const b = loadBlueprint(o.repo, t.blueprint);
   const stage = t.stage as string;
   const repos = ticketRepos(db, o.id);
@@ -112,7 +113,7 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   writeFileSync(join(pack, "CLOUD.md"), handoffMd({
     id: o.id, title: t.title, branch: t.branch, blueprint: t.blueprint, stage, left: plannedPath(b, stage), agent: b.stages[stage]?.agent ?? null,
     ready: f.ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], floor: f.quality_floor ?? [], hardStops: f.hard_stops ?? [...STOPS], files,
-    others: repos.slice(1).map((r) => r.repo),
+    others: repos.slice(1).map((r) => r.repo), noPushbacks: gate.ok ? null : gate.why,
   }));
   // Every repo's work in progress goes up on its branch; the pack rides in the lead's.
   for (const r of repos) {

@@ -11,8 +11,8 @@ const TICKET = ["ticket.id", "ticket.title"];
 // What each template may name. Any other prompts/<name>.md (a stage's `prompt:`) is a stage template.
 export const PLACEHOLDERS: Record<string, string[]> = {
   groom: [...TICKET, "repo", "slug", "folder", "blueprints", "agent.prompt", "repos", "issue"],
-  stage: [...TICKET, "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "fix_brief"],
-  handoff: [...TICKET, "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check"],
+  stage: [...TICKET, "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "fix_brief", "slice"],
+  handoff: [...TICKET, "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot"],
   overwatch: ["name", "dir", "repo", "repo_line"],
 };
 export const placeholdersFor = (name: string) => PLACEHOLDERS[name] ?? PLACEHOLDERS.stage;

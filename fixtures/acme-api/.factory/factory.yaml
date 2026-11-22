@@ -23,3 +23,5 @@ learn:
   warmup_tickets: 20
   pause_above: 70%
   promote_after: 30
+away:
+  min_agreement: 0.85   # below this agreement with your past review verdicts, no pushbacks while you're away
