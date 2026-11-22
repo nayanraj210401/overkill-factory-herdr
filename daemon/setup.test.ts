@@ -189,7 +189,12 @@ test("migration prints proposals and the lessons count, never edits factory.yaml
   const log: string[] = [];
   migrateFlowStack(db, { home, repo, dir, blueprints: [], dryRun: false, now: "2026-11-21T10:00:00Z", log: (s) => log.push(s) });
   const text = log.join("\n");
-  expect(text).toContain("lessons: 3 found, imported once the lesson store lands");
+  expect(text).toContain("lessons: 3 found; added 3 to the lesson store");
+  expect(db.query("SELECT area, text, source FROM lessons ORDER BY id").all()).toEqual([
+    { area: "**", text: "tests need TZ=UTC", source: "flow-stack" },
+    { area: "**", text: "the login route is rate limited per IP, not per user", source: "flow-stack" },
+    { area: "**", text: "run `npm run build` before the raycast dev server", source: "flow-stack" },
+  ]);
   expect(text).toContain("max_running: 2");
   expect(text).toContain("model: sonnet");
   expect(text).toContain("Never push, merge, deploy, or publish without asking.");
@@ -198,6 +203,11 @@ test("migration prints proposals and the lessons count, never edits factory.yaml
   expect(text).toContain("budget.headroom: 1.6");
   expect(readFileSync(join(repo, ".factory", "factory.yaml"), "utf8")).toBe("name: acme-api\n");
   expect({ ...snapshot(join(home, ".flow-stack")), ...snapshot(join(repo, ".flow")) }).toEqual(flowBefore);
+  // Again: every lesson is already in the store.
+  log.length = 0;
+  migrateFlowStack(db, { home, repo, dir, blueprints: [], dryRun: false, now: "2026-11-21T10:00:00Z", log: (s) => log.push(s) });
+  expect(log.join("\n")).toContain("lessons: 3 found; added 0 to the lesson store, 3 already there");
+  expect((db.query("SELECT COUNT(*) AS n FROM lessons").get() as any).n).toBe(3);
 });
 
 test("--dry-run reports and changes nothing", () => {
@@ -208,6 +218,8 @@ test("--dry-run reports and changes nothing", () => {
   expect(log.at(-1)).toContain("dry run");
   expect((db.query("SELECT COUNT(*) AS n FROM tickets").get() as any).n).toBe(0);
   expect((db.query("SELECT COUNT(*) AS n FROM decisions").get() as any).n).toBe(0);
+  expect((db.query("SELECT COUNT(*) AS n FROM lessons").get() as any).n).toBe(0);
+  expect(log.join("\n")).toContain("would add 3 to the lesson store");
   expect(existsSync(join(dir, "tickets"))).toBe(false);
 });
 

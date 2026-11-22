@@ -13,10 +13,30 @@ import { service } from "./service.ts";
 import { validateDir } from "./validate.ts";
 
 export type Step = { id: string; label: string; status: "ok" | "missing" | "skipped"; fix: string | null; detail: string | null };
-export type Probe = { has: (bin: string) => boolean; ghLoggedIn: () => boolean; service: () => string; trusted?: (dir: string) => boolean };
+export type Probe = { has: (bin: string) => boolean; ghLoggedIn: () => boolean; service: () => string; trusted?: (dir: string) => boolean; flowStack?: (repo: string) => string[] };
 
 export const BRANCH = "factory/setup";
-export const STEP_IDS = ["herdr-core", "gh", "harness", "trust", "service", "queue", "basics", "factory-dir"];
+export const STEP_IDS = ["herdr-core", "gh", "harness", "trust", "service", "queue", "basics", "factory-dir", "flow-stack"];
+
+// flow-stack v1 on this machine or in this repo: what setup offers to migrate.
+export function findFlowStack(o: { home: string | null; repo: string; plugins: string | null }) {
+  const found: string[] = [];
+  if (o.home && existsSync(join(o.home, ".flow-stack", "profile.md"))) found.push("~/.flow-stack/profile.md");
+  if (existsSync(join(o.repo, ".flow"))) found.push(".flow/");
+  const installed = o.plugins ? join(o.plugins, "installed_plugins.json") : null;
+  if (o.plugins && (existsSync(join(o.plugins, "cache", "flow-stack")) || (installed && existsSync(installed) && readFileSync(installed, "utf8").includes("flow-stack")))) found.push("the flow-stack plugin");
+  return found;
+}
+const pluginsDir = () => (process.env.CLAUDE_CONFIG_DIR ? join(process.env.CLAUDE_CONFIG_DIR, "plugins") : join(homedir(), ".claude", "plugins"));
+
+// Accepting the offer: one maintainer request, which runs the migration and turns its
+// proposals into changes in the same PR. Asking again while one is open returns it.
+export const MIGRATION_META = "flow_migration_request";
+export const MIGRATION_REQUEST = "Migrate flow-stack into this factory: import its past tasks, decisions and lessons, and turn its profile, calibration and feature map into configuration";
+export function migrationRequest(db: Database) {
+  const id = Number(getMeta(db, MIGRATION_META));
+  return id ? (db.query("SELECT id, state FROM tickets WHERE id = ?").get(id) as { id: number; state: string } | null) : null;
+}
 
 // What this machine has. Cached for 30 s: the daemon asks on every tick while setup shows.
 let cached: { at: number; probe: Probe } | null = null;
@@ -28,6 +48,8 @@ export function realProbe(): Probe {
     has: (bin) => Bun.which(bin) !== null,
     ghLoggedIn: once(() => !sandbox && Bun.which("gh") !== null && Bun.spawnSync(["gh", "auth", "status"]).exitCode === 0),
     service: once(() => (sandbox ? "absent" : service("status", { factoryHome: process.env.FACTORY_HOME ?? join(homedir(), ".factory"), log: () => {} }) ?? "absent")),
+    // Tests never look in the real home: only the repo and the test's own Claude folder.
+    flowStack: (repo) => findFlowStack({ home: sandbox ? null : process.env.HOME ?? homedir(), repo, plugins: sandbox && !process.env.CLAUDE_CONFIG_DIR ? null : pluginsDir() }),
   };
   cached = { at: Date.now(), probe };
   return probe;
@@ -72,7 +94,7 @@ export function skipStep(db: Database, id: string, skip: boolean) {
   setMeta(db, "setup_skipped", (skip ? [...rest, id] : rest).join(","));
 }
 
-export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe }): Step[] {
+export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe; migration?: { id: number; state: string } | null }): Step[] {
   const probe = o.probe ?? realProbe();
   const written = existsSync(join(o.repo, ".factory", "factory.yaml"));
   const f = written ? readFactory(o.repo) : {};
@@ -95,12 +117,17 @@ export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe 
   add("basics", "Budgets, merge gate and max_running are set", written && lacks.length === 0, "factory setup write --budget 3M/150k --merge human --max-running 3", written ? lacks.join(", ") || null : null);
   const onBranch = !written && sh(["git", "-C", o.repo, "show-ref", "--verify", "--quiet", `refs/heads/${BRANCH}`]).code === 0;
   add("factory-dir", ".factory/ is written", written, onBranch ? `review and merge the ${BRANCH} branch (git merge ${BRANCH})` : "factory setup write");
+  // Offered only when there is something to migrate; the maintainer does it, as a PR.
+  const flow = probe.flowStack?.(o.repo) ?? [];
+  const m = o.migration?.state === "closed" ? null : o.migration; // closed unmerged: offered again
+  if (flow.length)
+    add("flow-stack", "flow-stack's history and settings are migrated (by the maintainer, as a PR)", !!m, "factory setup migrate", m ? `#${m.id}, ${m.state}` : `found ${flow.join(", ")}`);
   return steps;
 }
 
 // status.json's `setup` field: only while the lead repo has no .factory/ in its checkout.
 export function setupField(db: Database, repo: string, probe?: Probe) {
-  return existsSync(join(repo, ".factory")) ? null : { steps: setupSteps({ repo, skipped: skippedSteps(db), probe }) };
+  return existsSync(join(repo, ".factory")) ? null : { steps: setupSteps({ repo, skipped: skippedSteps(db), probe, migration: migrationRequest(db) }) };
 }
 
 export const showSteps = (steps: Step[]) => steps.map((s) =>

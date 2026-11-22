@@ -47,7 +47,7 @@ import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { migrateFlowStack } from "./migrate.ts";
-import { claudeConfig, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
+import { claudeConfig, MIGRATION_META, MIGRATION_REQUEST, migrationRequest, realProbe, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
 import { decideSplit, followSplits, pendingParts, proposePart } from "./split.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
@@ -107,7 +107,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   setup trust                        mark the factory's folders trusted in Claude Code, so its agents never stop at that prompt
   setup write [--budget 3M/150k] [--budget-day 40M/2M] [--merge human|auto] [--max-running n] [--queue owner/project]
                                      write .factory/ on branch factory/setup (a temporary worktree; your checkout is untouched)
-  migrate flow-stack [--dry-run]     copy decisions, past tasks and lessons count from ~/.flow-stack and .flow/; prints proposals
+  migrate flow-stack [--dry-run] [--propose <id>]  import past tasks, decisions and lessons from ~/.flow-stack and .flow/ (once each); --propose writes the profile, calibration and feature map into a maintainer request
+  setup migrate                      accept setup's flow-stack offer: a maintainer request that migrates it, as a PR
   bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
   validate [dir] [--json]            check .factory/ files (default ./.factory)
   refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
@@ -184,6 +185,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const why = flag(args, "why");
   const source = flag(args, "source");
   const scope = flag(args, "scope");
+  const propose = flag(args, "propose");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -235,17 +237,33 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
           basics: { budget: budgetFlag ?? undefined, budgetDay: budgetDayFlag ?? undefined, merge: mergeFlag ?? undefined, maxRunning: maxRunningFlag === null ? undefined : Number(maxRunningFlag), queue: queueFlag ?? undefined } });
         log(`${r.committed ? `committed ${r.sha} on` : "already up to date on"} ${r.branch}: ${r.files.join(", ")}\nyour checkout (${r.from}) is untouched; review the branch, then merge it: git merge ${r.branch}`);
         return;
-      } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | trust | write [--budget …]]");
+      } else if (sub === "migrate") {
+        // You accepted the offer: the maintainer migrates flow-stack, and it comes back as a PR.
+        const open = migrationRequest(db);
+        if (open && !["merged", "closed"].includes(open.state)) return log(`#${open.id} already asks the maintainer to migrate flow-stack (${open.state})`);
+        const found = realProbe().flowStack?.(lead.path) ?? [];
+        if (!found.length) throw new Error("no flow-stack here to migrate: no ~/.flow-stack/profile.md, no .flow/ in the repo, no flow-stack plugin");
+        let r: any = null;
+        change(db, () => {
+          r = request(db, { text: MIGRATION_REQUEST, repo: lead.slug, run: sh, now: now(), dir: p.dir, evidence: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --propose <this ticket's id>\`, then review what it wrote and finish what MIGRATION.md lists.` });
+          setMeta(db, MIGRATION_META, String(r.id));
+        });
+        log(`#${r.id}: the maintainer migrates flow-stack (found ${found.join(", ")}); it comes back as a PR for you`);
+        writeStatus(db, p.status);
+        writeTicketFiles(db, p.dir, r.id);
+        return;
+      } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | trust | migrate | write [--budget …]]");
       else {
-        const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db) });
+        const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db), migration: migrationRequest(db) });
         log(json ? JSON.stringify({ steps }) : showSteps(steps));
         return;
       }
     } else if (cmd === "migrate") {
-      if (sub !== "flow-stack") throw new Error("usage: factory migrate flow-stack [--dry-run]");
+      if (sub !== "flow-stack") throw new Error("usage: factory migrate flow-stack [--dry-run] [--propose <request id>]");
+      if (propose !== null && !Number.isInteger(Number(propose))) throw new Error("--propose needs the maintainer request's ticket id");
       const lead = needLead(db);
       const listed = existsSync(join(lead.path, ".factory", "blueprints")) ? readdirSync(join(lead.path, ".factory", "blueprints")).map((f) => f.replace(/\.yaml$/, "")) : [];
-      change(db, () => { migrateFlowStack(db, { home: process.env.HOME ?? homedir(), repo: lead.path, dir: p.dir, blueprints: listed, dryRun, now: now(), log }); });
+      change(db, () => { migrateFlowStack(db, { home: process.env.HOME ?? homedir(), repo: lead.path, dir: p.dir, blueprints: listed, dryRun, now: now(), log, propose: propose === null ? undefined : Number(propose), run: sh }); });
     } else if (cmd === "repo") {
       if (sub === "add") {
         const [slug] = rest;

@@ -4,6 +4,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { whyNotTunable } from "./learn.ts";
 import { PLACEHOLDERS, templateErrors } from "./prompts.ts";
+import { featureErrors } from "./features.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -39,6 +40,7 @@ export const KINDS: Record<string, Rule> = {
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
       budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, maintainer: { object: { gate } },
+      verify: { object: { features: str } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
   },
@@ -114,6 +116,7 @@ const kindOf = (path: string) =>
   : /^prompts\/[^/]+\.md$/.test(path) ? "prompt"
   : /^triggers\/[^/]+\.ya?ml$/.test(path) ? "trigger"
   : /^benchmarks\/[^/]+\.ya?ml$/.test(path) ? "benchmark"
+  : /^features\/[^/]+\.md$/.test(path) ? "feature"
   : null;
 
 const typeName = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "a list" : typeof v === "object" ? "a map" : typeof v);
@@ -170,7 +173,9 @@ export function duplicateKeys(text: string): string[] {
 
 export function validateFile(path: string, text: string): string[] {
   const kind = kindOf(path);
-  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, prompts/, triggers/, benchmarks/)`];
+  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, prompts/, triggers/, benchmarks/, features/)`];
+  // flow-stack's feature map, copied by the migration (daemon/features.ts).
+  if (kind === "feature") return featureErrors(text, path.slice("features/".length));
   if (kind === "prompt") {
     const name = path.slice("prompts/".length, -".md".length);
     return [...(text.trim() ? [] : ["prompt: the file is empty"]), ...templateErrors(name, text)];
