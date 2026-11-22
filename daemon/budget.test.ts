@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta, setRepo } from "./db.ts";
@@ -12,6 +12,11 @@ import { validateDir } from "./validate.ts";
 
 const now = "2026-11-21T10:00:00Z";
 
+// A fake triager that finishes: its last step is GROOMING.md in the folder it runs in.
+const triaged = (argv: string[]) => {
+  if (argv.includes("factory.stage=groom") && argv.includes("--cwd")) writeFileSync(join(argv[argv.indexOf("--cwd") + 1], "GROOMING.md"), "groomed\n");
+};
+
 function setup(extra = "") {
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
@@ -23,7 +28,7 @@ function setup(extra = "") {
   const db = open(join(dir, "factory.db"));
   setRepo(db, { slug: "acme/api", path: repo, lead: true });
   let n = 0;
-  const run: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: `{"address":"t${++n}"}` } : sh(argv, cwd));
+  const run: Run = (argv, cwd) => (argv[0] === "hc" ? (triaged(argv), { code: 0, out: `{"address":"t${++n}"}` }) : sh(argv, cwd));
   const add = (id: number, blueprint = "feature") => db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (?, 'Wire it', ?, ?)").run(id, blueprint, now);
   const use = (id: string, input: number, output: number, at = now) =>
     db.query("INSERT INTO usage (message_id, ticket, at, model, input, cache_write_5m, cache_write_1h, cache_read, output, usd) VALUES (?, 1, ?, 'm', ?, 0, 0, 0, ?, 0)").run(id, at, input, output);
@@ -88,7 +93,11 @@ test("grooming sets the budget from merged tickets on the blueprint times headro
   add(10); add(11);
   db.query("UPDATE tickets SET state = 'grooming' WHERE id IN (10, 11)").run();
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (11, 'you', 'set the budget to 9M', ?)").run(now);
-  for (const id of [10, 11]) advance(db, { dir, repo, id, run, now });
+  for (const id of [10, 11]) {
+    mkdirSync(join(dir, "tickets", String(id)), { recursive: true });
+    writeFileSync(join(dir, "tickets", String(id), "GROOMING.md"), "groomed\n"); // triage finished
+    advance(db, { dir, repo, id, run, now });
+  }
   const budget = (id: number) => db.query("SELECT budget_in, budget_out FROM tickets WHERE id = ?").get(id);
   expect(budget(10)).toEqual({ budget_in: 4000, budget_out: 400 });
   expect(budget(11)).toEqual({ budget_in: 3_000_000, budget_out: 150_000 });

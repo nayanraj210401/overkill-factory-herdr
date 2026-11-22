@@ -189,6 +189,16 @@ export function questionsComment(open: Question[], po: string | null) {
 // The triage agent's session is over (stage-done, or its terminal exited).
 export function finishGrooming(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  // The triager's last step is GROOMING.md. Without it, triage stopped early (killed, crashed,
+  // closed): the ticket waits for you rather than start as if groomed. Parked, not retried,
+  // so a triager that keeps dying doesn't loop; `factory groom <id>` runs it again.
+  if (!existsSync(join(o.dir, "tickets", String(o.id), "GROOMING.md"))) {
+    const why = `Triage stopped before it finished (no GROOMING.md). Rerun it: factory groom ${o.id}`;
+    db.query("UPDATE tickets SET needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(why, o.now, o.id);
+    db.query("UPDATE stages SET detail = ? WHERE ticket = ? AND ended_at IS NULL").run("triage stopped early", o.id);
+    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', 'triage stopped before GROOMING.md; parked', ?)").run(o.id, o.now);
+    return { parked: why, stage: "groom" };
+  }
   const open = openQuestions(db, o.id);
   if (!open.length) return groomed(db, o);
   const po = open.some((q) => q.kind === "product") ? productOwner(db, o) : null;
