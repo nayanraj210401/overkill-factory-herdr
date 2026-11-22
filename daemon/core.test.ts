@@ -66,3 +66,18 @@ test("b sets a ticket's budget from what you type, and refuses nonsense or a fin
   run("ticket", "set", "412", "state=merged");
   expect(() => run("budget", "412", "5M")).toThrow("#412 is merged");
 });
+
+test("refresh rewrites status.json and the ticket files, and a failing PR check doesn't stop it", () => {
+  const { run } = factory();
+  run("ticket", "add", "409", "Bump", "dependencies");
+  run("ticket", "set", "409", "state=ready", "pr=511", "pr_watched=true");
+  const p = paths("acme-api");
+  const md = join(p.dir, "tickets", "409", "STATUS.md");
+  require("node:fs").rmSync(p.status);
+  require("node:fs").rmSync(md, { force: true });
+  const out: string[] = [];
+  main(["refresh", "409", "--name", "acme-api"], (s: string) => out.push(s));
+  expect(existsSync(p.status)).toBe(true);
+  expect(existsSync(md)).toBe(true);
+  expect(out.at(-1)).toBe("#409 refreshed");
+});
