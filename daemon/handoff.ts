@@ -15,6 +15,7 @@ import { agentSettings, argvFor, brief, loadAgent, loadBlueprint, readFactory, t
 import { loadPrompt, render } from "./prompts.ts";
 import { settingOf } from "./learn.ts";
 import { ticketRepos } from "./db.ts";
+import { slicesOf } from "./slices.ts";
 
 export const DEFAULT_HANDOFF_AT = 0.6;
 export const CEILING = 0.8;
@@ -57,7 +58,7 @@ export function missingSections(text: string) {
   return SECTIONS.filter(([, re]) => !parts.some((p) => re.test(p.head) && p.body)).map(([name]) => name);
 }
 
-type Row = { id: number; ticket: number; stage: string; agent: string | null; terminal: string; argv: string; started_at: string; cwd: string | null; space: string | null; worktree: string | null; settings?: string | null };
+type Row = { id: number; ticket: number; stage: string; agent: string | null; terminal: string; argv: string; started_at: string; cwd: string | null; space: string | null; worktree: string | null; settings?: string | null; slice?: string | null };
 type Flag = { session: number; at: string; fill: number; asked?: boolean; message?: string };
 
 // The session's own transcript: the newest top-level file in its folder since it started.
@@ -79,7 +80,7 @@ const say = (run: Run, terminal: string, text: string) => run(["hc", "send", "--
 
 export function watchContext(db: Database, o: { dir: string; repo: string; run: Run; now: string; log?: (s: string) => void }) {
   const budget = (readFactory(o.repo) as { budget?: { handoff_at_context?: number | string } }).budget;
-  const rows = db.query(`SELECT s.id, s.ticket, s.stage, s.agent, s.terminal, s.argv, s.started_at, s.cwd, t.space, t.worktree, t.settings
+  const rows = db.query(`SELECT s.id, s.ticket, s.stage, s.agent, s.terminal, s.argv, s.started_at, s.cwd, s.slice, t.space, t.worktree, t.settings
     FROM sessions s JOIN ticket_lead t ON t.id = s.ticket
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.state = 'running' AND t.location != 'cloud' AND s.argv LIKE '["claude"%'
     AND s.id = (SELECT MAX(id) FROM sessions WHERE ticket = s.ticket)`).all() as Row[];
@@ -131,9 +132,9 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
   const repos = ticketRepos(db, o.s.ticket);
   const read = (f: string) => { try { return readFileSync(join(o.folder, f), "utf8"); } catch { return ""; } };
   const intent = section(read("INTENT.md"), /^acceptance/i);
-  const slices = read("SLICES.md");
-  // The slice in hand: the first one not marked done.
-  const slice = slices.split(/^(?=#{2,3}[ \t])/m).slice(1).find((p) => !/\b(done|shipped)\b|\[x\]|✓/i.test(p.split("\n")[0])) ?? slices;
+  const slices = slicesOf(read("SLICES.md"));
+  // The slice in hand: the session's own (per: slice), else the first one not marked done.
+  const slice = (o.s.slice ? slices.find((x) => x.key === o.s.slice) : slices.find((x) => !x.marked))?.text ?? read("SLICES.md");
   const cmds = readFactory(o.repo).quality_floor ?? [];
   const checks = (db.query(`SELECT check_name, result, detail FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name) ORDER BY id DESC LIMIT 6`)
     .all(o.s.ticket) as { check_name: string; result: string; detail: string | null }[]).map((c) => `- ${c.check_name}: ${c.result}${c.detail ? ` (${c.detail})` : ""}`);
@@ -200,8 +201,9 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
     if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
     terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
   }
-  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(s.ticket, s.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, s.worktree);
+  // The next session goes on with the same slice.
+  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd, slice) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(s.ticket, s.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, s.worktree, s.slice ?? null);
   const detail = `${s.agent} agent · session ${n}`;
   db.query("UPDATE stages SET detail = ? WHERE ticket = ? AND ended_at IS NULL").run(detail, s.ticket);
   db.query("UPDATE tickets SET detail = ?, updated_at = ? WHERE id = ?").run(detail, o.now, s.ticket);

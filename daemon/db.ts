@@ -176,6 +176,13 @@ export const MIGRATIONS = [
    );
    ALTER TABLE tickets ADD COLUMN parent INTEGER;
    ALTER TABLE tickets ADD COLUMN base TEXT;`,
+  // per: slice: the slice of SLICES.md each session built (by its S<n>, or its place), and
+  // the slices a stage finished.
+  `ALTER TABLE sessions ADD COLUMN slice TEXT;
+   CREATE TABLE slices (
+     ticket INTEGER NOT NULL REFERENCES tickets(id), stage TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL,
+     session INTEGER REFERENCES sessions(id), done_at TEXT, PRIMARY KEY (ticket, stage, key)
+   );`,
 ];
 
 export function open(path: string): Database {
