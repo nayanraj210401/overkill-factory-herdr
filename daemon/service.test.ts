@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { plist, selfArgs, service, servicePid } from "./service.ts";
+import { plist, selfArgs, service, servicePid, atLoginOf, APP_NAME } from "./service.ts";
 import { factories } from "./cli.ts";
 
 test("the plist runs the daemon at login, keeps it alive, and carries PATH", () => {
@@ -56,8 +56,8 @@ test("status --json is what the window reads; restart kickstarts the job", () =>
   service("status", { ...o, run: () => ({ code: 0, out: "\tstate = running\n\tpid = 42\n" }) });
   service("status", { ...o, run: () => ({ code: 113, out: "" }) });
   expect(out.map((s) => JSON.parse(s))).toEqual([
-    { installed: true, state: "running", pid: 42, logs: "/fh/logs" },
-    { installed: false, state: "absent", pid: null, logs: "/fh/logs" },
+    { installed: true, state: "running", pid: 42, logs: "/fh/logs", at_login: false },
+    { installed: false, state: "absent", pid: null, logs: "/fh/logs", at_login: false },
   ]);
   service("restart", { ...o, run: (a) => (calls.push(a), { code: 0, out: "" }) });
   expect(calls[0]).toEqual(["kickstart", "-k", "gui/501/x.test"]);
@@ -76,4 +76,48 @@ test("servicePid: the running service's pid when it serves this FACTORY_HOME, el
   expect(servicePid({ ...o, factoryHome: mkdtempSync(join(tmpdir(), "other-")) })).toBe(null); // another home, e.g. tests
   out = "state = not running\n";
   expect(servicePid(o)).toBe(null);
+});
+
+test("the job runs an app bundle named for the factory, so Login Items doesn't show bun's signer", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agents-"));
+  const home = mkdtempSync(join(tmpdir(), "fh-"));
+  const signed: string[] = [];
+  service("install", { factoryHome: home, label: "x.test", agentsDir: dir, uid: 501, log: () => {}, run: () => ({ code: 0, out: "" }), sign: (a) => signed.push(a) });
+  const app = join(home, `${APP_NAME}.app`);
+  const xml = readFileSync(join(dir, "x.test.plist"), "utf8");
+  expect(xml).toContain(`<string>${app}/Contents/MacOS/factory-daemon</string>\n    <string>run</string>`);
+  expect(xml).toContain("<key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>x.test</string>");
+  const info = readFileSync(join(app, "Contents/Info.plist"), "utf8");
+  expect(info).toContain(`<key>CFBundleName</key>\n  <string>${APP_NAME}</string>`);
+  expect(info).toContain("<key>CFBundleIdentifier</key>\n  <string>x.test</string>");
+  expect(readFileSync(join(app, "Contents/MacOS/factory-daemon"), "utf8")).toMatch(/^#!\/bin\/sh\n[\s\S]*exec '.*' "\$@"\n$/);
+  expect(signed).toEqual([app]);
+  service("uninstall", { factoryHome: home, label: "x.test", agentsDir: dir, uid: 501, log: () => {}, run: () => ({ code: 0, out: "" }) });
+  expect(existsSync(app)).toBe(false);
+});
+
+test("login off: loaded but not started at login, restarted only after a crash; on puts it back; install keeps the choice", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agents-"));
+  const calls: string[][] = [];
+  const out: string[] = [];
+  const o = { factoryHome: mkdtempSync(join(tmpdir(), "fh-")), label: "x.test", agentsDir: dir, uid: 501, log: (s: string) => out.push(s), sign: () => {},
+    run: (a: string[]) => (calls.push(a), { code: 0, out: "state = running\npid = 7\n" }) };
+  const file = join(dir, "x.test.plist");
+  expect(() => service("login", { ...o, arg: "off" })).toThrow("not installed");
+  service("install", o);
+  expect(atLoginOf(file)).toBe(true);
+  service("login", { ...o, arg: "off" });
+  const xml = readFileSync(file, "utf8");
+  expect(xml).toContain("<key>RunAtLoad</key>\n  <false/>");
+  expect(xml).toContain("<key>KeepAlive</key>\n  <dict>\n    <key>Crashed</key>\n    <true/>");
+  expect(calls.slice(-3)).toEqual([["bootout", "gui/501/x.test"], ["bootstrap", "gui/501", file], ["kickstart", "gui/501/x.test"]]); // still running now
+  service("install", o); // a reinstall (sync, an upgrade) keeps "off"
+  expect(atLoginOf(file)).toBe(false);
+  service("status", { ...o, json: true });
+  expect(JSON.parse(out.at(-1)!)).toMatchObject({ at_login: false, state: "running" });
+  service("login", { ...o, arg: "on" });
+  expect(atLoginOf(file)).toBe(true);
+  expect(calls.at(-1)).toEqual(["bootstrap", "gui/501", file]); // RunAtLoad starts it
+  service("start", o);
+  expect(calls.at(-1)).toEqual(["kickstart", "gui/501/x.test"]);
 });

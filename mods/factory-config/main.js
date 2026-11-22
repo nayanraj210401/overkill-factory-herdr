@@ -73,12 +73,13 @@ export default class FactoryConfig extends View {
     });
   }
 
+  // action: install, start, restart, uninstall, logs, or "login on" / "login off" (the checkbox).
   act(action, cx) {
     if (action === "logs") return exec("open", [this.daemon.logs]);
     this.busy = action;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await this.factory(["service", action]).catch((e) => ({ code: 1, stderr: String(e) }));
+      const r = await this.factory(["service", ...action.split(" ")]).catch((e) => ({ code: 1, stderr: String(e) }));
       if (r.code !== 0) notify({ title: `Daemon ${action} failed`, body: (r.stderr || r.stdout).trim(), level: "error" });
       this.busy = null;
       this.refreshDaemon(cx);
@@ -87,11 +88,16 @@ export default class FactoryConfig extends View {
 
   daemonBar(t) {
     const v = this.daemon === undefined ? { text: "Checking…", tone: "dim", actions: [] } : daemonView(this.daemon, this.daemonError);
-    const LABEL = { install: "Install", restart: "Restart", uninstall: "Uninstall", logs: "Logs" };
+    const LABEL = { install: "Install", start: "Start", restart: "Restart", uninstall: "Uninstall", logs: "Logs", "login on": "Turning on start at login", "login off": "Turning off start at login" };
     return h_flex().id("daemon").h(40).flex_none().px(14).gap(10).items_center().rounded(10).bg(t.surface).border(1).border_color(t.border)
       .child(div().size(8).rounded_full().bg(t[v.tone]))
       .child(div().font_semibold().text_color(t.foreground).child("Daemon"))
       .child(div().flex_1().truncate().text_color(t.muted).child(this.busy ? `${LABEL[this.busy]}…` : v.text))
+      .when(v.atLogin != null, (el) => el.child(h_flex().id("d-login").gap(6).items_center().cursor_pointer().text_size(12).text_color(t.muted)
+        .hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => this.busy || this.act(v.atLogin ? "login off" : "login on", cx))
+        .child(div().size(14).rounded(3).border(1).border_color(v.atLogin ? t.accent : t.border).bg(v.atLogin ? t.accent : t.surface)
+          .flex().items_center().justify_center().text_size(10).text_color(t.background).child(v.atLogin ? "✓" : ""))
+        .child("Start at login")))
       .children(v.actions.map((a) => div().id(`d-${a}`).px(10).py(3).rounded(6).border(1).cursor_pointer().text_size(12)
         .border_color(a === "install" ? t.accent : t.border).text_color(a === "install" ? t.accent : t.muted)
         .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.busy || this.act(a, cx)).child(LABEL[a])));
