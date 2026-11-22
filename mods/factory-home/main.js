@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, setShared, props, exec, notify, home } from "herdr";
-import { needsYou, ago, compact, repoBadge, warnMark, holdText, localRunning } from "./lib/model.js";
+import { needsYou, overwatchNotes, ago, compact, repoBadge, warnMark, holdText, localRunning } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, state, act, sampleOn, showSample, peekAgent } from "./lib/store.js";
@@ -52,6 +52,18 @@ export default class FactoryHome extends View {
           .when(!!badge, (el) => el.child(div().text_size(11.5).text_color(t.dim).child(badge)))
           .child(div().text_size(12).text_color(color).child(tag)))
         .child(div().text_color(t.muted).child(ticket.needs?.text ?? ticket.detail ?? "")));
+  }
+
+  // A note another agent left for Overwatch to bring to you: opens its ticket, else Overwatch.
+  noteCard(t, a) {
+    return h_flex().id(`an-${a.id}`).rounded(8).bg(t.surface).border(1).border_color(t.border).cursor_pointer()
+      .hover((s) => s.bg(t.hover)).on_click(() => (a.ticket ? open(a.ticket) : run("layout.select", { stack: STACK, child: "overwatch" })))
+      .child(div().w(3).h_full().rounded_l(8).bg(t.accent))
+      .child(v_flex().flex_1().px(14).py(10).gap(3)
+        .child(h_flex().gap(8)
+          .child(div().flex_1().font_semibold().text_color(t.foreground).child(a.ticket ? `#${a.ticket} · ${a.route}` : a.route))
+          .child(div().text_size(12).text_color(t.accent).child(a.delivered ? "with Overwatch · click to talk" : "for Overwatch")))
+        .child(div().text_color(t.muted).child(a.text)));
   }
 
   // A space whose repo has no factory: start one here (factory init, then setup's checklist),
@@ -149,6 +161,7 @@ export default class FactoryHome extends View {
         .child(div().font_semibold().text_color(t.blocked).child(holdText(s)))
         .child(div().text_color(t.muted).child("Tickets already running carry on; queued ones wait."))))
       .child(section("Needs you"))
+      .children(overwatchNotes(s.asks).map((a) => this.noteCard(t, a)))
       .children(needs.map((n, i) => this.card(t, s, n, now, focused && i === this.at)))
       .child(section("Running"))
       .children(running.map((x, i) => h_flex().id(`r-${x.id}`).h(30).px(4).gap(10).items_center().rounded(6).cursor_pointer()

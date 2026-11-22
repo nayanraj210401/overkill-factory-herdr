@@ -234,3 +234,16 @@ test("an agent waiting on you in its terminal is in Needs you, first, whatever i
   const order = needsYou([{ id: 1, state: "ready", needs: null }, { id: 2, state: "parked", needs: { kind: "parked", text: "" } }, waiting]);
   assert.deepEqual(order.map((n) => [n.ticket.id, n.kind]), [[9, "attention"], [1, "merge"], [2, "parked"]]);
 });
+
+test("notes between agents: Needs you shows the ones for Overwatch; Pending changes says from whom to whom", async () => {
+  const { agentLabel, askedBy, overwatchNotes, pendingNotes } = await import("../lib/model.js");
+  assert.equal(agentLabel("overwatch"), "Overwatch");
+  assert.equal(agentLabel("babysitter"), "the babysitter");
+  assert.equal(askedBy({ requested_by: "babysitter" }), "the babysitter");
+  assert.deepEqual(status.asks.map((a) => a.id), [3, 4]); // the sample has one of each
+  assert.deepEqual(overwatchNotes(status.asks).map((a) => [a.id, a.route]), [[3, "from the spec-writer to Overwatch"]]);
+  assert.deepEqual(pendingNotes(status.asks).map((a) => a.route), ["from the spec-writer to Overwatch", "from Overwatch to the learner"]);
+  assert.deepEqual(overwatchNotes(undefined), []);
+  const bad = { ...status, asks: [{ id: 1, from: "x", to: "overwatch", text: "t", at: "2026-11-21T09:00:00Z" }] };
+  assert.deepEqual(validateStatus(bad), ["asks[0]: needs {id, from, to, text, why, ticket, at, delivered}"]);
+});

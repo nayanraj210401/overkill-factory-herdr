@@ -15,32 +15,44 @@ import { validateAccount } from "./validate.ts";
 
 export const BLUEPRINT = "factory";
 
-// Who asked: you (in Overwatch, or `factory request`), or the learner with its evidence.
-export type From = "you" | "learner";
-const TRIGGER: Record<From, string> = { you: "maintainer", learner: "learner" };
-export const requestedBy = (trigger: string | null | undefined): From => (trigger === TRIGGER.learner ? "learner" : "you");
+// Who asked: you (in Overwatch, or `factory request`), or an agent: the learner with its
+// evidence, Overwatch on its own, the babysitter… (`factory ask maintainer`, ask.ts).
+export type From = string;
+const triggerOf = (from: From) => (from === "learner" ? "learner" : "maintainer");
+export const requestedBy = (trigger: string | null | undefined): From => (trigger === "learner" ? "learner" : "you");
+const FROM_LINE: Record<string, string> = { you: "you, in Overwatch", learner: "the learner (self-learning found this)", overwatch: "Overwatch, on its own" };
 
 const folderOf = (dir: string, id: number) => join(dir, "tickets", String(id));
 
-export function request(db: Database, o: { text: string; repo: string; run: Run; now: string; from?: From; evidence?: string; dir?: string }) {
+export function request(db: Database, o: { text: string; repo: string; run: Run; now: string; from?: From; evidence?: string; dir?: string; about?: number | null }) {
   const text = o.text.trim().replace(/\s+/g, " ");
   if (!text) throw new Error('say what to change: factory request "<the change, and why>"');
   // A link or #number would make it a GitHub issue ticket: a request is the person's words.
   if (/^#?\d+$|^https?:\/\//.test(text)) throw new Error("a request is a sentence about the change, not an issue link; use factory new for issues");
   const from = o.from ?? "you";
-  const r = newTicket(db, { text, repo: o.repo, blueprint: BLUEPRINT, run: o.run, now: o.now, trigger: TRIGGER[from] });
+  const r = newTicket(db, { text, repo: o.repo, blueprint: BLUEPRINT, run: o.run, now: o.now, trigger: triggerOf(from) });
   db.query("UPDATE tickets SET groomed_at = ? WHERE id = ?").run(o.now, r.id);
-  if (from === "learner") db.query("UPDATE decisions SET who = 'learner' WHERE ticket = ? AND who = 'you'").run(r.id);
+  if (from !== "you") db.query("UPDATE decisions SET who = ? WHERE ticket = ? AND who = 'you'").run(from, r.id);
   if (o.evidence) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, 'evidence for the request', ?, ?)").run(r.id, from, o.evidence, o.now);
+  // Every hand-off is recorded with its origin and target (Config's Pending changes: from X to the maintainer).
+  db.query("INSERT INTO asks (from_agent, to_agent, text, why, about, request, at, delivered_at) VALUES (?, 'maintainer', ?, ?, ?, ?, ?, ?)")
+    .run(from, text, o.evidence ?? null, o.about ?? null, r.id, o.now, o.now);
   // REQUEST.md: what the maintainer reads first, with who asked and why.
   if (o.dir) {
     mkdirSync(folderOf(o.dir, r.id), { recursive: true });
     writeFileSync(join(folderOf(o.dir, r.id), "REQUEST.md"), [
-      `# Request #${r.id}`, "", `From: ${from === "learner" ? "the learner (self-learning found this)" : "you, in Overwatch"}`, "", text, "",
+      `# Request #${r.id}`, "", `From: ${FROM_LINE[from] ?? `the ${from} agent`}`, "", text, "",
+      ...(o.about ? [`About: ticket #${o.about}`, ""] : []),
       ...(o.evidence ? ["## Evidence", "", o.evidence.trim(), ""] : []),
     ].join("\n"));
   }
   return r;
+}
+
+// Who asked for a request: its ask's origin, else (a request from before asks were recorded) its trigger.
+export function requesterOf(db: Database, id: number, trigger: string | null | undefined): From {
+  const a = db.query("SELECT from_agent FROM asks WHERE request = ? ORDER BY id LIMIT 1").get(id) as { from_agent: string } | null;
+  return a?.from_agent ?? requestedBy(trigger);
 }
 
 // ---- the account config --------------------------------------------------------------

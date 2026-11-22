@@ -13,7 +13,7 @@ import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { capsOf, readTriggers, runningByTrigger, withinCaps } from "./triggers.ts";
 import { argvFor, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
-import { loadAgent } from "./agents.ts";
+import { factoryMap, loadAgent } from "./agents.ts";
 import { mayStart } from "./away.ts";
 import { openAgent, withFactory } from "./herdr.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
@@ -46,9 +46,10 @@ const ticket = (db: Database, id: number) => {
 const openQuestions = (db: Database, id: number) =>
   db.query("SELECT n, kind, text, asked_at, answer FROM questions WHERE ticket = ? AND answer IS NULL ORDER BY n").all(id) as Question[];
 
-export function triageBrief(t: { id: number; title: string }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null; others?: Repo[] }) {
+export function triageBrief(t: { id: number; title: string }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null; others?: Repo[]; neighbours?: string }) {
   const others = o.others ?? [];
   return render(loadPrompt(o.repo, "groom"), {
+    neighbours: o.neighbours,
     "ticket.id": String(t.id),
     "ticket.title": t.title,
     repo: o.repo,
@@ -77,9 +78,9 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   if (existsSync(before)) renameSync(before, join(folder, "GROOMING.before.md"));
   const agent = loadAgent(o.repo, g.agent);
   const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
-    triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));
+    triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db) }));
   // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
-  const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir);
+  const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir, { agent: g.agent, ticket: o.id });
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
   // later), so you can watch the triage agent and answer it. No window: a background terminal.
   const made = openAgent(o.run, { folder, space: t.space ?? null, name: "groom", argv: cmd });

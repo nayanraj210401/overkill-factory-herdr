@@ -27,7 +27,7 @@ import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { accountPending, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount } from "./maintainer.ts";
 import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
-import { loadAgent } from "./agents.ts";
+import { factoryMap, loadAgent } from "./agents.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -78,9 +78,10 @@ export const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "") {
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", neighbours = "") {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return render(template, {
+    neighbours,
     "ticket.id": String(t.id),
     "ticket.title": t.title,
     stage,
@@ -170,8 +171,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const intent = existsSync(join(folder, "INTENT.md")) ? readFileSync(join(folder, "INTENT.md"), "utf8") : "";
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
-  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text)), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])]);
-  const cmd = withFactory(argv, o.dir); // sessions keep the agent's own argv
+  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, factoryMap(db))), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])]);
+  const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id }); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   // The ticket's first worktree stage: the other repos' shell tabs join its space with it.

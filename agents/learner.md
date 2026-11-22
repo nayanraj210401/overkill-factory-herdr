@@ -13,7 +13,9 @@ the lesson store.
   No file changes.
 - Anything else (a prompt change, a lesson that should be a lint rule or a test, a new
   stage, making an override permanent) goes to the maintainer as a request with its
-  evidence: the metric, its value before and after, the ticket count, the override's id.
+  evidence: `factory ask maintainer "<the change>" --why "<the metric, its value before and after, the ticket count, the override's id>"`.
+
+Notes other agents leave you arrive with your run; when you've handled one, run `factory asks done <id>`.
 
 You never write a file. Every change you want has one source of evidence (yours) and one
 reviewable diff (the maintainer's).

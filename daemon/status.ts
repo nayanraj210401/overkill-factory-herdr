@@ -14,6 +14,7 @@ import { activeOverrides, fileValue } from "./learn.ts";
 import { readFactory } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
 import { BLUEPRINT, requestedBy } from "./maintainer.ts";
+import { openAsks } from "./ask.ts";
 
 type Row = Record<string, any>;
 
@@ -36,8 +37,8 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
     blocked_by: r.blocked_by,
     terminal: r.terminal ?? null,
     session: r.sessions || null, // "session 3 of #412": the live agent's session in its stage; null with no live agent
-    // A request for the maintainer: who asked (you in Overwatch, or the learner), for Config's Pending changes.
-    ...(r.blueprint === BLUEPRINT ? { requested_by: requestedBy(r.trigger_name) } : {}),
+    // A request for the maintainer: who asked (you in Overwatch, the learner, another agent), for Config's Pending changes.
+    ...(r.blueprint === BLUEPRINT ? { requested_by: r.requester ?? requestedBy(r.trigger_name) } : {}),
   };
 }
 
@@ -62,6 +63,7 @@ export function buildStatus(db: Database, now = new Date()) {
     -- the live agent's session number within its stage: a handoff starts the next one in the same stage
     (SELECT COUNT(*) FROM sessions s, (SELECT stage FROM sessions l WHERE l.ticket = t.id AND l.ended_at IS NULL AND l.agent IS NOT 'cloud' ORDER BY l.id DESC LIMIT 1) live
        WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions
+    , (SELECT from_agent FROM asks a WHERE a.request = t.id ORDER BY a.id LIMIT 1) AS requester
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ({
     ...ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null),
     // The open grooming questions, numbered as the `A1:` answers are.
@@ -99,6 +101,8 @@ export function buildStatus(db: Database, now = new Date()) {
     // Which claude the sessions run, for Config (claude-bin.ts); tests never look one up.
     ...(process.env.FACTORY_TEST_SANDBOX ? {} : { claude: (() => { try { return claudeChoice(); } catch (e) { return { error: (e as Error).message, found: [] }; } })() }),
     overrides: overridesOf(db, lead?.path),
+    // Open notes between agents (factory ask): to Overwatch they show in Needs you; all on Config's Pending changes.
+    asks: openAsks(db).map((a) => ({ id: a.id, from: a.from, to: a.to, text: a.text, why: a.why, ticket: a.about, at: a.at, delivered: !!a.delivered_at })),
     to_review: 0,
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,

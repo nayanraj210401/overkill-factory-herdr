@@ -9,8 +9,8 @@ import { transcriptDir, type Use } from "./usage.ts";
 import { CEILING, contextFill, contextWindow, handoffAt, handoffStep, missingSections, watchContext } from "./handoff.ts";
 import { flagFile, refusal, snapshotFile, snapshotOf, withHandoffHook } from "./handoff-hook.ts";
 import { validateStatus } from "../lib/status.js";
+import { matchBrief } from "./snap.ts";
 
-const snap = JSON.parse(readFileSync(join(import.meta.dir, "briefs.snap.json"), "utf8")) as Record<string, string>;
 const use = (at: string, o: Partial<Use> = {}): Use => ({ id: at, at, model: "claude-sonnet-5-5", input: 0, w5m: 0, w1h: 0, read: 0, output: 0, ...o });
 
 test("fill: the last message's input, cache reads and cache writes over the window", () => {
@@ -187,7 +187,7 @@ test("a complete HANDOFF.md: work committed, session ended, the next one starts 
   expect(brief).toContain("6th attempt in a minute gets a 429");
   expect(brief).toMatch(/limiter\.ts \| 1 \+/); // git diff --stat
   expect(brief).toContain("bun test: FAIL (exit 1: 2 failing)");
-  expect(brief.split(folder).join("<folder>")).toBe(snap.handoffFull); // the text the code built before it was a template
+  matchBrief("handoffFull", brief.split(folder).join("<folder>")); // the text the code built before it was a template
   // the work in progress is on the ticket branch; the flag is gone; the old handoff is kept apart
   expect(sh(["git", "-C", wt, "log", "-1", "--format=%s"]).out).toContain("work in progress at the handoff to session 2");
   expect(sh(["git", "-C", wt, "status", "--porcelain"]).out).toBe("");
@@ -215,7 +215,7 @@ test("at the 80% ceiling the session is stopped without a handoff and the brief 
   expect(brief).toMatch(/last commit, [0-9a-f]+ init/);
   expect(brief).toMatch(/not committed:\n\?\? half\.ts/); // still on disk, and the brief says so
   expect(brief).not.toContain("## HANDOFF.md");
-  expect(brief.split(folder).join("<folder>").replace(/last commit, [0-9a-f]+ init/, "last commit, <sha> init")).toBe(snap.handoffCeiling);
+  matchBrief("handoffCeiling", brief.split(folder).join("<folder>").replace(/last commit, [0-9a-f]+ init/, "last commit, <sha> init"));
   expect(sh(["git", "-C", wt, "log", "-1", "--format=%s"]).out).toBe("init"); // nothing committed for it
   expect(existsSync(folder)).toBe(true);
 });

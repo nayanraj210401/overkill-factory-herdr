@@ -196,6 +196,14 @@ export const MIGRATIONS = [
      yours TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('you', 'kept')), got TEXT, why TEXT,
      PRIMARY KEY (run, ticket, n)
    );`,
+  // Agents ask each other (factory ask): who asked whom, what and why, the ticket it is about,
+  // and for the maintainer the request it filed. A note is delivered (typed into Overwatch's
+  // terminal, or given to the learner's or babysitter's next run) and later marked done.
+  `CREATE TABLE asks (
+     id INTEGER PRIMARY KEY, from_agent TEXT NOT NULL, to_agent TEXT NOT NULL, text TEXT NOT NULL, why TEXT,
+     about INTEGER, request INTEGER REFERENCES tickets(id), at TEXT NOT NULL, delivered_at TEXT, done_at TEXT
+   );
+   CREATE INDEX asks_open ON asks(to_agent) WHERE done_at IS NULL;`,
 ];
 
 export function open(path: string): Database {

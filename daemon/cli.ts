@@ -42,7 +42,8 @@ import { validateMetrics } from "../lib/metrics.js";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
-import { overwatch } from "./overwatch.ts";
+import { liveOverwatch, overwatch } from "./overwatch.ts";
+import { ask as askAgent, askerOf, deliverToOverwatch, doneAsk, noteText, openAsks, type AskResult } from "./ask.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
@@ -57,7 +58,9 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
-  request <the change…>              a change to the factory itself (.factory/ or the account config): the maintainer makes it and it comes back as a PR
+  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request, back as a PR), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run)
+  asks [agent] [--json] | asks done <id>  the open notes (to one agent) / mark one handled
+  request <the change…>              ask the maintainer for a change to the factory itself, for you (.factory/ or the account config): it comes back as a PR
   account propose <id>               the maintainer's copy of ~/.factory/config.yaml to edit, in the request's folder (applied when the request merges)
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
@@ -189,6 +192,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const source = flag(args, "source");
   const scope = flag(args, "scope");
   const propose = flag(args, "propose");
+  const fromFlag = flag(args, "from");
+  const aboutFlag = flag(args, "ticket");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -369,14 +374,36 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let voter = "";
       change(db, () => { voter = recordVerdict(db, { id: Number(sub), kind, result: r, detail: detail.join(" ") || null, by, now: now() }); });
       log(`#${sub}: ${kind} ${r} from ${voter}`);
-    } else if (cmd === "request") {
-      // A change to the factory itself, for the maintainer (maintainer.ts): it comes back as a PR.
+    } else if (cmd === "ask" || cmd === "request") {
+      // One agent asks another (ask.ts). `factory request` is asking the maintainer for the
+      // person: Overwatch runs it once they agree, so it is from you unless --from says otherwise.
       const lead = needLead(db);
-      let r: any = null;
-      change(db, () => { r = request(db, { text: [sub, ...rest].filter(Boolean).join(" "), repo: lead.slug, run: sh, now: now(), dir: p.dir }); });
-      log(`#${r.id} ${r.title}: a request for the maintainer; it starts when a slot is free, and the change comes back as a PR for you`);
+      const [to, words] = cmd === "request" ? ["maintainer", [sub, ...rest]] : [sub ?? "", rest];
+      const about = aboutFlag ?? process.env.FACTORY_TICKET ?? null;
+      if (about !== null && !Number.isInteger(Number(about))) throw new Error("--ticket takes the ticket's id");
+      let r!: AskResult;
+      change(db, () => {
+        r = askAgent(db, { to, text: words.filter(Boolean).join(" "), why, from: cmd === "request" ? fromFlag ?? "you" : askerOf(fromFlag), about: about === null ? null : Number(about),
+          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(db, sh) });
+      });
       writeStatus(db, p.status);
-      writeTicketFiles(db, p.dir, r.id);
+      if (r.kind === "request") {
+        writeTicketFiles(db, p.dir, r.id);
+        return log(`#${r.id} ${r.title}: a request for the maintainer from ${r.ask.from}; it starts when a slot is free, and the change comes back as a PR for you`);
+      }
+      return log(`note #${r.ask.id} for ${r.ask.to}, from ${r.ask.from}: ${r.ask.to === "overwatch" ? (r.delivered ? "typed into Overwatch's terminal, and in Needs you" : "in Needs you; Overwatch gets it when its terminal is live") : `waits for the ${r.ask.to}'s next run`}`);
+    } else if (cmd === "asks") {
+      if (sub === "done") {
+        if (!Number.isInteger(Number(rest[0]))) throw new Error("usage: factory asks done <note id>");
+        change(db, () => doneAsk(db, Number(rest[0]), now()));
+        writeStatus(db, p.status);
+        return log(`note #${rest[0]} done`);
+      }
+      const list = openAsks(db, sub);
+      if (json) return log(JSON.stringify(list));
+      for (const a of list) log(noteText(a, name));
+      if (!list.length) log(`no open notes${sub ? ` for ${sub}` : ""}`);
+      return;
     } else if (cmd === "account") {
       // The account config isn't in any repo: the maintainer edits a copy in the request's folder.
       if (sub !== "propose" || !Number.isInteger(Number(rest[0]))) throw new Error("usage: factory account propose <request id>");
@@ -960,6 +987,8 @@ function runAll(interval: number, log: (s: string) => void) {
         if (lead0) power(db, p, lead0.path);
         recordUsage(db, log);
         watchSessions(db, p, sh, log);
+        // Notes for Overwatch that its terminal hasn't had yet (it was busy, or not running).
+        deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(db, sh), name });
         const lead = leadRepo(db);
         if (lead) runScheduledBenchmarks(db, { repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
         writeAll(db, p);

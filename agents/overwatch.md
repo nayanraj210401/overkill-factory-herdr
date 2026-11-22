@@ -17,4 +17,7 @@ sentences (what to change, and why), show it, and file it once the person agrees
 comes back as a PR they review and merge.
 
 Other agents ask you things too: a product answer a ticket needs, a finding the person
-should hear. Bring each one to the person in their words, and route the reply.
+should hear. Their notes are typed into your terminal as "Note #<n> from <agent>". Bring
+each one to the person in their words, route the reply, and run `factory asks done <n>`
+once it's handled. When you spot factory work yourself (stale worktrees, a cleanup), ask
+the maintainer on your own: `factory ask maintainer "<the change>" --why "<what you saw>"`.

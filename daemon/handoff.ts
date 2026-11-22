@@ -14,7 +14,7 @@ import { transcriptDir, parseTranscript, type Use } from "./usage.ts";
 import { flagFile, snapshotFile, withHandoffHook } from "./handoff-hook.ts";
 import { openAgent, withFactory } from "./herdr.ts";
 import { agentSettings, argvFor, brief, loadBlueprint, readFactory, type Run } from "./runner.ts";
-import { loadAgent } from "./agents.ts";
+import { factoryMap, loadAgent } from "./agents.ts";
 import { loadPrompt, render } from "./prompts.ts";
 import { settingOf } from "./learn.ts";
 import { ticketRepos } from "./db.ts";
@@ -159,6 +159,7 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
   try { stagePrompt = own ? loadBlueprint(o.repo, own).stages[o.s.stage]?.prompt : undefined; } catch {}
   const stageBrief = brief(t, o.s.stage, agent?.prompt ?? null, o.folder, agent?.role, repos, [], loadPrompt(o.repo, stagePrompt ?? "stage"));
   return render(loadPrompt(o.repo, "handoff"), {
+    neighbours: factoryMap(db), // the stage brief inside goes without it: the map leads once
     "ticket.id": String(t.id),
     "ticket.title": t.title,
     stage: o.s.stage,
@@ -195,7 +196,7 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
   const agent = s.agent ? loadAgent(o.repo, s.agent) : null;
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
   const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? [], [o.folder, ...ticketRepos(db, s.ticket).flatMap((r) => r.worktree ?? [])]);
-  const cmd = withFactory(argv, o.dir);
+  const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: s.ticket });
   run(["hc", "kill", s.terminal]);
   db.query("UPDATE sessions SET ended_at = ? WHERE id = ?").run(o.now, s.id);
   // The handoff is read; keep it, so the next one's mtime check isn't fooled by it.

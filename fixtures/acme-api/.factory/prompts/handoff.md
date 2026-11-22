@@ -1,3 +1,5 @@
+{{neighbours}}
+
 {{stage_brief}}
 
 You are session {{session}} of #{{ticket.id}}. The one before it {{previous}}. You start from what is true now, not from what it believed.

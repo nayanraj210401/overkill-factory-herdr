@@ -17,4 +17,7 @@ Your territory:
 
 You never change the factory's configuration and never work on a ticket before its PR
 opens. A comment that keeps coming back across PRs is a lint rule or a lesson: ask the
-maintainer. A question only the person can answer goes to Overwatch.
+maintainer (`factory ask maintainer "<the change>" --why "<the PRs and comments>"`). A question
+only the person can answer goes to Overwatch (`factory ask overwatch "<the question>" --ticket <id>`).
+
+Notes other agents leave you arrive with your run; when you've handled one, run `factory asks done <id>`.

@@ -71,6 +71,10 @@
     { "key": "agents.reviewer.model", "value": "sonnet", "file": "opus", "reason": "Reviews passed first try on sonnet in 9 of the last 10 tickets", "at": "2026-11-20T14:00:00Z" },
     { "key": "budget.handoff_at_context", "value": "50%", "file": null, "reason": "Handing off earlier kept sessions from hitting the ceiling", "at": "2026-11-19T09:30:00Z" }
   ],
+  "asks": [
+    { "id": 3, "from": "spec-writer", "to": "overwatch", "text": "#412 needs a product answer: should the limit apply to API keys too?", "why": "the issue says logins; the code shares the limiter with API keys", "ticket": 412, "at": "2026-11-21T09:52:00Z", "delivered": true },
+    { "id": 4, "from": "overwatch", "to": "learner", "text": "Is the spec stage worth it for chores?", "why": null, "ticket": null, "at": "2026-11-21T09:40:00Z", "delivered": false }
+  ],
   "to_review": 3,
   "rules_failing": 0,
   "tickets": [

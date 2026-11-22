@@ -8,9 +8,10 @@ import { overwatchBrief } from "./overwatch.ts";
 import { BUILT_IN_PROMPTS, PLACEHOLDERS, loadPrompt, render, templateErrors } from "./prompts.ts";
 import { brief, sh, startTicket, type Run } from "./runner.ts";
 import { validateDir, validateFile } from "./validate.ts";
+import { matchBrief } from "./snap.ts";
+import { neighbourMap } from "./agents.ts";
 
 const FIXTURE = join(import.meta.dir, "../fixtures/acme-api/.factory");
-const snap = JSON.parse(readFileSync(join(import.meta.dir, "briefs.snap.json"), "utf8")) as Record<string, string>;
 
 // The briefs as they were when the text was hard-coded (briefs.snap.json is that text).
 test("the built-in templates give the briefs the code used to build", () => {
@@ -19,19 +20,18 @@ test("the built-in templates give the briefs the code used to build", () => {
   const repos = [{ repo: "acme/api", worktree: "/w/api" }, { repo: "acme/web", worktree: "/w/web" }];
   const o = { slug: "acme/api", repo: "/src/api", folder: "/f", blueprints: ["bugfix", "feature"], prompt: "Read the issue." };
   const web = { slug: "acme/web", path: "/src/web", lead: false }, ui = { slug: "acme/ui", path: "/src/ui", lead: false };
-  expect(triageBrief({ id: 412, title: "Rate limit" }, o)).toBe(snap.groomIssue);
-  expect(triageBrief({ id: 100000000, title: "A goal" }, { ...o, prompt: null })).toBe(snap.groomGoal);
-  expect(triageBrief({ id: 7, title: "x" }, { ...o, others: [web, ui] })).toBe(snap.groomOthers);
-  expect(brief({ id: 1, title: "t" }, "spec", "SPEC PROMPT", "/f")).toBe(snap.stagePlain);
-  expect(brief({ id: 1, title: "t" }, "spec", null, "/f")).toBe(snap.stageBare);
-  expect(brief({ id: 1, title: "t" }, "spec", "P", "/f", undefined, [repos[0]], ["(src/**) one", "(x) two"])).toBe(snap.stageOne);
-  expect(brief({ id: 1, title: "t" }, "implement", "P", "/f", "build", repos, ["(src/**) one", "(x) two"])).toBe(snap.stageMulti);
-  expect(brief({ id: 1, title: "t" }, "verify", "P", "/f", "verify")).toBe(snap.stageHoldout);
-  expect(brief({ id: 1, title: "t" }, "review", "P", "/f", "review")).toBe(snap.stageReview);
-  expect(brief({ id: 1, title: "t" }, "implement", "P", dir, "build", repos).split(dir).join("/f")).toBe(snap.stageFix);
-  expect(overwatchBrief({ name: "acme", dir: "/d", repo: null })).toBe(snap.overwatchNone);
-  // The one change: the repo sentence is its own paragraph now (it was glued on to the line above).
-  expect(overwatchBrief({ name: "acme", dir: "/d", repo: "/src/api" })).toBe(snap.overwatchRepo.replace("PR.md). The repo", "PR.md).\n\nThe repo"));
+  matchBrief("groomIssue", triageBrief({ id: 412, title: "Rate limit" }, o));
+  matchBrief("groomGoal", triageBrief({ id: 100000000, title: "A goal" }, { ...o, prompt: null }));
+  matchBrief("groomOthers", triageBrief({ id: 7, title: "x" }, { ...o, others: [web, ui] }));
+  matchBrief("stagePlain", brief({ id: 1, title: "t" }, "spec", "SPEC PROMPT", "/f"));
+  matchBrief("stageBare", brief({ id: 1, title: "t" }, "spec", null, "/f"));
+  matchBrief("stageOne", brief({ id: 1, title: "t" }, "spec", "P", "/f", undefined, [repos[0]], ["(src/**) one", "(x) two"]));
+  matchBrief("stageMulti", brief({ id: 1, title: "t" }, "implement", "P", "/f", "build", repos, ["(src/**) one", "(x) two"]));
+  matchBrief("stageHoldout", brief({ id: 1, title: "t" }, "verify", "P", "/f", "verify"));
+  matchBrief("stageReview", brief({ id: 1, title: "t" }, "review", "P", "/f", "review"));
+  matchBrief("stageFix", brief({ id: 1, title: "t" }, "implement", "P", dir, "build", repos).split(dir).join("/f"));
+  matchBrief("overwatchNone", overwatchBrief({ name: "acme", dir: "/d", repo: null }));
+  matchBrief("overwatchRepo", overwatchBrief({ name: "acme", dir: "/d", repo: "/src/api" }));
 });
 
 test("the fixture's default templates are the built-in ones, and each passes the validator", () => {
@@ -112,7 +112,7 @@ test("a stage's `prompt:` picks its own template; other stages keep stage.md", (
   expect(readFileSync(bp, "utf8")).toContain("prompt: specs");
   expect(validateDir(join(repo, ".factory")).filter((r) => r.errors.length)).toEqual([]);
   startTicket(db, { dir, repo, id: 412, run, now: "2026-11-21T10:00:00Z" });
-  expect(calls[0].at(-1)).toBe("SPEC TEMPLATE for #412: Write INTENT.md.");
+  expect(calls[0].at(-1)).toBe(`${neighbourMap([{ slug: "acme/api", path: repo }])}\n\nSPEC TEMPLATE for #412: Write INTENT.md.`);
 });
 
 test("validate: a stage prompt must name a file; unknown placeholders and empty files are errors", () => {
@@ -134,4 +134,31 @@ test("validate: a stage prompt must name a file; unknown placeholders and empty 
   writeFileSync(bp, text.replace("agent: spec-writer,", "agent: spec-writer, prompt: [a],"));
   expect(errors()["blueprints/feature.yaml"]![0]).toContain("expected text");
   expect(existsSync(join(repo, ".factory/prompts/good.md"))).toBe(true);
+});
+
+test("every brief opens with the neighbour map, built from the agents' headers and the same each time", () => {
+  const repo = factory();
+  const map = neighbourMap([{ slug: "acme/api", path: repo }]);
+  matchBrief("neighbours", map);
+  expect(neighbourMap([{ slug: "acme/api", path: repo }])).toBe(map);
+  expect(map).toContain('- maintainer: The factory itself: .factory/ in any repo');
+  expect(map).toContain('Ask: factory ask maintainer "<the change, and why>" --why "<evidence>"');
+  expect(map).toContain("Repo agents in acme/api, each running one stage of one ticket");
+  expect(map).toContain("- spec-writer (spec): INTENT.md for its ticket."); // no territory: its role's
+  expect(map).not.toContain("- maintainer (maintain)"); // a factory agent isn't listed as the repo's
+  // The stable map first, the ticket after it (plan: Cache-friendly order).
+  const stage = brief({ id: 1, title: "t" }, "spec", "P", "/f", undefined, [], [], loadPrompt(repo, "stage"), "", map);
+  expect(stage.startsWith(`${map}\n\nTicket #1: t.`)).toBe(true);
+  matchBrief("stageNeighbours", stage);
+  expect(triageBrief({ id: 5, title: "t" }, { slug: "acme/api", repo, folder: "/f", blueprints: [], prompt: "P", neighbours: map }).startsWith(`${map}\n\nTicket #5`)).toBe(true);
+  expect(overwatchBrief({ name: "acme", dir: "/d", repo, neighbours: map }).startsWith(`${map}\n\n`)).toBe(true);
+  // A template of yours that doesn't place it still opens with it.
+  prompts(repo, { "stage.md": "#{{ticket.id}} {{stage}}" });
+  expect(brief({ id: 2, title: "t" }, "spec", null, "/f", undefined, [], [], loadPrompt(repo, "stage"), "", map)).toBe(`${map}\n\n#2 spec`);
+  // A territory is the header's; a broken agent file still gets a line, never a broken brief.
+  writeFileSync(join(repo, ".factory/agents/reviewer.md"), '---\nrole: review\nterritory: "Payments diffs, strictly"\n---\nBe strict.\n');
+  writeFileSync(join(repo, ".factory/agents/broken.md"), "no header");
+  const again = neighbourMap([{ slug: "acme/api", path: repo }]);
+  expect(again).toContain("- reviewer (review): Payments diffs, strictly.");
+  expect(again).toContain("- broken: Its own stage of its own ticket.");
 });

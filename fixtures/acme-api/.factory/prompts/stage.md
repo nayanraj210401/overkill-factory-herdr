@@ -1,3 +1,5 @@
+{{neighbours}}
+
 Ticket #{{ticket.id}}: {{ticket.title}}. You run its {{stage}} stage.
 
 It spans {{repo_count}} repos, each checked out on the same branch: {{repos}}. Change each one the work needs, and commit in each.
