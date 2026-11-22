@@ -21,6 +21,7 @@ import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts
 import { closeRound, latestBrief } from "./round.ts";
 import { loadPrompt, render } from "./prompts.ts";
 import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
+import { chooseNext } from "./orchestrate.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -32,7 +33,7 @@ export const sh: Run = (argv, cwd) => {
 };
 
 type Stage = { agent?: string; check?: string; next?: string[]; output?: string; prompt?: string };
-type Blueprint = { name: string; start: string; stages: Record<string, Stage> };
+type Blueprint = { name: string; orchestrator?: string; start: string; stages: Record<string, Stage> };
 
 function readYaml(repo: string, path: string) {
   const file = join(repo, ".factory", path);
@@ -316,7 +317,9 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
     } else {
       // Retries count failures of one check; only that check passing clears them.
       if (stage.check) db.query("UPDATE tickets SET retries = 0 WHERE id = ?").run(o.id);
-      to = stage.next?.[0]; // the orchestrator agent picks among `next` later; first is the default
+      // More than one way on: the blueprint's orchestrator picks (orchestrate.ts); first is the default.
+      const options = stage.next ?? [];
+      to = options.length > 1 ? chooseNext(db, { dir: o.dir, repo: o.repo, id: o.id, b, at, options, run, now }) : options[0];
     }
     if (!to || to === "end") {
       db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
