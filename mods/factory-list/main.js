@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, setShared, readTextFile, watchFolder, checking, props, exec, notify } from "herdr";
-import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subtitle, warnMark, compact } from "./lib/model.js";
+import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subtitle, prLinks, prColor, warnMark, compact } from "./lib/model.js";
 import { validateRuns, kindCounts, filterRuns, duration, runWhat, startedAt, runModel } from "./lib/runs.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
@@ -9,7 +9,7 @@ import { status, act, root } from "./lib/store.js";
 
 const open = (id) => { setShared("factory.ticket", id); run("layout.select", { stack: STACK, child: "ticket" }); };
 const DOT = { needs: "blocked", running: "working", ready: "done", queue: "dim" };
-const COLS = [["Stage", 230], ["Blueprint", 100], ["Tokens in", 90], ["Cost", 70]];
+const COLS = [["Stage", 230], ["PR", 150], ["Blueprint", 100], ["Tokens in", 90], ["Cost", 70]];
 const RUN_COLS = [["Kind", 140], ["Harness · model", 190], ["Started", 100], ["Time", 70], ["Tokens in / out", 110], ["Cost", 60]];
 
 // The Tickets page: every ticket, chips by state, search (docs/layouts/03-tickets.png).
@@ -93,6 +93,12 @@ export default class FactoryList extends View {
         .child(`${label} · ${n}`);
     };
     const cell = (w, text, color) => div().w(w).flex_none().truncate().text_color(color).child(text);
+    // The ticket's PR(s): "#6 open", one per repo for a cross-repo ticket; a click opens it on GitHub.
+    const prCell = (x) => h_flex().w(150).flex_none().gap(6)
+      .children(prLinks(x, s.factory.repo).map((l) => div().id(`pr-${x.id}-${l.slug}`).flex_none().text_size(12).text_color(prColor(t, l.state))
+        .when(!!l.url, (el) => el.cursor_pointer().hover((st) => st.text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); exec("open", [l.url]); }))
+        .child(`${l.text} ${l.word}`)));
     const focused = this.handle.is_focused();
     return v_flex().size_full().p(16).gap(10).bg(t.background).rounded(10).text_size(13)
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus()).on_key_down((e, cx) => this.key(e, rows, cx))
@@ -184,6 +190,7 @@ export default class FactoryList extends View {
               .when(!!warnMark(x), (el) => el.child(div().flex_none().px(6).rounded(8).text_size(11).border(1).border_color(t.blocked).text_color(t.blocked).child(warnMark(x))))
               .when(!!repoBadge(s, x), (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child(repoBadge(s, x)))))
             .child(cell(230, subtitle(x, now), g === "needs" ? t.blocked : x.where === "cloud" ? t.accent : t.muted))
+            .child(prCell(x))
             .child(cell(100, x.blueprint, t.muted))
             .child(cell(90, x.tokens.input ? `${(x.tokens.input / 1e6).toFixed(1)}M` : "–", t.muted))
             .child(cell(70, x.usd ? `$${x.usd.toFixed(2)}` : "–", t.foreground));

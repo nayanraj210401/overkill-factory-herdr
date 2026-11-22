@@ -147,3 +147,17 @@ test("away: no pushbacks, and past away.review_rounds new comments park instead 
   expect(ticket()).toMatchObject({ state: "parked", stage: "implement", needs_text: "1 new review comment on PR #42; away.review_rounds is used up while you're away" });
   expect(readFileSync(join(dir, "tickets/7/REVIEW.md"), "utf8")).toContain("**C2 · @sam**: And this.");
 });
+
+test("watching records what GitHub says of the PR: open, draft, then merged", () => {
+  const a = setup();
+  expect(a.db.query("SELECT pr_state FROM ticket_repos WHERE ticket = 7").get()).toEqual({ pr_state: "open" }); // opened ready
+  a.set({ state: "OPEN", isDraft: true, comments: [], reviews: [] });
+  a.watch("2026-11-21T10:31:00Z");
+  expect(a.db.query("SELECT pr_state FROM ticket_repos WHERE ticket = 7").get()).toEqual({ pr_state: "draft" });
+  a.set({ state: "OPEN", isDraft: false, comments: [], reviews: [] });
+  a.watch("2026-11-21T10:32:00Z");
+  expect(a.db.query("SELECT pr_state FROM ticket_repos WHERE ticket = 7").get()).toEqual({ pr_state: "open" });
+  a.set({ state: "MERGED", comments: [], reviews: [] });
+  a.watch("2026-11-21T10:33:00Z");
+  expect(a.db.query("SELECT pr_state FROM ticket_repos WHERE ticket = 7").get()).toEqual({ pr_state: "merged" });
+});

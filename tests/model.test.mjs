@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks } from "../lib/model.js";
+import { prLinks, watchNote, groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks } from "../lib/model.js";
 
 const status = JSON.parse(readFileSync(new URL("../fixtures/acme-api/status.json", import.meta.url)));
 const now = Date.parse("2026-11-21T10:00:00Z");
@@ -242,4 +242,31 @@ test("the Ticket page's shared links: spec first, then the plan, each opening it
     ["SLICES.md ↗", "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000412"],
   ]);
   assert.deepEqual(sharedLinks({ id: 1 }), []); // nothing shared: no row on the page
+});
+
+test("prLinks: one link per repo with a PR, its state and url; the repo shows only across repos", () => {
+  const one = prLinks(status.tickets.find((t) => t.id === 409), "acme/api");
+  assert.deepEqual(one, [{ slug: "acme/api", number: 511, state: "open", word: "open", text: "#511", url: "https://github.com/acme/api/pull/511" }]);
+  assert.equal(prLinks(status.tickets.find((t) => t.id === 401), "acme/api")[0].state, "merged"); // a merged ticket keeps its PR
+  const cross = prLinks(status.tickets.find((t) => t.id === 412), "acme/api");
+  assert.deepEqual(cross.map((l) => [l.text, l.state, l.url]), [
+    ["api#520", "draft", "https://github.com/acme/api/pull/520"], ["web#131", "open", "https://github.com/acme/web/pull/131"]]);
+  assert.deepEqual(prLinks(status.tickets.find((t) => t.id === 430), "acme/api"), []);
+});
+
+test("prLinks reads an older status.json with no url or state", () => {
+  const old = { state: "merged", pr: { number: 7, watched: false, checked_at: null } };
+  assert.deepEqual(prLinks(old, "acme/api"), [{ slug: "acme/api", number: 7, state: "merged", word: "merged", text: "#7", url: "https://github.com/acme/api/pull/7" }]);
+  assert.equal(prLinks({ state: "ready", pr: old.pr }, "acme/api")[0].state, "open");
+});
+
+test("the contract checks a PR's url and state; watchNote is the watched badge", () => {
+  const bad = structuredClone(status);
+  bad.tickets.find((t) => t.id === 409).pr.state = "done";
+  bad.tickets.find((t) => t.id === 409).pr.url = "nope";
+  const errors = validateStatus(bad);
+  assert.ok(errors.some((e) => e.startsWith('tickets[4].pr.state: "done"')), errors.join("\n"));
+  assert.ok(errors.some((e) => e.startsWith("tickets[4].pr.url")), errors.join("\n"));
+  assert.equal(watchNote({ pr: { number: 1, watched: true, checked_at: "2026-11-21T09:58:00Z" } }, now), "watching · checked 2m ago");
+  assert.equal(watchNote({ pr: { number: 1, watched: false, checked_at: null } }, now), null);
 });

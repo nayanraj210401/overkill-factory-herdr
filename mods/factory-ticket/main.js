@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, shared, readTextFile, nextCommand, checking, props, exec, notify } from "herdr";
-import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW } from "./lib/model.js";
+import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, prLinks, prColor, watchNote, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW } from "./lib/model.js";
 import { root, status, state, peekAgent, act } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 import { cliCommand } from "./lib/actions.js";
@@ -89,6 +89,17 @@ export default class FactoryTicket extends View {
       .child(div().text_size(12).text_color(t.muted).child("Shared on claude.ai"))
       .children(links.map((l) => div().id(`shared-${l.file}`).px(8).py(2).rounded(6).border(1).border_color(t.border).text_size(12)
         .text_color(t.accent).cursor_pointer().hover((st) => st.bg(t.hover)).on_click(() => exec("open", [l.url])).child(l.label)));
+    // The Pull request row: each PR with its state, a click opens it on GitHub, and the watch note.
+    const prs = prLinks(ticket, s.factory.repo);
+    const watch = watchNote(ticket);
+    const prRow = prs.length > 0 && h_flex().id("pull-request").gap(8).flex_wrap().items_center()
+      .child(div().text_size(12).text_color(t.muted).child(prs.length > 1 ? "Pull requests" : "Pull request"))
+      .children(prs.map((l) => h_flex().id(`pr-${l.slug}`).gap(6).px(8).py(2).rounded(6).border(1).border_color(t.border).items_center()
+        .when(!!l.url, (el) => el.cursor_pointer().hover((st) => st.bg(t.hover)).on_click(() => exec("open", [l.url])))
+        .child(div().font_semibold().text_color(t.foreground).child(prs.length > 1 ? `${l.slug}#${l.number}` : `#${l.number}`))
+        .child(div().text_size(12).text_color(prColor(t, l.state)).child(l.word))
+        .when(!!l.url, (el) => el.child(div().text_size(12).text_color(t.accent).child("open ↗")))))
+      .when(!!watch && ticket.state === "ready", (el) => el.child(div().id("pr-watch").px(8).py(2).rounded(10).border(1).border_color(t.border).text_size(12).text_color(t.muted).child(watch)));
     const live = Boolean(ticket.terminal);
     const questions = questionCards(ticket);
     const asking = ticket.state === "grooming" && ticket.needs?.kind === "question";
@@ -124,6 +135,7 @@ export default class FactoryTicket extends View {
           .child(div().text_size(17).font_semibold().text_color(t.foreground).child(`#${ticket.id} ${ticket.title}`))
           .when(!!badge, (el) => el.child(div().px(8).py(1).rounded(10).border(1).border_color(t.accent).text_size(12).text_color(t.accent).child(badge))))
         .child(div().text_color(t.muted).child(summary || `${ticket.state} · no STATUS.md yet`))
+        .when(!!prRow, (el) => el.child(prRow))
         .when(Boolean(ticket.warning), (el) => el.child(div().id("budget-warning").px(10).py(6).rounded(6).border(1).border_color(t.blocked).text_color(t.blocked).child(`Budget: ${ticket.warning}`)))
         .when(!live && actions.length > 0, (el) => el.child(h_flex().gap(8).flex_wrap().children(actions)))
         .when(!!questionBox, (el) => el.child(questionBox))
