@@ -281,7 +281,7 @@ function groomed(db: Database, o: { dir: string; repo: string; id: number; run: 
   const est = mine ? null : estimateBudget(db, o.repo, b);
   if (est) {
     db.query("UPDATE tickets SET budget_in = ?, budget_out = ? WHERE id = ?").run(est.input, est.output, o.id);
-    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(o.id, `set the budget to ${compact(est.input)}/${compact(est.output)}`, o.now);
+    db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)").run(o.id, `set the budget to ${compact(est.input)}/${compact(est.output)}`, est.why, o.now);
   }
   const started = startGroomed(db, o);
   return { groomed: true, started: started.includes(o.id) };
