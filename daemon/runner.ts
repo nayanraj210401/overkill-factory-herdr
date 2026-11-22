@@ -30,7 +30,7 @@ import { checkCleanup } from "./cleanup.ts";
 import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
 import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from "./artifacts.ts";
-import { factoryMap, loadAgent } from "./agents.ts";
+import { agentRepos, factoryMap, loadAgent, type AgentRepos } from "./agents.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -197,7 +197,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const of = slice ? ` · slice ${all.findIndex((x) => x.key === slice.key) + 1} of ${all.length}` : "";
   enterStage(db, o.id, title(o.stage), s.agent ? `${s.agent} agent${of}` : s.check ? `check: ${s.check}` : null, plannedPath(o.blueprint, o.stage).map(title), o.now);
   if (!s.agent) return null; // check and gate stages are the daemon's own (D4b)
-  const agent = loadAgent(o.repo, s.agent);
+  const agent = loadAgent(agentRepos(db, o.id, o.repo), s.agent);
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
   const repos = ticketRepos(db, o.id);
   // Hard stops factory.yaml lists (all four when it lists none) are enforced by a hook on the worker's tool calls;
@@ -241,8 +241,8 @@ export const readFactory = (repo: string): Factory => {
 };
 
 // The verdict an agent stage owes: its agent's role decides (verify → holdout, review → review).
-const verdictOf = (repo: string, s: Stage | undefined): VerdictKind | undefined => {
-  const role = s?.agent ? loadAgent(repo, s.agent)?.role : undefined;
+const verdictOf = (repos: AgentRepos, s: Stage | undefined): VerdictKind | undefined => {
+  const role = s?.agent ? loadAgent(repos, s.agent)?.role : undefined;
   return role ? VERDICT_OF_ROLE[role] : undefined;
 };
 
@@ -253,7 +253,7 @@ export function checkReady(db: Database, o: { dir: string; repo: string; id: num
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (!t.worktree) throw new Error(`#${o.id} has no worktree yet; factory start ${o.id}`);
   const b = loadBlueprint(o.repo, t.blueprint);
-  const expects = Object.values(b.stages).map((s) => verdictOf(o.repo, s)).filter((k): k is VerdictKind => !!k);
+  const expects = Object.values(b.stages).map((s) => verdictOf(agentRepos(db, o.id, o.repo), s)).filter((k): k is VerdictKind => !!k);
   const repos = ticketRepos(db, o.id);
   const rules = readFactory(o.repo).ready ?? DEFAULT_READY;
   // A cross-repo ticket is ready only when its branches pass the cross check together.
@@ -450,7 +450,7 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
     if (failed) {
       // A verdict stage counts its own failed sessions since a person last restarted the
       // ticket: the verify check between review and implement resets the shared counter.
-      const retries = verdictOf(o.repo, stage) ? verdictFailures(db, o.id, at)
+      const retries = verdictOf(agentRepos(db, o.id, o.repo), stage) ? verdictFailures(db, o.id, at)
         : (db.query("SELECT retries FROM ticket_lead WHERE id = ?").get(o.id) as any).retries + 1;
       if (!stage.on_fail || retries > (stage.max_retries ?? 3)) {
         db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?")
@@ -515,7 +515,7 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
 // FAIL (or none) fails the stage, so on_fail reruns the stage that fixes it, and
 // the blockers go into REVIEW.md, which that stage's brief says to act on.
 function stageVerdict(db: Database, o: { dir: string; repo: string; id: number; stage: string; s: Stage | undefined; now: string }) {
-  const kind = verdictOf(o.repo, o.s);
+  const kind = verdictOf(agentRepos(db, o.id, o.repo), o.s);
   if (!kind) return null;
   const rows = db.query(`SELECT result, detail FROM verdicts WHERE kind = ? AND session = (SELECT MAX(id) FROM sessions WHERE ticket = ? AND stage = ?)`)
     .all(kind, o.id, o.stage) as { result: string; detail: string | null }[];

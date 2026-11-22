@@ -14,7 +14,7 @@ import { transcriptDir, parseTranscript, type Use } from "./usage.ts";
 import { flagFile, snapshotFile, withHandoffHook } from "./handoff-hook.ts";
 import { openAgent, withFactory } from "./herdr.ts";
 import { agentSettings, argvFor, brief, loadBlueprint, readFactory, shareFor, type Run } from "./runner.ts";
-import { factoryMap, loadAgent } from "./agents.ts";
+import { agentRepos, factoryMap, loadAgent } from "./agents.ts";
 import { publishStep } from "./artifacts.ts";
 import { loadPrompt, render } from "./prompts.ts";
 import { settingOf } from "./learn.ts";
@@ -156,7 +156,7 @@ const section = (text: string, re: RegExp) => text.split(/^(?=#{1,6}[ \t])/m).fi
 // `limit`: the plan limit stopped the last session (planlimit.ts), in words for the brief.
 function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s: Row; folder: string; ceiling: boolean; compacted?: boolean; limit?: string; fill: number; missing: string[]; n: number }) {
   const t = db.query("SELECT id, title FROM tickets WHERE id = ?").get(o.s.ticket) as { id: number; title: string };
-  const agent = o.s.agent ? loadAgent(o.repo, o.s.agent) : null;
+  const agent = o.s.agent ? loadAgent(agentRepos(db, o.s.ticket, o.repo), o.s.agent) : null;
   const repos = ticketRepos(db, o.s.ticket);
   const read = (f: string) => { try { return readFileSync(join(o.folder, f), "utf8"); } catch { return ""; } };
   const intent = section(read("INTENT.md"), /^acceptance/i);
@@ -261,7 +261,7 @@ function launch(db: Database, o: { dir: string; repo: string; run: Run; now: str
   const { s, run, n } = o;
   const snap = snapshotFile(o.dir, s.ticket);
   if (existsSync(snap)) renameSync(snap, join(o.folder, `PRECOMPACT.session-${n - 1}.md`));
-  const agent = s.agent ? loadAgent(o.repo, s.agent) : null;
+  const agent = s.agent ? loadAgent(agentRepos(db, s.ticket, o.repo), s.agent) : null;
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
   const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, o.text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? [], [o.folder, ...ticketRepos(db, s.ticket).flatMap((r) => r.worktree ?? [])], shareFor(db, { repo: o.repo, id: s.ticket, folder: o.folder }).allow);
   const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: s.ticket });

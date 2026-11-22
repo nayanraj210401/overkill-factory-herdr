@@ -13,7 +13,7 @@ import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { capsOf, readTriggers, runningByTrigger, withinCaps } from "./triggers.ts";
 import { argvFor, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
-import { factoryMap, loadAgent } from "./agents.ts";
+import { agentRepos, factoryMap, loadAgent } from "./agents.ts";
 import { mayStart } from "./away.ts";
 import { openAgent, withFactory } from "./herdr.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
@@ -76,7 +76,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   db.query("DELETE FROM questions WHERE ticket = ? AND answer IS NULL").run(o.id);
   const before = join(folder, "GROOMING.md");
   if (existsSync(before)) renameSync(before, join(folder, "GROOMING.before.md"));
-  const agent = loadAgent(o.repo, g.agent);
+  const agent = loadAgent(agentRepos(db, o.id, o.repo), g.agent);
   const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
     triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db) }));
   // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
