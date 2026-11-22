@@ -404,19 +404,23 @@ The first time factory mode opens in a space with no `.factory/` folder, it runs
 3. **Connect the queue:** pick the GitHub Project, its Ready column and the assignee.
 4. **Choose the basics:** budget per ticket and per day, the merge gate, `max_running`, the learning target and tunables.
 5. **Write `.factory/`** with the default blueprints and agents, show the files, and commit them to a branch when you agree.
+6. **Migrate flow-stack**, when setup finds it (below).
 
-**Migrating from flow-stack.** Setup looks for `~/.flow-stack/profile.md`, a `.flow/` folder in the repo, and the flow-stack plugin. If it finds them, it offers to copy:
+Each step that changes configuration is a maintainer request, not setup code: setup lists what's missing, Overwatch offers each fix, and when you agree it files the request (see Changing the factory).
+
+**Migrating from flow-stack.** Setup looks for `~/.flow-stack/profile.md`, a `.flow/` folder in the repo, and the flow-stack plugin. If it finds any of them, the checklist gets a flow-stack step and Overwatch offers the migration. Accepting runs `factory setup migrate`, which files one maintainer request. The maintainer runs `factory migrate flow-stack --propose <its ticket>` and turns what it proposes into changes in the same PR:
 
 | From flow-stack v1 | Into the factory |
 | --- | --- |
-| Profile taste and rules | The agent prompts and `factory.yaml` |
-| `.flow/lessons.md` | The lesson store, scoped by area where it can tell |
+| Profile rules and taste | The account config's `profile:` (`~/.factory/config.yaml`), which every stage brief reads; applied when the PR merges |
+| Profile `max_parallel_agents` | `max_running` in `factory.yaml` |
+| `.flow/lessons.md` | The lesson store, scoped by the first path a lesson names (its folder), else loaded for every ticket |
 | The decisions table and traces | The decision log, so learning starts with history |
-| Calibration | Default budgets |
-| `.flow/features/` and verify drivers | Used as they are by the verify stage |
+| Calibration | `budget.headroom` in `factory.yaml`: the largest cost overrun the calibration records |
+| `.flow/features/` and verify drivers | `verify: { features: .flow/features }` in `factory.yaml` (a copy under `.factory/features/` when `.flow/` isn't in git). The tests check runs the scenario of each feature whose `owns:` globs a ticket touched, as `feat:<id>`. When a scenario's driver isn't committed, nothing is wired and the PR lists it as a to-do. |
 | Past task folders | Merged tickets on the Tickets page |
 
-It copies and changes nothing in flow-stack, which keeps working for your normal sessions. Factory worker sessions start without the flow-stack plugin, so its hooks never run inside the factory.
+Past tasks, decisions and lessons go into the database when the migration runs, once each. Everything else waits for the PR. The migration writes `MIGRATION.md` (what it changed and what is left to do), which goes on the PR. It is safe to run again: nothing is imported twice, and the profile, budget and verify edits come out the same. It copies and changes nothing in flow-stack, which keeps working for your normal sessions. Factory worker sessions start without the flow-stack plugin, so its hooks never run inside the factory.
 
 ## Changing the factory: Overwatch and the maintainer
 
@@ -676,8 +680,8 @@ Parts carry over by copying, not by dependency. The flow-stack plugin is never i
 | `checker` agent (blind checks) | Kept, as the hidden tests |
 | `reviewer` agent, its vote, the `ready.sh` stamp | Kept, as the review stage and a ready rule |
 | `advocate` / `challenge` | Kept, as an optional agent the orchestrator can call for large tickets |
-| Feature map and `impact` | Kept: decides which scenarios a ticket must pass |
-| Verify drivers | Kept: the verify stage runs them |
+| Feature map and `impact` | Kept: a feature's `owns:` globs decide which scenarios a ticket must pass |
+| Verify drivers | Kept: the verify stage runs them, through the feature map's `scenario:` lines (`verify.features`) |
 | Handoff | Kept, as the hard handoff at 60% context |
 | `deslop` / `unslop` | Kept, inside the review stage |
 | Guard hook | Kept, as the destructive-commands hard stop |
@@ -686,7 +690,7 @@ Parts carry over by copying, not by dependency. The flow-stack plugin is never i
 | Intent interview, the `gate` skill, rigor levels | Dropped: blueprints, ready rules and non-blocking questions replace them |
 | `task.sh` and session ownership | Dropped: the daemon owns tickets in SQLite |
 | Tour, brief, dojo, teach, board, status line, the herdr TUI plugin | Dropped: the layout is the UI |
-| Profile taste | Moved into `factory.yaml` and agent prompts |
+| Profile taste and rules | Moved into the account config's `profile:`, which every stage brief carries |
 
 ## Mapping to the PRD
 

@@ -25,6 +25,7 @@ import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
 import { chooseNext } from "./orchestrate.ts";
 import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { accountPending, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount } from "./maintainer.ts";
+import { readFeatures, touched } from "./features.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -198,7 +199,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; cloud?: { on_sleep?: "move" | "off" } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -241,7 +242,8 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
       record(c, r.code === 0, r.code === 0 ? "passed" : `exit ${r.code}: ${tail}`);
       ok &&= r.code === 0;
     }
-    return crossCheck(db, { ...o, record }) && ok;
+    const features = o.check === "tests" ? featureScenarios({ ...o, record }) : true;
+    return crossCheck(db, { ...o, record }) && features && ok;
   }
   if (o.check === "evidence") {
     // The quality floor runs now, on the work as it stands, so a PASS is always newer than
@@ -267,6 +269,22 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     return !bad.length && !outside.length && dry && (account?.ok ?? true);
   }
   throw new Error(`unknown check "${o.check}"`);
+}
+
+// verify.features (flow-stack's feature map): the scenario of each feature the ticket's
+// changes touch runs in its worktree, as `feat:<id>` (features.ts).
+function featureScenarios(o: { repo: string; worktree: string; run: Run; record: (name: string, ok: boolean, detail: string) => void }) {
+  const dir = readFactory(o.repo).verify?.features;
+  if (!dir) return true;
+  const files = changedFiles(o.run, o.repo, o.worktree);
+  let ok = true;
+  for (const f of readFeatures(join(o.worktree, dir)).filter((x) => x.scenario && touched(x, files))) {
+    const r = o.run(["env", `PATH=${toolPath()}`, "sh", "-c", f.scenario], o.worktree);
+    const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
+    o.record(`feat:${f.id}`, r.code === 0, r.code === 0 ? `${f.scenario}: passed` : `${f.scenario}: exit ${r.code}: ${tail}`);
+    ok &&= r.code === 0;
+  }
+  return ok;
 }
 
 // A changed blueprint gets a dry run: DRYRUN.md in the ticket's folder, which the PR body

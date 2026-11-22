@@ -103,10 +103,10 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktrees
 
 export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fail");
 
-// PR.md, then what the maintainer's check wrote: the blueprint dry run and the account config's diff.
+// PR.md, then what the maintainer's work left: the migration's report, the blueprint dry run and the account config's diff.
 export function prText(dir: string, id: number) {
   const folder = join(dir, "tickets", String(id));
-  const extra = ["DRYRUN.md", "ACCOUNT-CONFIG.md"].map((f) => join(folder, f)).filter((f) => existsSync(f));
+  const extra = ["MIGRATION.md", "DRYRUN.md", "ACCOUNT-CONFIG.md"].map((f) => join(folder, f)).filter((f) => existsSync(f));
   return [readFileSync(join(folder, "PR.md"), "utf8"), ...extra.map((f) => readFileSync(f, "utf8"))].map((s) => s.trim()).join("\n\n");
 }
 
