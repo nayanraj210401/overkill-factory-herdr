@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { Run } from "./runner.ts";
 import { ticketRepos } from "./db.ts";
 import { prComments } from "./watch.ts";
+import { FACTORY_MARK } from "./comments.ts";
 import { babysitter } from "./prejudge.ts";
 
 type C = { n: number; repo: string | null; pr: number; gh_id: string; thread: string; author: string; place: string | null; body: string; hunk: string | null; verdict: string | null; reason: string | null; suggested: string | null; replied_at: string | null; fix_commit: string | null; url: string | null };
@@ -126,8 +127,8 @@ export function closeRound(db: Database, o: { ticket: number; run: Run; now: str
         if (!said) {
           const id = c.gh_id.startsWith("i") ? c.thread.slice(1) : null;
           const g = id
-            ? o.run(["gh", "api", `repos/${r.repo}/pulls/${r.pr_number}/comments/${id}/replies`, "-f", `body=${c.reason}`])
-            : o.run(["gh", "pr", "comment", String(r.pr_number), "--repo", r.repo, "--body", `${quote(c.body)}\n\n${c.reason}`]);
+            ? o.run(["gh", "api", `repos/${r.repo}/pulls/${r.pr_number}/comments/${id}/replies`, "-f", `body=${c.reason}\n\n${FACTORY_MARK}`])
+            : o.run(["gh", "pr", "comment", String(r.pr_number), "--repo", r.repo, "--body", `${quote(c.body)}\n\n${c.reason}\n\n${FACTORY_MARK}`]);
           if (g.code !== 0) return fail(`reply to C${c.n} on ${r.repo}#${r.pr_number} failed: ${g.out.slice(0, 200)}`);
         }
         db.query("UPDATE comments SET replied_at = ? WHERE ticket = ? AND n = ?").run(o.now, o.ticket, c.n);

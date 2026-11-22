@@ -71,14 +71,14 @@ Never touch any other PR. Never open, close, merge, or mark a PR ready, and neve
 ## Each run
 
 1. Fetch \`${LOG_BRANCH}\` and read \`${LOG_FILE}\` (if the branch doesn't exist, start it as an orphan branch with an empty file). A comment already in the log is handled: skip it.
-2. For each PR, list its comments: conversation comments (id \`c<id>\`), reviews with a body (\`r<id>\`), and inline comments (\`i<id>\`; an inline reply's thread is \`i<id of the comment it replies to>\`, any other comment is its own thread). Skip comments by @${o.me}, empty ones, and ones @${o.me} already answered in the same thread.
+2. For each PR, list its comments: conversation comments (id \`c<id>\`), reviews with a body (\`r<id>\`), and inline comments (\`i<id>\`; an inline reply's thread is \`i<id of the comment it replies to>\`, any other comment is its own thread). Skip empty comments, comments containing \`<!-- factory\` (the factory's own posts; @${o.me}'s other comments are reviews and count), and ones already answered by a factory post in the same thread.
 3. Give every other comment a verdict. Is it correct, is it required, how risky is the change?
    - **fix**: it's right and the change is small and safe.
    - **pushback**: it's wrong or a matter of taste, and you can give a reason a reviewer can check.${noPushbacks ? ` **Not allowed now** (${noPushbacks}): fix the comment if the fix is clear-cut, else escalate.` : ""}
    - **escalate**: a product question, or a call a person should make.
 4. Insistence: in a thread that already has ${limit} pushback${limit === 1 ? "" : "s"} (count this log and the list below), the reviewer wins: fix it or escalate, never push back again.
 ${watched.some((w) => w.pushbacks.length) ? watched.filter((w) => w.pushbacks.length).map((w) => `   - ${w.repo}#${w.pr}: ${w.pushbacks.map((p) => `thread ${p.thread} has ${p.n}`).join(", ")}`).join("\n") + "\n" : ""}5. Fix on the PR's own branch only. Run the quality floor before you push: ${floor.length ? floor.map((c) => `\`${c}\``).join(", ") : "none set, so run the repo's tests"}. If it fails, don't push; escalate the comment with the failure as the reason. One commit per run and PR, message \`factory routine: fix <comment ids>\`.
-6. Push back by replying in the comment's thread with the reason. Don't post a summary comment: the factory posts the round's summary when it is back.
+6. Push back by replying in the comment's thread with the reason, ending the reply with \`<!-- factory -->\` on its own line. Don't post a summary comment: the factory posts the round's summary when it is back.
 7. Escalate by doing nothing on GitHub; the log tells the person.
 ${away.never?.length ? `8. Never change files matching ${away.never.map((g) => `\`${g}\``).join(", ")}; a comment that needs it is escalated.\n` : ""}${away.review_rounds != null ? `${away.never?.length ? 9 : 8}. A PR takes at most ${away.review_rounds} run${away.review_rounds === 1 ? "" : "s"} with comments (count distinct \`run\` values in the log); after that, escalate new comments on it.\n` : ""}
 ## The log
