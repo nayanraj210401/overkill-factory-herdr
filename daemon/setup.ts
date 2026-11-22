@@ -1,6 +1,7 @@
 // `factory setup`: the first-run checklist as data (docs/plan.md § First run), and
 // `factory setup write`, which puts .factory/ on its own branch without touching the
 // checkout you're working in.
+import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -126,7 +127,7 @@ export function factoryYaml(o: { name: string; slug: string; blueprints: string[
     ...(b.queue ? [`queue: { github_project: ${b.queue}, column: Ready, assignee: me }`] : []),
     "grooming:", "  agent: triager", `  blueprints: [${o.blueprints.join(", ")}]`, "  questions: [herdr, issue]",
     `max_running: ${b.maxRunning ?? 3}`,
-    "defaults: { harness: claude, model: sonnet, effort: medium }",
+    `defaults: { harness: claude, model: ${DEFAULT_MODEL}, effort: medium }`,
     "budget:", `  per_ticket: ${tokens(b.budget ?? "3M/150k", "--budget")}`, "  headroom: 1.5", `  per_day: ${tokens(b.budgetDay ?? "40M/2M", "--budget-day")}`,
     "hard_stops: [push-to-main, outside-worktree, destructive-commands, secrets-in-output]",
     ...(o.floor?.length ? [`quality_floor: [${o.floor.join(", ")}]`] : ["# quality_floor: [your test command]   (no test command found; the tests check and ready rule need one)"]),

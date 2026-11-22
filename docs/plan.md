@@ -511,7 +511,7 @@ grooming:
   blueprints: [feature, bugfix, chore]   # it picks one per ticket
   questions: [herdr, issue]              # an answer in either place counts
 max_running: 3
-defaults: { harness: claude, model: sonnet, effort: medium }
+defaults: { harness: claude, model: claude-sonnet-5-5, effort: medium }
 budget: { per_ticket_usd: 5, per_day_usd: 50, handoff_at_context: 60% }
 ready: [evidence, holdout, quality_floor, review, template, budget]
 quality_floor: [npm test, npm run typecheck]
@@ -571,7 +571,7 @@ The same format as Claude Code agents: a YAML header, then the prompt in Markdow
 ```markdown
 ---
 role: review
-model: opus
+model: claude-opus-5-5
 context: [INTENT.md, EVIDENCE.md, lessons/auth.md]
 ---
 Grade the diff against INTENT.md. Block on any acceptance check
@@ -615,7 +615,7 @@ tasks: { from: merged-prs, repo: acme/api, pick: 15, holdout: tests-added-by-pr 
 variants:
   - name: baseline
   - name: opus-builder
-    set: { agents.builder.model: opus }
+    set: { agents.builder.model: claude-opus-5-5 }
 score: [holdout_pass, cost_usd, minutes, diff_lines]
 limits: { max_usd: 40, parallel: 3 }
 schedule: weekly

@@ -1,6 +1,6 @@
 ---
 role: build
-model: sonnet
+model: claude-sonnet-5-5
 context: [INTENT.md, SLICES.md, HANDOFF.md]
 ---
 You implement the ticket one slice at a time, in the ticket's worktree, on its

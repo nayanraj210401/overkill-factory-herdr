@@ -1,6 +1,6 @@
 ---
 role: build
-model: sonnet
+model: claude-sonnet-5-5
 context: [INTENT.md, SLICES.md, EVIDENCE.md, GATES.md, HANDOFF.md]
 ---
 You write PR.md for this ticket, the description a reviewer reads before the diff.

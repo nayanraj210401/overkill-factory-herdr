@@ -5,6 +5,7 @@
 // comment` still decides. The one exception: while you're away, a clear-cut `fix`
 // proposal is applied as the verdict. A pushback or an escalation is never applied on a
 // cheap model's guess, so away.min_agreement (no pushbacks without agreement data) holds.
+import { pinModel } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { readFactory, type Run } from "./runner.ts";
 import { isAway } from "./away.ts";
@@ -14,7 +15,7 @@ export type Proposal = { verdict: (typeof VERDICTS)[number]; why: string; clear:
 
 export const judgeModel = (repo: string) => {
   const m = ((readFactory(repo) as any).review ?? {}).judge_model;
-  return typeof m === "string" && m.trim() ? m.trim() : "haiku";
+  return pinModel(typeof m === "string" && m.trim() ? m.trim() : "haiku")!;
 };
 
 export const judgePrompt = (c: { author: string; place: string | null; body: string; hunk?: string | null }) => [

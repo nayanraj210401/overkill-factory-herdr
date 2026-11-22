@@ -30,7 +30,7 @@
     {
      "name": "opus-builder",
      "set": {
-      "agents.builder.model": "opus"
+      "agents.builder.model": "claude-opus-5-5"
      },
      "runs": 15,
      "passed": 11,
@@ -46,7 +46,7 @@
     }
    ],
    "winner": "opus-builder",
-   "recommendation": "Recommendation: opus-builder passed 73% of held-out tests at $0.61 a task, against 60% at $0.52 for baseline. To adopt it, change .factory/ to agents.builder.model: opus."
+   "recommendation": "Recommendation: opus-builder passed 73% of held-out tests at $0.61 a task, against 60% at $0.52 for baseline. To adopt it, change .factory/ to agents.builder.model: claude-opus-5-5."
   }
  ]
 }
