@@ -42,7 +42,7 @@ test("Home's Needs you: questions, then merges, then parked", () => {
 
 test("row subtitles read like the mockup", () => {
   const by = Object.fromEntries(status.tickets.map((t) => [t.id, subtitle(t, now)]));
-  assert.equal(by[421], "grooming · 2 questions");
+  assert.equal(by[421], "grooming · 3 questions");
   assert.equal(by[425], "parked · retries used up");
   assert.equal(by[412], "implement · 2.5M/3M in");
   assert.equal(by[418], "verify · in cloud");
@@ -95,6 +95,23 @@ test("budget warning, session and handoff show on the surfaces", async () => {
   assert.equal(holdText(status), null);
   assert.equal(holdText({ plan: { hold: "daily budget reached (3M/3M in)" } }), "Nothing new starts: daily budget reached (3M/3M in)");
   assert.deepEqual(localRunning(status.tickets).map((t) => t.id), [412]); // 418 runs in the cloud
+});
+
+test("grouped rounds and numbered questions read from what the daemon writes", async () => {
+  const { stageRounds, stageDetail, questionCards, ANSWER_HOW, parseStatusMd } = await import("../lib/model.js");
+  const md = readFileSync(new URL("../fixtures/acme-api/tickets/409/STATUS.md", import.meta.url), "utf8");
+  const [impl, verify] = parseStatusMd(md).stages;
+  assert.equal(stageRounds(impl), "2 rounds");
+  assert.equal(stageRounds(verify), "failed 1×, then passed");
+  assert.deepEqual(stageDetail(verify, {}), { text: "tests 212 of 212", warn: false });
+  assert.equal(stageRounds({ detail: "3 slices" }), null);
+  const by = Object.fromEntries(status.tickets.map((t) => [t.id, t]));
+  const cards = questionCards(by[421]);
+  assert.deepEqual(cards.map((c) => [c.label, c.kind, c.reply]), [["Q1", "product", "A1: …"], ["Q2", "engineering", "A2: …"], ["Q3", "product", "A3: …"]]);
+  assert.match(cards[0].who, /waits on the product owner/);
+  assert.match(cards[1].who, /yours to answer/);
+  assert.deepEqual(questionCards(by[412]), []);
+  assert.match(ANSWER_HOW, /u in this window.*A1:/);
 });
 
 test("the Daemon bar offers what each state allows", async () => {
