@@ -77,6 +77,9 @@ test("a request's kind comes from its words unless it names one, and REQUEST.md 
   const c = request(s.db, { text: "Raise the budget", kind: "agents", repo: "acme/api", run: s.run, now });
   expect(requestKind(s.db, c.id)).toBe("agents");
   expect(() => request(s.db, { text: "x", kind: "colour" as any, repo: "acme/api", run: s.run, now })).toThrow(/one of config, blueprint, agents, cleanup, look/);
+  // The learner's words never make a look or a cleanup: it names one outright.
+  const l = request(s.db, { text: "Turn lesson #3 (src/theme/**) into a lint rule: the accent colour is hard-coded", from: "learner", repo: "acme/api", run: s.run, now });
+  expect(l.kind).toBe("config");
   for (const k of ["config", "blueprint", "agents", "cleanup", "look"] as const) expect(KIND_GUIDE[k].length).toBeGreaterThan(100);
 });
 

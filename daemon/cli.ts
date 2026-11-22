@@ -276,7 +276,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (!found.length) throw new Error("no flow-stack here to migrate: no ~/.flow-stack/profile.md, no .flow/ in the repo, no flow-stack plugin");
         let r: any = null;
         change(db, () => {
-          r = request(db, { text: MIGRATION_REQUEST, repo: lead.slug, run: sh, now: now(), dir: p.dir, evidence: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --propose <this ticket's id>\`, then review what it wrote and finish what MIGRATION.md lists.` });
+          r = request(db, { text: MIGRATION_REQUEST, kind: "config", repo: lead.slug, run: sh, now: now(), dir: p.dir, evidence: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --propose <this ticket's id>\`, then review what it wrote and finish what MIGRATION.md lists.` });
           setMeta(db, MIGRATION_META, String(r.id));
         });
         log(`#${r.id}: the maintainer migrates flow-stack (found ${found.join(", ")}); it comes back as a PR for you`);

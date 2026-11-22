@@ -42,7 +42,7 @@ export const isKind = (k: unknown): k is Kind => REQUEST_KINDS.includes(k as Kin
 // only changes the guidance REQUEST.md gives; cleanup and look are asked for in plain words.
 export function guessKind(text: string): Kind {
   if (/\b(clean ?up|housekeep\w*|prune|stale worktrees?|orphan\w*|vacuum|compact the database)\b/i.test(text)) return "cleanup";
-  if (/\b(colou?rs?|accent|theme|palette|fonts?|contrast|hard to read|layout|ui|warmer|cooler|darker|lighter)\b/i.test(text)) return "look";
+  if (/\b(colou?rs?|accent|theme|palette|fonts?|contrast|hard to read|layout|warmer|cooler|darker|lighter)\b/i.test(text)) return "look";
   if (/\b(blueprints?|lanes?|stages?)\b/i.test(text)) return "blueprint";
   if (/\b(agents?|reviewer|builder|planner|checker|triager|spec[- ]writer|prompts?)\b/i.test(text)) return "agents";
   return "config";
@@ -161,7 +161,9 @@ export function request(db: Database, o: { text: string; repo: string; run: Run;
   // A link or #number would make it a GitHub issue ticket: a request is the person's words.
   if (/^#?\d+$|^https?:\/\//.test(text)) throw new Error("a request is a sentence about the change, not an issue link; use factory new for issues");
   if (o.kind !== undefined && !isKind(o.kind)) throw new Error(`a request's kind is one of ${REQUEST_KINDS.join(", ")}`);
-  const kind = o.kind ?? guessKind(text);
+  // Another agent names a cleanup or a look outright: its words never pick one (a lesson about src/ui/ isn't a colour).
+  const guessed = guessKind(text);
+  const kind = o.kind ?? ((o.from ?? "you") !== "you" && (guessed === "look" || guessed === "cleanup") ? "config" : guessed);
   if (kind === "look" && o.target) throw new Error("a look request works in the factory app's own repo; it takes no --repo");
   const from = o.from ?? "you";
   // Where the maintainer's worktree goes: the app for a look, the named repo, else the lead.
