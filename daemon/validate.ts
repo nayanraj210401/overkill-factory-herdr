@@ -294,10 +294,23 @@ export function validateDir(dir: string) {
   const dangling = danglingNames(dir, paths);
   return paths.map((path) => {
     const r: { path: string; errors: string[]; warnings?: string[] } = { path, errors: [...validateFile(path, readFileSync(join(dir, path), "utf8")), ...(dangling[path] ?? [])] };
-    const w = warningOf(path);
-    if (w) r.warnings = [w];
+    const w = [warningOf(path), ...gateWarnings(path, join(dir, path))].filter((x): x is string => !!x);
+    if (w.length) r.warnings = w;
     return r;
   });
+}
+
+// A gate turned to auto: it passes without you, and for the merge gate the factory merges the PR
+// itself. Never refused, always said (plan: Every gate is yours to set).
+export function gateWarnings(path: string, file: string): string[] {
+  const kind = kindOf(path);
+  if (kind !== "blueprint" && kind !== "factory") return [];
+  let doc: any;
+  try { doc = Bun.YAML.parse(readFileSync(file, "utf8")); } catch { return []; }
+  if (kind === "factory") return doc?.maintainer?.gate === "auto" ? ["maintainer.gate is auto: the maintainer's PRs merge themselves, and the account config and factory agents change on that merge, with nobody looking. Check the revert rate on Home"] : [];
+  const stages = doc?.stages && typeof doc.stages === "object" ? doc.stages : {};
+  return Object.entries<any>(stages).filter(([, s]) => s?.gate === "auto")
+    .map(([id]) => `stages.${id}.gate is auto: this stage passes without you${(stages[id].next ?? []).every((n: string) => n === "end") ? ", and ready PRs of this blueprint merge themselves" : ""}. Check this blueprint's revert rate on Home`);
 }
 
 // Files that pass but do nothing: a repo's copy of a factory agent, or of Overwatch's template, is never read.

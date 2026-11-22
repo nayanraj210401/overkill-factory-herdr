@@ -3,7 +3,8 @@
 import { claudeChoice } from "./claude-bin.ts";
 import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
-import { renameSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { validateStatus } from "../lib/status.js";
 import { getMeta, leadRepo, listRepos, mergeOrder } from "./db.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
@@ -11,7 +12,7 @@ import { budgetCap, digest } from "./away.ts";
 import { budgetUse, dayCap, startHold } from "./budget.ts";
 import { setupField } from "./setup.ts";
 import { activeOverrides, fileValue } from "./learn.ts";
-import { readFactory } from "./runner.ts";
+import { isLastGate, loadBlueprint, readFactory } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
 import { BLUEPRINT, requestedBy } from "./maintainer.ts";
 import { openAsks } from "./ask.ts";
@@ -90,6 +91,7 @@ export function buildStatus(db: Database, now = new Date()) {
       (SELECT MIN(started_at) FROM stages s WHERE s.ticket = d.ticket) AS began
     FROM decisions d WHERE d.who = 'daemon' AND d.what LIKE 'opened PR #%' AND d.at >= ?`).all(today) as { ticket: number; at: string; usd: number | null; began: string | null }[];
   const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+  const auto = autoGates(db, lead?.path);
   const beat = Date.parse(getMeta(db, "heartbeat") ?? "") || 0;
   return {
     version: 1,
@@ -107,6 +109,7 @@ export function buildStatus(db: Database, now = new Date()) {
       budget: { input: perDay?.input ?? Number(getMeta(db, "budget_day_in") ?? 40e6), output: perDay?.output ?? Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
     away: digest(db, now.toISOString()),
+    ...(auto.length ? { auto_gates: auto } : {}),
     // No .factory/ yet: Home shows the setup checklist instead.
     ...(setup ? { setup } : {}),
     // Which claude the sessions run, for Config (claude-bin.ts); tests never look one up.
@@ -118,6 +121,24 @@ export function buildStatus(db: Database, now = new Date()) {
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,
   };
+}
+
+// Blueprints whose ready PRs merge themselves (a last gate set to auto), each with its record:
+// merged tickets and how many of them a later PR reverted, over the last 30 days.
+export function autoGates(db: Database, repo?: string) {
+  if (!repo) return [];
+  const dir = join(repo, ".factory", "blueprints");
+  const names = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".yaml")).map((f) => f.slice(0, -5)).sort() : [];
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  return names.flatMap((name) => {
+    try {
+      const b = loadBlueprint(repo, name);
+      if (!Object.values(b.stages).some((s) => s.gate === "auto" && !s.agent && isLastGate(s))) return [];
+    } catch { return []; }
+    const r = db.query(`SELECT COUNT(*) AS merged, SUM(t.reverted_by IS NOT NULL) AS reverted FROM tickets t WHERE t.blueprint = ? AND t.state = 'merged'
+      AND EXISTS (SELECT 1 FROM decisions d WHERE d.ticket = t.id AND d.what LIKE 'merged PR %' AND d.at >= ?)`).get(name, since) as { merged: number; reverted: number | null };
+    return [{ blueprint: name, merged: r.merged, reverted: r.reverted ?? 0, revert_rate: r.merged ? +((r.reverted ?? 0) / r.merged).toFixed(3) : 0 }];
+  });
 }
 
 // Atomic: the window's watcher never sees a half-written file.
