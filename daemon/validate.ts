@@ -59,6 +59,24 @@ export const KINDS: Record<string, Rule> = {
   },
 };
 
+// <FACTORY_HOME>/config.yaml, the account-wide layer (daemon/account.ts).
+export const ACCOUNT: Rule = {
+  object: {
+    plan: { object: { limits: { object: { five_hour: "any", week: "any" } }, pause_at: "any" } },
+    budget: { object: { per_day: { object: { input: "any", output: "any" } } } },
+    away: { object: { blueprints: strs, budget: str, review_rounds: num, never: strs, min_agreement: num } },
+    profile: { object: { taste: strs, rules: strs } },
+  },
+};
+
+export function validateAccount(text: string): string[] {
+  let doc: unknown;
+  try { doc = Bun.YAML.parse(text); } catch (e) { return [`YAML: ${(e as Error).message.split("\n")[0]}`]; }
+  const errors = duplicateKeys(text);
+  if (doc != null) check(doc, ACCOUNT, "", errors);
+  return errors;
+}
+
 // `every: 30m | 6h | 1d`, in milliseconds; null when it isn't that.
 export function parseEvery(v: unknown): number | null {
   const m = typeof v === "string" ? v.trim().match(/^(\d+)([mhd])$/) : null;

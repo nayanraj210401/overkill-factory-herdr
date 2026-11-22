@@ -384,6 +384,16 @@ learn:
   pause_above: 70%         # of the 5-hour window or the day's budget
 ```
 
+**Account-wide settings.** What belongs to you rather than to one repo lives in `~/.factory/config.yaml`, which every factory reads. A repo's `factory.yaml` wins key by key where it sets the same thing (`plan.pause_at`, `away.*`). `budget.per_day` is checked at both levels: the factory's own cap, and the account's total over every factory today. `factory away on|off` applies to every factory, and `factory validate` checks the file.
+
+```yaml
+# ~/.factory/config.yaml
+plan:    { limits: { five_hour: 20M, week: 400M }, pause_at: 85% }   # limits: the estimate when Claude gives no reading
+budget:  { per_day: { input: 40M, output: 2M } }                     # every factory together
+away:    { blueprints: [chore], review_rounds: 2, never: ["src/auth/**"] }
+profile: { rules: [never push to main], taste: [small diffs over clever ones] }   # in every stage brief
+```
+
 ## First run: setup and migration
 
 The first time factory mode opens in a space with no `.factory/` folder, it runs setup instead of Home. Every step can be skipped and rerun later from Config.

@@ -15,6 +15,7 @@ import { budgetCap, forbiddenTouched } from "./away.ts";
 import { STOPS, guardSettings, hardStopLog, takeHardStop } from "./guard.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
 import { budgetUse, roundUse, startHold } from "./budget.ts";
+import { profileText } from "./account.ts";
 import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
 import { closeRound, latestBrief } from "./round.ts";
 import { loadPrompt, render } from "./prompts.ts";
@@ -78,6 +79,7 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
       verdict === "holdout" ? `Write hidden checks the builder never sees: keep them in ${folder}/holdout/, never in the worktree. Run them against the worktree, then record the result: factory verdict ${t.id} holdout pass, or factory verdict ${t.id} holdout fail <what fails, without the check's code>.`
       : verdict === "review" ? `Record your verdict before you finish: factory verdict ${t.id} review pass, or factory verdict ${t.id} review fail <each blocker>. Only a blocker fails; put suggestions in a pass's detail.`
       : "",
+    profile: profileText(),
     lessons: lessons.map((l) => `- ${l}`).join("\n"),
     fix_brief: latestBrief(folder),
   });
