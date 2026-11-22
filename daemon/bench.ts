@@ -4,6 +4,8 @@
 // task runs under every variant in a throwaway worktree, with the variant's `set:` paths
 // applied to this run's copy of the settings and never to .factory/. Then the held-out
 // tests come back and run. The result is a report; nothing here changes the factory.
+import { benchAllow } from "./allow.ts";
+export { benchAllow };
 import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync, rmSync } from "node:fs";
@@ -139,16 +141,6 @@ export type Agent = (o: { argv: string[]; cwd: string; name: string }) => Promis
 // commands (quality_floor). Any other command is denied, since -p can't ask. The hard-stop
 // guard still watches its tool calls (its notes go to the benchmark's own log). Codex's
 // --full-auto is its workspace-write sandbox.
-export function benchAllow(commands: string[]) {
-  const bash = new Set(["git status", "git diff", "git log", "git show", "ls", "cat"].map((c) => `Bash(${c}:*)`));
-  for (const c of commands) {
-    bash.add(`Bash(${c})`);
-    const head = c.trim().split(/\s+/).slice(0, 2).join(" ");
-    if (!/[|&;<>$`'"]/.test(head)) bash.add(`Bash(${head}:*)`);
-  }
-  return ["Read", "Glob", "Grep", "Edit", "MultiEdit", "Write", ...bash];
-}
-
 export function benchArgv(step: Step, task: Task, o: { cwd: string; log: string; commands?: string[] }) {
   const text = [
     `Benchmark task: ${task.title}`, task.body, step.prompt,

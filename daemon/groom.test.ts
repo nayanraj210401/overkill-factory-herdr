@@ -44,6 +44,9 @@ test("triage runs in the ticket's folder with a brief naming the issue, the blue
   const argv = hc[0];
   expect(argv[argv.indexOf("--cwd") + 1]).toBe(join(dir, "tickets/412"));
   const brief = argv.at(-1)!;
+  // unattended, like every agent: `factory pick` / `factory question` never wait for approval
+  expect(argv.slice(argv.indexOf("claude"), argv.indexOf("claude") + 3)).toEqual(["claude", "--permission-mode", "acceptEdits"]);
+  expect(JSON.parse(readFileSync(argv[argv.indexOf("--settings") + 1], "utf8")).permissions.allow).toContain("Bash(factory:*)");
   expect(brief).toContain("gh issue view 412 --repo acme/api --comments");
   expect(brief).toContain("one of address-review, bugfix, chore, feature");
   expect(brief).toContain("factory question 412 product <question>");
@@ -207,3 +210,4 @@ test("an agent's mid-run product question parks the ticket, goes on the issue, a
   expect(gates).toContain("Q1 from the spec stage (product, for @dana): Per user or per IP?");
   expect(gates).toContain("**Your answer:** Per user");
 });
+

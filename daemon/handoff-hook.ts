@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { planFile } from "./planline.ts";
+import { agentAllow } from "./allow.ts";
 
 export const EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 
@@ -23,8 +24,9 @@ export function refusal(flag: { message?: string } | null, input: { tool_name?: 
 // the ticket's folder. Also clears a flag left by an earlier session: a new session
 // starts clean. Other programs have no such hook and run as they are. `also` is another
 // settings JSON (the hard-stop guard's) whose hooks go in the same file, since Claude Code
-// reads only one --settings.
-export function withHandoffHook(argv: string[], dir: string, id: number, also?: string | null) {
+// reads only one --settings. The session runs with acceptEdits and agentAllow(commands)
+// (allow.ts): unattended, so a `factory …` call or the repo's tests never wait for a person.
+export function withHandoffHook(argv: string[], dir: string, id: number, also?: string | null, commands: string[] = []) {
   const flag = flagFile(dir, id);
   if (existsSync(flag)) unlinkSync(flag);
   if (argv[0] !== "claude") return argv;
@@ -35,8 +37,8 @@ export function withHandoffHook(argv: string[], dir: string, id: number, also?: 
   const others = also ? JSON.parse(also).hooks?.PreToolUse ?? [] : [];
   // The status line saves Claude Code's plan-usage reading for the plan meters (planline.ts).
   const statusLine = { type: "command", command: `${quote(process.execPath)} ${quote(join(dirname(import.meta.path), "planline.ts"))} ${quote(planFile())}` };
-  writeFileSync(settings, JSON.stringify({ hooks: { PreToolUse: [...others, ours] }, statusLine }, null, 2) + "\n");
-  return ["claude", "--settings", settings, ...argv.slice(1)];
+  writeFileSync(settings, JSON.stringify({ permissions: { allow: agentAllow(commands) }, hooks: { PreToolUse: [...others, ours] }, statusLine }, null, 2) + "\n");
+  return ["claude", "--permission-mode", "acceptEdits", "--settings", settings, ...argv.slice(1)];
 }
 
 if (import.meta.main) {

@@ -13,6 +13,7 @@ import { capsOf, readTriggers, runningByTrigger, withinCaps } from "./triggers.t
 import { argvFor, loadAgent, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
 import { mayStart } from "./away.ts";
 import { openAgent, withFactory } from "./herdr.ts";
+import { withHandoffHook } from "./handoff-hook.ts";
 import { estimateBudget, startHold } from "./budget.ts";
 import { compact } from "../lib/model.js";
 import { loadPrompt, render } from "./prompts.ts";
@@ -66,7 +67,8 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const agent = loadAgent(o.repo, g.agent);
   const argv = argvFor(agent, { harness: "claude", model: "sonnet" },
     triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));
-  const cmd = withFactory(argv, o.dir);
+  // Unattended like every agent: acceptEdits and the allowlist, so `factory pick` never waits (allow.ts).
+  const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? []), o.dir);
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
   // later), so you can watch the triage agent and answer it. No window: a background terminal.
   const made = openAgent(o.run, { folder, space: t.space ?? null, name: "groom", argv: cmd });
