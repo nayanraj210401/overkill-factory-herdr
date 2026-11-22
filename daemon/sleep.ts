@@ -31,7 +31,7 @@ export function cloudPolicy(repo: string): CloudPolicy {
 }
 
 type Row = { id: number; state: string; location: string; blueprint: string; worktree: string | null };
-const lead = (db: Database, id: number) => db.query("SELECT id, state, location, blueprint, worktree FROM ticket_lead WHERE id = ?").get(id) as Row | null;
+const lead = (db: Database, id: number) => db.query("SELECT id, state, location, blueprint, worktree, resume_at FROM ticket_lead WHERE id = ?").get(id) as Row | null;
 
 // Why a ticket can't go to the cloud in a batch, or null. Away rules apply: a batch move runs unattended.
 export function whyNotCloud(db: Database, o: Ctx, id: number): string | null {
@@ -40,6 +40,7 @@ export function whyNotCloud(db: Database, o: Ctx, id: number): string | null {
   if (t.location === "cloud") return "already in the cloud";
   if (t.state !== "running") return `is ${t.state}, not running`;
   if (!t.worktree) return "has no worktree yet";
+  if (t.resume_at) return "waits for the plan limit to reset, which the cloud shares";
   const only = awayPolicy(o.repo).blueprints;
   if (only && !only.includes(t.blueprint)) return `blueprint ${t.blueprint} isn't in away.blueprints`;
   const touched = forbiddenTouched(db, { repo: o.repo, worktree: t.worktree, run: o.run, always: true });
