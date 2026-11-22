@@ -211,6 +211,17 @@ test("at the 80% ceiling the session is stopped without a handoff and the brief 
   expect(existsSync(folder)).toBe(true);
 });
 
+test("a session building one slice (per: slice) hands that slice on, even one SLICES.md marks done", () => {
+  const { db, calls, folder, fill, tick } = setup();
+  writeFileSync(join(folder, "SLICES.md"), "# Slices\n\n## 1. The limiter (done)\nx\n\n## 2. The 429 response\ny\n");
+  db.query("UPDATE sessions SET slice = '#1'").run();
+  fill(170_000);
+  tick("2026-11-21T10:40:00Z");
+  const brief = calls.findLast((c) => c[1] === "run")!.at(-1)!;
+  expect(brief.slice(brief.indexOf("## The current slice"))).toContain("1. The limiter");
+  expect(db.query("SELECT slice FROM sessions ORDER BY id").all()).toEqual([{ slice: "#1" }, { slice: "#1" }]);
+});
+
 test("the handoff threshold is the one the ticket started with: 80% in its snapshot means 62% doesn't flag it", () => {
   const { dir, db, fill, tick } = setup();
   db.query("UPDATE tickets SET settings = ? WHERE id = 412").run('{"budget.handoff_at_context":"80%"}');
