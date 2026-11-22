@@ -75,7 +75,7 @@
     { "id": 3, "from": "spec-writer", "to": "overwatch", "text": "#412 needs a product answer: should the limit apply to API keys too?", "why": "the issue says logins; the code shares the limiter with API keys", "ticket": 412, "at": "2026-11-21T09:52:00Z", "delivered": true },
     { "id": 4, "from": "overwatch", "to": "learner", "text": "Is the spec stage worth it for chores?", "why": null, "ticket": null, "at": "2026-11-21T09:40:00Z", "delivered": false }
   ],
-  "to_review": 3,
+  "to_review": 5,
   "rules_failing": 0,
   "tickets": [
     {
