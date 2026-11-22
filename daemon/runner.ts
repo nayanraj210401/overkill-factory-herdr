@@ -246,7 +246,7 @@ type BlueprintStage = Stage & { on_fail?: string; max_retries?: number; gate?: s
 
 // The current stage's work is over (an agent said so, its terminal exited, or a
 // check ran): close its session, then follow the blueprint until something waits.
-export function advance(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string; failed?: string }) {
+export function advance(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string; failed?: string; opened?: boolean }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
@@ -277,7 +277,7 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? gate?.failed ?? verdict?.failed ?? null }));
 }
 
-function follow(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; b: Blueprint; t: Record<string, any>; at: string; failed: string | null }) {
+function follow(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; b: Blueprint; t: Record<string, any>; at: string; failed: string | null; opened?: boolean }) {
   const { run, now, b, t } = o;
   let at = o.at;
   let failed = o.failed;
@@ -297,6 +297,10 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
       }
       db.query("UPDATE tickets SET retries = ? WHERE id = ?").run(retries, o.id);
       to = stage.on_fail;
+    } else if (stage.requires === "ready" && stage.agent && at === o.at && !o.opened) {
+      // The pr stage's agent wrote PR.md: the ready rules decide whether the PR opens now
+      // (tryPr moves on once it has), or the stage waits and the daemon retries each tick.
+      return tryPr(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
     } else {
       // Retries count failures of one check; only that check passing clears them.
       if (stage.check) db.query("UPDATE tickets SET retries = 0 WHERE id = ?").run(o.id);
@@ -381,7 +385,7 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   const others = prs.slice(1).map((p) => `${p.repo}#${p.pr_number}`).join(", ");
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
     .run(o.id, `${t.pr_number == null ? "opened" : "updated"} PR #${prs[0].pr_number}`, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}${others ? `; with ${others}` : ""}`, now);
-  return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now }), pr: prs[0].pr_number };
+  return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, opened: true }), pr: prs[0].pr_number };
 }
 
 // New PRs of a cross-repo change didn't know each other's numbers: every body gets them.
@@ -579,7 +583,8 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
   const b = loadBlueprint(o.repo, t.blueprint);
   db.query("UPDATE tickets SET state = 'running', needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', 'resumed', ?)").run(o.id, now);
-  if ((b.stages[t.stage] as BlueprintStage | undefined)?.requires === "ready") {
+  // A pr stage with no agent only waits for its rules; one with an agent (it writes PR.md) reruns.
+  if ((b.stages[t.stage] as BlueprintStage | undefined)?.requires === "ready" && !b.stages[t.stage]?.agent) {
     enterStage(db, o.id, title(t.stage), null, plannedPath(b, t.stage).map(title), now);
     return { stage: t.stage, terminal: null };
   }

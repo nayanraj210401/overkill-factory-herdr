@@ -10,3 +10,11 @@ process.env.HERDR_APP_HOME = mkdtempSync(join(tmpdir(), "no-herdr-"));
 process.env.FACTORY_WORKTREES = mkdtempSync(join(tmpdir(), "worktrees-"));
 process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "claude-"));
 process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), "codex-"));
+
+// Tests of the PR mechanics (ready rules, the watcher, review rounds) start at a pr stage
+// with no agent, as a blueprint may have; the pr-writer agent has its own test.
+export function agentlessPr(factoryDir: string) {
+  const { readdirSync, readFileSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
+  const dir = `${factoryDir}/blueprints`;
+  for (const f of readdirSync(dir)) writeFileSync(`${dir}/${f}`, readFileSync(`${dir}/${f}`, "utf8").replace("agent: pr-writer, ", ""));
+}

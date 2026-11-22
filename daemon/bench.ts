@@ -122,6 +122,7 @@ export function resolveVariant(repo: string, suite: Suite, set: Record<string, u
     const s = b.stages[stage];
     if (!s) throw new Error(`blueprint ${bpName} has no stage "${stage}"`);
     if (!s.agent) { if (suite.target.stage) throw new Error(`stage ${stage} has no agent to benchmark`); continue; }
+    if ((s as { requires?: string }).requires === "ready" && !suite.target.stage) continue; // the pr stage opens PRs; a replay never does
     const a = (doc.agents[s.agent] ??= loadAgent(repo, s.agent) ?? {});
     steps.push({ stage, agent: s.agent, harness: a.harness ?? defaults.harness, model: a.model ?? defaults.model, prompt: a.prompt ?? "" });
   }

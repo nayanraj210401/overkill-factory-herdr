@@ -1,3 +1,4 @@
+import { agentlessPr } from "./test-env.ts";
 import { test, expect } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +21,7 @@ function setup(extra = "") {
   sh(["git", "init", "-q", "--bare", origin]);
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"], ["remote", "add", "origin", origin]]) sh(["git", "-C", repo, ...c]);
-  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
+  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true }); agentlessPr(join(repo, ".factory"));
   writeFileSync(join(repo, ".factory/factory.yaml"), `name: t\nquality_floor: ["true"]\nready: [template]\n${extra}`);
   sh(["git", "-C", repo, "add", "."]);
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);

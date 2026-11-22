@@ -589,7 +589,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as
     { id: number; ticket: number; terminal: string; in_space: number; agent_seen: number; started_at: string }[];
   // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
-  for (const { id } of db.query("SELECT id FROM tickets WHERE state = 'running' AND stage = 'pr' AND location != 'cloud'").all() as { id: number }[]) {
+  // A pr stage whose agent is still writing PR.md waits for it.
+  for (const { id } of db.query(`SELECT id FROM tickets t WHERE state = 'running' AND stage = 'pr' AND location != 'cloud'
+      AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL)`).all() as { id: number }[]) {
     try {
       let r: any;
       change(db, () => { r = tryPr(db, { dir: p.dir, repo: repoDir, id, run }); });

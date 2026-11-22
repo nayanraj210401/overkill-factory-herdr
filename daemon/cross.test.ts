@@ -1,3 +1,4 @@
+import { agentlessPr } from "./test-env.ts";
 import { test, expect, afterEach } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, cpSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +16,7 @@ afterEach(() => { process.env.HERDR_APP_HOME = realHome; });
 function git(dir: string, factory = false) {
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", dir, ...c]);
   if (factory) {
-    cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(dir, ".factory"), { recursive: true });
+    cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(dir, ".factory"), { recursive: true }); agentlessPr(join(dir, ".factory"));
     const yaml = join(dir, ".factory/factory.yaml");
     writeFileSync(yaml, readFileSync(yaml, "utf8").replace(/^repos: .*$/m, "repos: [acme/api, acme/web]"));
   } else writeFileSync(join(dir, "README.md"), "web\n");

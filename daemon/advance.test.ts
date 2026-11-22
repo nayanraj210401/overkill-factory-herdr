@@ -45,8 +45,9 @@ test("a feature ticket walks its agents, passes the evidence check, and waits at
   verdict("holdout", "PASS");
   expect(step()).toMatchObject({ stage: "review", terminal: "t5" });
   verdict("review", "PASS");
-  expect(step()).toMatchObject({ stage: "pr", waiting: true });
-  expect(started).toEqual(["spec", "plan", "implement", "holdout", "review"]);
+  expect(step()).toMatchObject({ stage: "pr", terminal: "t6" }); // the pr-writer agent writes PR.md
+  expect(step()).toMatchObject({ stage: "pr", waiting: true });   // then the ready rules decide; no PR.md yet
+  expect(started).toEqual(["spec", "plan", "implement", "holdout", "review", "pr"]);
   expect(ticket()).toMatchObject({ state: "running", stage: "pr" });
   expect((db.query("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL").get() as any).n).toBe(0);
   expect((db.query("SELECT result, detail FROM evidence WHERE check_name = 'evidence'").get() as any)).toEqual({ result: "PASS", detail: "2 checks pass" }); // its own run of the quality floor, and the one before
@@ -90,7 +91,8 @@ test("a reviewer's blockers go to REVIEW.md and back to implement; a reviewer wi
 
 test("the tests check runs quality_floor in the worktree and records each command", () => {
   const pass = setup("chore", '"true"');
-  expect(pass.step()).toMatchObject({ stage: "pr", waiting: true }); // implement → verify(tests) → pr
+  expect(pass.step()).toMatchObject({ stage: "pr", terminal: "t2" }); // implement → verify(tests) → pr's writer
+  expect(pass.step()).toMatchObject({ stage: "pr", waiting: true });
   const fail = setup("chore", '"echo boom; exit 3"');
   expect(fail.step()).toMatchObject({ stage: "implement" });
   const row = fail.db.query("SELECT result, detail FROM evidence ORDER BY id DESC LIMIT 1").get() as any;

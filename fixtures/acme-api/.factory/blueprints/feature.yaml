@@ -9,5 +9,5 @@ stages:
   verify:    { check: evidence, next: [holdout], on_fail: implement, max_retries: 3 }
   holdout:   { agent: checker, next: [review], on_fail: implement, max_retries: 3 }
   review:    { agent: reviewer, next: [pr], on_fail: implement }
-  pr:        { requires: ready, output: PR.md, template: pr-readable, next: [merge] }
+  pr:        { agent: pr-writer, requires: ready, output: PR.md, template: pr-readable, next: [merge] }
   merge:     { gate: human, next: [end] }
