@@ -8,7 +8,7 @@ out="${1:-smoke-out}"; mkdir -p "$out"
 home=$(mktemp -d -t hf)   # short: the socket path must fit macOS's limit
 export HERDR_APP_HOME="$home"
 scripts/sync.sh "$home" >/dev/null
-echo '{"layout":"factory","frame.welcomed":"finished"}' > "$home/shared.json"
+echo '{"layout":"factory","frame.welcomed":"finished","factory.sample":true}' > "$home/shared.json"   # the screenshots show the sample
 herdr-app > "$home.log" 2>&1 &
 app=$!
 trap 'kill $app 2>/dev/null; rm -rf "$home" "$home.log"' EXIT

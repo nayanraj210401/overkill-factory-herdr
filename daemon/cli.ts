@@ -42,7 +42,7 @@ import { claudeConfig, skipStep, setupSteps, skippedSteps, showSteps, trust, wri
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
-  init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .)
+  init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
   groom <id>                         the triage agent grooms a ticket that hasn't started
@@ -191,7 +191,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const db = open(p.db);
   try {
     if (cmd === "init") {
-      change(db, () => { setMeta(db, "name", name); setRepo(db, { slug: repo, path: resolve(repoPath ?? "."), lead: true }); });
+      const path = resolve(repoPath ?? ".");
+      change(db, () => { setMeta(db, "name", name); setRepo(db, { slug: repo !== "unknown" ? repo : originSlug(path) ?? repo, path, lead: true }); });
     } else if (cmd === "setup") {
       const lead = needLead(db);
       if (sub === "skip" || sub === "unskip") {
@@ -706,6 +707,12 @@ export function writeMetrics(db: Database, path: string, now = new Date()) {
   if (errors.length) throw new Error(`metrics.json would break the contract:\n${errors.join("\n")}`);
   writeIfChanged(path, JSON.stringify(doc) + "\n");
   return doc;
+}
+
+// owner/name from a checkout's origin on GitHub (ssh or https), for init without --repo.
+export function originSlug(path: string) {
+  const r = Bun.spawnSync(["git", "-C", path, "remote", "get-url", "origin"], { env: process.env });
+  return r.exitCode === 0 ? r.stdout.toString().trim().match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/)?.[1] ?? null : null;
 }
 
 // One daemon for every factory under FACTORY_HOME; new ones are picked up on the next tick.

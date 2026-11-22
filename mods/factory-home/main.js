@@ -1,10 +1,12 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, setShared, props } from "herdr";
+import { theme, run, setShared, props, exec, notify, home } from "herdr";
 import { needsYou, ago, compact, repoBadge, warnMark, holdText, localRunning } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status, act } from "./lib/store.js";
+import { status, state, act, sampleOn, showSample } from "./lib/store.js";
+import { cliCommand } from "./lib/actions.js";
+import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { SETUP_SAMPLE, setupProgress } from "./lib/setup.js";
 
 // HH:MM, local; the mod runtime ignores toLocaleTimeString's options.
@@ -50,6 +52,46 @@ export default class FactoryHome extends View {
         .child(div().text_color(t.muted).child(ticket.needs?.text ?? ticket.detail ?? "")));
   }
 
+  // A space whose repo has no factory: start one here (factory init, then setup's checklist),
+  // or look at the sample, never the sample unasked.
+  noFactoryPage(t, none, cx) {
+    const tilde = (p) => (p ?? "").replace(home(), "~");
+    const cmd = `factory init --name ${none.name} --path ${tilde(none.folder)}`;
+    const button = (id, label, on, primary) => div().id(id).px(12).py(6).rounded(6).cursor_pointer()
+      .bg(primary ? t.accent : t.surface).border(1).border_color(primary ? t.accent : t.border)
+      .text_color(primary ? t.background : t.foreground).hover((st) => st.opacity(0.85)).on_click(on).child(label);
+    return v_flex().id("home").size_full().px(18).pb(16).gap(10).bg(t.background).rounded(10).text_size(13).overflow_y_scroll()
+      .child(div().pt(12).text_size(18).font_semibold().text_color(t.foreground).child(`No factory for ${none.name ?? "this space"} yet`))
+      .when(!!none.folder, (el) => el.child(div().text_color(t.muted).child(`${tilde(none.folder)} has no factory. Start one here: it records the repo and its GitHub origin, then Home shows the setup checklist.`)))
+      .when(!none.name || !none.folder, (el) => el.child(div().text_color(t.muted).child("Open a space on a repo's folder (Herdr's space picker) to start its factory.")))
+      .when(!!none.name && !!none.folder, (el) => el.child(v_flex().gap(4).p(12).rounded(8).bg(t.surface).border(1).border_color(t.border)
+        .child(div().text_size(12).text_color(t.dim).child("runs"))
+        .child(div().text_size(12).text_color(t.accent).child(cmd))))
+      .child(h_flex().gap(8)
+        .when(!!none.name && !!none.folder, (el) => el.child(button("init", this.initing ? "Starting…" : "Start a factory here", (_e, cx) => this.init_(none, cx), true)))
+        .child(button("sample", "Show the sample instead", (_e, cx) => showSample(true, cx), false)));
+  }
+
+  init_(none, cx) {
+    if (this.initing) return;
+    this.initing = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const c = cliCommand(CLI, `${home()}/.factory/${none.name}`, ["init", "--path", none.folder]);
+      const r = await exec(c.command, c.args, { cwd: none.folder, timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e) }));
+      this.initing = false;
+      if (r.code) notify({ title: "factory init failed", body: String(r.stderr || r.stdout || "").trim().slice(0, 300), level: "error" });
+      cx.notify(); // the loader picks up the new status.json within 5 s
+    });
+  }
+
+  // The sample is on: say so above everything, with the way back.
+  sampleBanner(t) {
+    return h_flex().id("sample-banner").gap(10).items_center().px(12).py(8).rounded(8).bg(t.surface).border(1).border_color(t.blocked)
+      .child(div().flex_1().min_w_0().text_color(t.blocked).child("Sample data (acme-api), not your factory"))
+      .child(div().id("sample-off").text_size(12).text_color(t.accent).cursor_pointer().on_click((_e, cx) => showSample(false, cx)).child("Hide the sample"));
+  }
+
   setupPage(t, setup) {
     const p = setupProgress(setup);
     const dot = { ok: t.done, missing: t.blocked, skipped: t.dim };
@@ -71,6 +113,7 @@ export default class FactoryHome extends View {
   render() {
     const t = theme();
     const live = status();
+    if (!live && state().none) return this.noFactoryPage(t, state().none);
     if (!live) return div().size_full().bg(t.background);
     const s = this.hold ? { ...live, plan: { ...live.plan, hold: this.hold } } : live;
     const now = Date.now();
@@ -90,6 +133,7 @@ export default class FactoryHome extends View {
       .child(div().text_size(26).font_semibold().text_color(t.foreground).child(value));
     return v_flex().id("home").size_full().px(18).pb(16).gap(8).bg(t.background).rounded(10).text_size(13).overflow_y_scroll()
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus()).on_key_down((e, cx) => this.key(e, items, cx))
+      .when(s.source === "fixture" && sampleOn(), (el) => el.child(div().pt(12).child(this.sampleBanner(t))))
       .when(Boolean(away), (el) => el.child(section(s.away.on ? `Away since ${clock(s.away.since)}` : `While you were away · ${clock(s.away.since)} – ${clock(s.away.until)}`))
         .child(v_flex().gap(2).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
           .children(s.away.events.map((e, i) => h_flex().id(`aw-${i}`).h(24).gap(10).items_center().cursor_pointer().hover((st) => st.bg(t.hover))
