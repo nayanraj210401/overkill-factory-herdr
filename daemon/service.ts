@@ -1,8 +1,8 @@
 // `factory service`: keep `factory run --all` alive as a macOS LaunchAgent, so the
 // daemon starts at login, restarts if it dies, and runs with your gh login and keychain.
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export const LABEL = "dev.overkill.factory";
 
@@ -87,4 +87,18 @@ export function service(cmd: string, o: {
     else log(state === "absent" ? `${label}: not installed` : `${label}: ${state}${pid ? ` (pid ${pid})` : ""}`);
     return state;
   } else throw new Error("usage: factory service install|uninstall|restart|status [--json]");
+}
+
+// The pid of the launchd service when it serves this FACTORY_HOME and is running, else null.
+// `factory run` checks it: a second daemon on the same factories doubles every tick and
+// races the first on the database and the window's files.
+export function servicePid(o: { factoryHome: string; label?: string; agentsDir?: string; run?: Run; uid?: number }) {
+  const label = o.label ?? LABEL;
+  const file = join(o.agentsDir ?? join(homedir(), "Library", "LaunchAgents"), `${label}.plist`);
+  if (!existsSync(file)) return null;
+  const home = readFileSync(file, "utf8").match(/<key>FACTORY_HOME<\/key>\s*<string>([^<]*)<\/string>/)?.[1];
+  if (!home || resolve(home.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")) !== resolve(o.factoryHome)) return null;
+  const r = (o.run ?? launchctl)(["print", `gui/${o.uid ?? process.getuid!()}/${label}`]);
+  if (r.code !== 0 || r.out.match(/^\s*state = (\S+)/m)?.[1] !== "running") return null;
+  return Number(r.out.match(/^\s*pid = (\d+)/m)?.[1]) || null;
 }
