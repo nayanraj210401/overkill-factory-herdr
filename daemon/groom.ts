@@ -5,7 +5,7 @@
 // groomed, and groomed tickets start on their own, up to max_running at once.
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
-import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { BLUEPRINT } from "./maintainer.ts";
 import { join } from "node:path";
 import { enterStage } from "./ticket.ts";
@@ -68,10 +68,16 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const g = grooming(o.repo);
   const folder = join(o.dir, "tickets", String(o.id));
   mkdirSync(folder, { recursive: true });
+  // Grooming again starts clean: what an earlier triager asked and nobody answered is withdrawn
+  // (the new one asks again if it still matters), and its GROOMING.md is kept aside, since a
+  // GROOMING.md is how a finished triage is told from one that died (finishGrooming).
+  db.query("DELETE FROM questions WHERE ticket = ? AND answer IS NULL").run(o.id);
+  const before = join(folder, "GROOMING.md");
+  if (existsSync(before)) renameSync(before, join(folder, "GROOMING.before.md"));
   const agent = loadAgent(o.repo, g.agent);
   const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
     triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));
-  // Unattended like every agent: acceptEdits and the allowlist, so `factory pick` never waits (allow.ts).
+  // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
   const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? []), o.dir);
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
   // later), so you can watch the triage agent and answer it. No window: a background terminal.
@@ -192,6 +198,16 @@ export function questionsComment(open: Question[], po: string | null) {
 // The triage agent's session is over (stage-done, or its terminal exited).
 export function finishGrooming(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  // The triager's last step is GROOMING.md. Without it, triage stopped early (killed, crashed,
+  // closed): the ticket waits for you rather than start as if groomed. Parked, not retried,
+  // so a triager that keeps dying doesn't loop; `factory groom <id>` runs it again.
+  if (!existsSync(join(o.dir, "tickets", String(o.id), "GROOMING.md"))) {
+    const why = `Triage stopped before it finished (no GROOMING.md). Rerun it: factory groom ${o.id}`;
+    db.query("UPDATE tickets SET needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(why, o.now, o.id);
+    db.query("UPDATE stages SET detail = ? WHERE ticket = ? AND ended_at IS NULL").run("triage stopped early", o.id);
+    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', 'triage stopped before GROOMING.md; parked', ?)").run(o.id, o.now);
+    return { parked: why, stage: "groom" };
+  }
   const open = openQuestions(db, o.id);
   if (!open.length) return groomed(db, o);
   const po = open.some((q) => q.kind === "product") ? productOwner(db, o) : null;

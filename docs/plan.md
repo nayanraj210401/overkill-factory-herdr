@@ -229,7 +229,7 @@ Once a ticket is groomed, the factory runs it to a ready PR on its own. What kee
 - PR.md follows the readable template (PRD 6.3).
 - The ticket stayed within its budget.
 
-**Grooming is the one stop.** As soon as an issue lands in your queue, the triage agent grooms it: it reads the ticket and the code, picks a blueprint, and lists open questions. The questions appear in Needs you and as a comment on the GitHub issue; an answer in either place counts, and the other is updated. The ticket waits until every question is answered, and you can change the blueprint it picked meanwhile. After grooming it runs to a ready PR without stopping. A question that only appears mid-run gets a best guess, recorded in GATES.md and listed in PR.md under "Decisions made for you".
+**Grooming is the one stop.** As soon as an issue lands in your queue, the triage agent grooms it: it reads the ticket and the code, picks a blueprint, and asks its open questions in its own live terminal, with Claude Code's question prompt and its options. Needs you shows the ticket as waiting on you (decided 2026-11-22; nothing is posted to the issue); you open its terminal and answer there. Triage records each answer under Decisions in GROOMING.md, and you can change the blueprint it picked meanwhile. Any agent that stops to wait on you in its terminal shows in Needs you the same way. After grooming it runs to a ready PR without stopping. A question that only appears mid-run gets a best guess, recorded in GATES.md and listed in PR.md under "Decisions made for you".
 
 **Product questions are never ours to answer.** Grooming sorts every question into one of two kinds:
 

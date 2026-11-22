@@ -38,3 +38,7 @@ test("z is the Config page's undo for an override", () => {
   assert.deepEqual(k("z"), { kind: "undo-override" });
   assert.equal(k("z", { platform: true }), null);
 });
+
+test("g is groom again", () => {
+  assert.deepEqual(k("g"), { kind: "regroom" });
+});

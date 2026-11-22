@@ -96,6 +96,7 @@ test("with tickets.split: auto, triage's split of a goal makes local parts at on
   startGrooming(s.db, { dir: s.dir, repo: s.repo, id: 10000, run: s.run, now });
   proposePart(s.db, { id: 10000, title: "First", now });
   proposePart(s.db, { id: 10000, title: "Second", now });
+  writeFileSync(join(s.dir, "tickets/10000/GROOMING.md"), "Two parts.\n"); // triage's last step: it finished
   expect(advance(s.db, { dir: s.dir, repo: s.repo, id: 10000, run: s.run, now })).toMatchObject({ split: "created", children: [10001, 10002] });
   expect(s.gh.length).toBe(0); // a goal has no issue
   expect(s.ticket(10000)).toMatchObject({ state: "paused", groomed_at: null });

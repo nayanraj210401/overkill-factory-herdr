@@ -71,3 +71,13 @@ test("z undoes the selected override through factory learn undo, and names the f
   assert.match(a.detail, /use opus again, not sonnet/);
   assert.deepEqual(undoOverrideAsk(undefined), { error: "No override selected" });
 });
+
+test("g grooms a ticket again until it starts, never while its triager runs", async () => {
+  const { regroomAsk } = await import("../lib/actions.js");
+  const a = regroomAsk(ticket({ state: "grooming", needs: { kind: "question", text: "3 questions" }, terminal: null }));
+  assert.equal(a.title, "Groom #409 again?");
+  assert.deepEqual(a.args, ["groom", "409"]);
+  assert.match(regroomAsk(ticket({ state: "grooming", terminal: "t4" })).error, /being groomed now/);
+  assert.match(regroomAsk(ticket({ state: "running", terminal: "t4" })).error, /has started/);
+  assert.deepEqual(regroomAsk(null), { error: "No ticket selected" });
+});

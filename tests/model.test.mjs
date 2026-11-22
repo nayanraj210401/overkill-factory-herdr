@@ -218,3 +218,12 @@ test("Config's Pending changes lists the maintainer's open requests only", async
   assert.deepEqual(pendingRequests(tickets).map((t) => t.id), [1, 4]);
   assert.deepEqual(pendingRequests(undefined), []);
 });
+
+test("an agent waiting on you in its terminal is in Needs you, first, whatever its stage", async () => {
+  const { groupOf, needsYou } = await import("../lib/model.js");
+  const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "Waiting on you in its terminal (t1): open it to answer" } };
+  assert.equal(groupOf(waiting), "needs");
+  assert.equal(groupOf({ id: 8, state: "running", stage: "spec", needs: null }), "running");
+  const order = needsYou([{ id: 1, state: "ready", needs: null }, { id: 2, state: "parked", needs: { kind: "parked", text: "" } }, waiting]);
+  assert.deepEqual(order.map((n) => [n.ticket.id, n.kind]), [[9, "attention"], [1, "merge"], [2, "parked"]]);
+});

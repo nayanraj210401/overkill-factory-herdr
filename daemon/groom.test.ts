@@ -8,6 +8,11 @@ import { ask, askMidRun, parseAnswers, pick, questionsComment, readIssueAnswers,
 import { recordUsage, transcriptDir } from "./usage.ts";
 
 const now = "2026-11-21T10:00:00Z";
+// A fake triager that finishes: its last step is GROOMING.md in the folder it runs in.
+const triaged = (argv: string[]) => {
+  if (argv.includes("factory.stage=groom") && argv.includes("--cwd")) writeFileSync(join(argv[argv.indexOf("--cwd") + 1], "GROOMING.md"), "groomed\n");
+};
+
 function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
@@ -23,7 +28,7 @@ function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   let comments: object[] = [];
   let n = 0;
   const run: Run = (argv, cwd) => {
-    if (argv[0] === "hc") return hc.push(argv), { code: 0, out: `{"address":"t${++n}"}` };
+    if (argv[0] === "hc") return triaged(argv), hc.push(argv), { code: 0, out: `{"address":"t${++n}"}` };
     if (argv[0] !== "gh") return sh(argv, cwd);
     gh.push(argv);
     if (argv.includes("author")) return { code: 0, out: "pat-po" };
@@ -44,12 +49,13 @@ test("triage runs in the ticket's folder with a brief naming the issue, the blue
   const argv = hc[0];
   expect(argv[argv.indexOf("--cwd") + 1]).toBe(join(dir, "tickets/412"));
   const brief = argv.at(-1)!;
-  // unattended, like every agent: `factory pick` / `factory question` never wait for approval
-  expect(argv.slice(argv.indexOf("claude"), argv.indexOf("claude") + 3)).toEqual(["claude", "--permission-mode", "acceptEdits"]);
+  // auto mode, like every agent: `factory pick` never waits for approval; questions are asked in the terminal
+  expect(argv.slice(argv.indexOf("claude"), argv.indexOf("claude") + 3)).toEqual(["claude", "--permission-mode", "auto"]);
   expect(JSON.parse(readFileSync(argv[argv.indexOf("--settings") + 1], "utf8")).permissions.allow).toContain("Bash(factory:*)");
   expect(brief).toContain("gh issue view 412 --repo acme/api --comments");
   expect(brief).toContain("one of address-review, bugfix, chore, feature");
-  expect(brief).toContain("factory question 412 product <question>");
+  expect(brief).toContain("ask the person here, in this session, with your question tool (AskUserQuestion)");
+  expect(brief).not.toContain("factory question");
   expect(brief).toContain("Read the issue and the code it touches"); // the triager agent's own prompt
   expect(ticket()).toMatchObject({ state: "grooming", stage: "groom" });
   expect(() => startGrooming(db, { dir, repo, id: 412, run, now })).toThrow("being groomed already");
@@ -211,3 +217,39 @@ test("an agent's mid-run product question parks the ticket, goes on the issue, a
   expect(gates).toContain("**Your answer:** Per user");
 });
 
+
+test("triage that stops before GROOMING.md (killed, crashed) parks the ticket instead of starting it, and isn't retried on its own", () => {
+  const { db, dir, repo, add, ticket } = setup();
+  add(412);
+  const hc: string[][] = [];
+  const quiet: Run = (argv, cwd) => (argv[0] === "hc" ? (hc.push(argv), { code: 0, out: '{"address":"t1"}' }) : sh(argv, cwd)); // never writes GROOMING.md
+  startGrooming(db, { dir, repo, id: 412, run: quiet, now });
+  advance(db, { dir, repo, id: 412, run: quiet, now }); // its terminal exited
+  expect(ticket().state).toBe("grooming");
+  expect(ticket().needs_kind).toBe("parked");
+  expect(ticket().needs_text).toContain("factory groom 412");
+  expect(startPendingGrooming(db, { dir, repo, run: quiet, now })).toEqual([]); // no loop
+  expect(startGrooming(db, { dir, repo, id: 412, run: quiet, now })).toBe("t1"); // `factory groom` reruns it
+  expect(ticket().needs_kind).toBe(null);
+});
+
+test("grooming again withdraws the questions nobody answered and keeps the old GROOMING.md aside", () => {
+  const { db, dir, repo, run, add, ticket } = setup();
+  add(412);
+  startGrooming(db, { dir, repo, id: 412, run, now });
+  ask(db, { id: 412, kind: "product", text: "Which plan?", now });
+  ask(db, { id: 412, kind: "engineering", text: "Redis or memory?", now });
+  db.query("UPDATE questions SET answer = 'memory', answered_by = 'you', answered_at = ? WHERE ticket = 412 AND n = 2").run(now);
+  advance(db, { dir, repo, id: 412, run, now }); // the triager's terminal is gone: waits on Q1
+  expect(ticket()).toMatchObject({ state: "grooming", needs_kind: "question" });
+  writeFileSync(join(dir, "tickets/412/GROOMING.md"), "first look\n");
+  // The fake triager writes a new GROOMING.md only when it is told to (triaged); this one dies early.
+  const dies: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: '{"address":"t9"}' } : run(argv, cwd));
+  startGrooming(db, { dir, repo, id: 412, run: dies, now });
+  expect(ticket()).toMatchObject({ state: "grooming", needs_kind: null });
+  expect(db.query("SELECT n, answer FROM questions WHERE ticket = 412").all()).toEqual([{ n: 2, answer: "memory" }]);
+  expect(readFileSync(join(dir, "tickets/412/GROOMING.before.md"), "utf8")).toBe("first look\n");
+  // Without a fresh GROOMING.md, the second triager counts as stopped early, not finished.
+  expect(advance(db, { dir, repo, id: 412, run: dies, now })).toMatchObject({ stage: "groom" });
+  expect(ticket().needs_text).toContain("Triage stopped before it finished");
+});
