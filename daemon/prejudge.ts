@@ -4,7 +4,7 @@
 // the comment's suggested verdict and shown in REVIEW.md; it pre-fills, and `factory
 // comment` still decides. The one exception: while you're away, a clear-cut `fix`
 // proposal is applied as the verdict. A pushback or an escalation is never applied on a
-// cheap model's guess, so away.min_agreement (no pushbacks without agreement data) holds.
+// cheap model's guess; a pushback needs the agreement gate (daemon/agreement.ts) too.
 import { pinModel } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { readFactory, type Run } from "./runner.ts";

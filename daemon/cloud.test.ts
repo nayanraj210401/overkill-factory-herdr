@@ -76,8 +76,14 @@ test("⇧L fast-forwards to the cloud's commits, imports RESULT.md, drops the pa
   expect(() => toLocal(db, { dir, repo, id: 7, run, now: "x" })).toThrow("#7 isn't in the cloud");
 });
 
-test("questions from the cloud park the ticket; min_agreement in factory.yaml keeps tickets local", () => {
+test("questions from the cloud park the ticket; below the agreement bar, the pack says no pushbacks", () => {
   expect(parseResult("Stage: pr\n## Evidence\n## Questions\nWhich plans get it?\n").questions).toBe("Which plans get it?");
-  const { db, dir, repo, run } = setup('name: t\nready: [evidence]\naway: { min_agreement: 0.85 }\n');
-  expect(() => toCloud(db, { dir, repo, id: 7, run, now: "x" })).toThrow("away.min_agreement is set");
+  const closed = setup('name: t\nready: [evidence]\naway: { min_agreement: 0.85 }\n');
+  toCloud(closed.db, { dir: closed.dir, repo: closed.repo, id: 7, run: closed.run, now: "x" });
+  const pack = (s: ReturnType<typeof setup>) => sh(["git", "--git-dir", s.origin, "show", "factory/7-rate-limit-login:.factory-run/7/CLOUD.md"]).out;
+  expect(pack(closed)).toContain("Don't push back on a review comment: the judge (claude-haiku-5-5) hasn't been checked against the person's verdicts yet");
+  // The gate off: no such rule.
+  const off = setup('name: t\nready: [evidence]\naway: { min_agreement: 0 }\n');
+  toCloud(off.db, { dir: off.dir, repo: off.repo, id: 7, run: off.run, now: "x" });
+  expect(pack(off)).not.toContain("push back");
 });

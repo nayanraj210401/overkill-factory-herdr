@@ -21,6 +21,7 @@ import { login, newTicket, pollQueue } from "./intake.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
 import { judge } from "./comments.ts";
+import { disagreements, examples, label, pushbackGate, runAgreement } from "./agreement.ts";
 import { isAway, setAway } from "./away.ts";
 import { startHold } from "./budget.ts";
 import { toCloud, toLocal } from "./cloud.ts";
@@ -84,6 +85,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   stage <id> <Name> [detail…] [--next A,B]  enter a stage (the current one ends)
   evidence <id> <check> pass|fail [detail…] record a check result
   comment <id> C<n> fix|pushback|escalate <reason…>  the fix agent's verdict on a reviewer's comment
+  label <id> C<n> fix|pushback|escalate  your own verdict on a review comment, for the agreement benchmark
+  agreement [--dry-run] [--json]     re-judge your past review comments with review.judge_model and record how often it matches you (--dry-run counts them)
   verdict <id> holdout|review pass|fail [detail…] [--by voter]  a checker's or reviewer's verdict
   decide <ticket> <who> <what> [why] log a decision
   setup [--json]                     the first-run checklist: each step ok, missing or skipped, with its fix command
@@ -282,6 +285,27 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (!Number.isInteger(Number(sub)) || !Number.isInteger(n) || n < 1) throw new Error("usage: factory comment <id> C<n> fix|pushback|escalate <reason…>");
       change(db, () => judge(db, { ticket: Number(sub), n, verdict, reason: why.join(" "), now: now(), repo: leadRepo(db)?.path }));
       log(`#${sub}: C${n} ${verdict}`);
+    } else if (cmd === "label") {
+      const [c = "", verdict = ""] = rest;
+      const n = Number(c.replace(/^C/i, ""));
+      if (!Number.isInteger(Number(sub)) || !Number.isInteger(n) || n < 1) throw new Error("usage: factory label <id> C<n> fix|pushback|escalate");
+      change(db, () => label(db, { ticket: Number(sub), n, verdict, now: now() }));
+      log(`#${sub}: C${n} labelled ${verdict}; factory agreement uses it`);
+    } else if (cmd === "agreement") {
+      // Not in a change: one model call per comment, and the run writes its rows at the end.
+      const lead = needLead(db);
+      if (dryRun) {
+        const xs = examples(db);
+        return log(`${xs.length} labelled comments (${xs.filter((x) => x.source === "you").length} labelled by you, the rest kept at merge)`);
+      }
+      const r = runAgreement(db, { repo: lead.path, run: sh, now });
+      const gate = pushbackGate(db, lead.path);
+      if (json) return log(JSON.stringify({ run: r, gate: { ok: gate.ok, why: gate.why, min: gate.min } }));
+      log(`agreement with ${r.model}: ${Math.round(r.rate * 100)}% (${r.agreed} of ${r.examples}${r.failed ? `, ${r.failed} unanswered` : ""})`);
+      for (const d of disagreements(db, r.id)) log(`  #${d.ticket} C${d.n}: you ${d.yours}, judge ${d.got ?? "none"}${d.why ? ` (${d.why})` : ""}: ${(d.body ?? "").trim().split("\n")[0].slice(0, 80)}`);
+      log(`pushbacks while away: ${gate.ok ? "allowed" : "off"}; ${gate.why}`);
+      writeMetrics(db, p.metrics);
+      return;
     } else if (cmd === "verdict") {
       const [kind, result, ...detail] = rest;
       const r = result?.toUpperCase();

@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, readTextFile, watchFolder, checking, props } from "herdr";
-import { validateMetrics, headlineTiles, minutes, bars } from "./lib/metrics.js";
+import { validateMetrics, headlineTiles, minutes, bars, agreementCard } from "./lib/metrics.js";
 import { validateBenchmarks, variantRows, suiteNote, COLUMNS } from "./lib/benchmarks.js";
 import { root } from "./lib/store.js";
 
@@ -108,7 +108,18 @@ export default class FactoryMetrics extends View {
         .child(div().w(110).text_color(q.reverted ? t.blocked : t.muted).child(`${q.reverted} reverted`))
         .child(div().w(140).text_color(t.muted).child(`${q.retries_per_ticket} retries / ticket`))))
       : div().text_color(t.muted).child("No merged PRs in range.")));
-    return page.children(this.benchmarks(t));
+    return page.child(this.agreement(t)).children(this.benchmarks(t));
+  }
+
+  // The babysitter's agreement with your past review verdicts, which gates pushbacks while you're away.
+  agreement(t) {
+    const a = this.doc?.agreement;
+    const c = agreementCard(a);
+    return this.card(t, "Babysitter agreement", a ? (a.ok ? "pushbacks allowed while away" : "no pushbacks while away") : null, v_flex().gap(8)
+      .child(h_flex().gap(12).items_center()
+        .child(div().text_size(24).font_semibold().text_color(a?.rate != null && !a.ok ? t.blocked : t.foreground).child(c.value))
+        .child(div().flex_1().min_w(0).text_size(12).text_color(t.dim).child(c.sub)))
+      .when(c.rows.length > 0, (el) => el.child(this.rows(t, c.rows))));
   }
 
   // One card per suite: its latest report, a row per variant, the winner marked as a recommendation.
