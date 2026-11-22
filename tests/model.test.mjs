@@ -219,6 +219,13 @@ test("Config's Pending changes lists the maintainer's open requests only", async
   assert.deepEqual(pendingRequests(undefined), []);
 });
 
+test("Pending changes say who asked: you, or the learner", async () => {
+  const { askedBy } = await import("../lib/model.js");
+  assert.equal(askedBy({ requested_by: "learner" }), "the learner");
+  assert.equal(askedBy({ requested_by: "you" }), "you");
+  assert.equal(askedBy({}), "you"); // a status.json from before the field
+});
+
 test("an agent waiting on you in its terminal is in Needs you, first, whatever its stage", async () => {
   const { groupOf, needsYou } = await import("../lib/model.js");
   const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "Waiting on you in its terminal (t1): open it to answer" } };

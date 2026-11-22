@@ -200,8 +200,9 @@ Each decision is a row: what was decided, the options, the choice, the context, 
 **The learner decides; the maintainer writes.**
 
 - Within `learn.tunable`, the learner changes settings itself, as overrides in SQLite, between tickets. No files change.
-- When an override has held for `learn.promote_after` tickets (default 30), the learner files a maintainer request to make it permanent. The maintainer writes it into `.factory/` and opens the PR.
-- Anything outside the tunables (a prompt change, a lesson that should be a lint rule or test, a new stage) is a suggestion. The learner files it as a maintainer request with its evidence; the maintainer drafts it, runs a benchmark against the current setup when it can, and opens the PR.
+- When an override has held for `learn.promote_after` merged tickets (default 30), the learner files a maintainer request to make it permanent, through the same `request()` Overwatch uses, marked as from the learner. Its evidence goes into the request's REQUEST.md: the metric (`learn.target`), its value before and after, the ticket count and the override's id. The maintainer writes it into `.factory/` and opens the PR. There is one request per override, and none while another for the same setting is open.
+- Anything outside the tunables (a prompt change, a lesson that should be a lint rule or test, a new stage) is a suggestion. The learner files it as a maintainer request with its evidence (`factory learn suggest "<change>" --why "<evidence>"`; a lesson loaded into `learn.promote_after` briefs files one on its own). The maintainer drafts it, runs a benchmark against the current setup when it can, and opens the PR.
+- Config's Pending changes says who asked for each request: you (in Overwatch) or the learner.
 - The learner never writes files and the maintainer never decides a setting by itself, so every change has one source of evidence and one reviewable diff.
 
 ### Storage and dependencies
@@ -351,7 +352,7 @@ PRD 6.4 and 6.11. The factory tunes itself, but only inside limits you set.
 - **You pick what it may change.** `learn.tunable` lists the settings it may move, such as the model per stage, how deep verify goes, and how much context loads at start. Prompts, gates, blueprints, ready rules and hard stops are never tunable.
 - **A ticket's settings are fixed when it starts.** Nothing changes mid-run. Tuning happens between tickets: like a bandit experiment, the daemon tries a few values on similar tickets, compares them on the target, and shifts toward the winner.
 - **The quality floor holds.** A setting that lowers ready-rule pass rates or raises the revert rate loses, however cheap it is.
-- **Tuned values live outside `.factory/`.** They are overrides in SQLite, so the files stay yours. Config shows each override next to the file's value, `z` undoes one, and `factory learn export` writes them into a PR if you want to keep them.
+- **Tuned values live outside `.factory/` until they prove themselves.** They are overrides in SQLite, so the files stay yours. Config shows each override next to the file's value, and `z` undoes one. One that holds for `learn.promote_after` tickets comes back as a maintainer request; the learner never edits a file itself. (`factory learn export` prints the edit, for the maintainer or for you.)
 - **Every decision is logged from day one,** with its outcome, as flow-stack's decisions table does. The same log feeds handoffs and tuning.
 - **Lessons without prompt bloat.** A repeated review comment or failure becomes a suggested lint rule, test or scenario, which you merge like any PR. What can't be a check goes into a lesson store scoped to an area of the code, loaded only when a ticket touches that area. The daemon merges duplicate lessons and retires ones that never fire.
 - **Small trained models later.** Once a narrow, repeated decision has thousands of labelled examples (the review-comment verdict, routing to a cheap or strong model, choosing which tests a change needs), a small classifier can replace the heuristic, under the same floor.
@@ -423,9 +424,12 @@ You change the factory by asking for it. Overwatch is where you ask; the **maint
 
 **Overwatch sorts every request.** A question ("what's blocking #425?") it answers itself. A ticket action (start, pause, reorder) it sends to the daemon. A change to the factory it turns into a maintainer request, listed on Tickets with a factory tag and on Config under Pending changes.
 
+**The maintainer owns every configuration change.** You ask Overwatch, and Overwatch hands config work to the maintainer with `factory request`. Other agents send their config needs the same way: the learner files its promotions and suggestions as requests. Nothing else edits `.factory/` or the account config.
+
 **What the maintainer handles:**
 
 - **Configuration:** budgets, gates, `max_running`, tunables, the queue.
+- **The account config** (`~/.factory/config.yaml`: `plan`, the account's `budget.per_day`, `away`, `cloud`, `profile`). No repo holds that file, so the maintainer never edits it in place. `factory account propose <id>` copies it into the request's ticket folder as `ACCOUNT-CONFIG.yaml`, and the maintainer edits that copy. The factory check validates it against the account schema, keeps the copy it checked, and puts the diff on the PR (`ACCOUNT-CONFIG.md`). The daemon applies the checked copy only after the request merges, through the same gate (`maintainer.gate`, human by default), and keeps the old file as `config.yaml.bak-<time>-<id>`. If the file changed after the check, nothing is applied and the ticket's log says so. A request that changes only the account config opens no PR: it waits at the merge gate, and `m` applies it.
 - **Rules:** a new ready rule, hard stop, lint rule or never-unattended area.
 - **Blueprints and agents:** a new blueprint, a new stage, a new agent or a change to one's prompt.
 - **Migrations:** importing old Claude Code sessions into Runs and the decision log, migrating flow-stack's lessons, profile and playbooks (each built-in or repo playbook becomes a blueprint draft), and later, moving between versions of the factory's own schema.

@@ -1,16 +1,22 @@
 import { test, expect } from "bun:test";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
-import { advance, loadAgent, loadBlueprint, sh, startTicket, type Run } from "./runner.ts";
-import { request } from "./maintainer.ts";
+import { advance, loadAgent, loadBlueprint, mergeTicket, sh, startTicket, type Run } from "./runner.ts";
+import { ACCOUNT_PROPOSAL, applyMergedAccounts, proposeAccount, request } from "./maintainer.ts";
+import { learnerSuggest, promoteOverrides } from "./learner.ts";
+import { addLesson, setOverride } from "./learn.ts";
+import { buildStatus } from "./status.ts";
+import { validateStatus } from "../lib/status.js";
+import { getMeta } from "./db.ts";
 
 // After the worktree commits the tests make: the ready rules reject evidence older than the last commit.
 const now = new Date(Date.now() + 60_000).toISOString();
 
 // A factory whose .factory/ has no maintainer files of its own: the shipped ones apply.
 function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
+  process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "home-")); // the account config lives here, never in ~/.factory
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
   cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
@@ -28,7 +34,7 @@ function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
   setRepo(db, { slug: "acme/api", path: repo, lead: true });
   let term = 0;
   const bodies: string[] = []; // each PR body the daemon opened
-  const run: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: `{"address":"t${++term}"}` } : argv[0] === "gh" ? (argv[1] === "pr" && argv[2] === "create" ? (bodies.push(readFileSync(argv[argv.indexOf("--body-file") + 1], "utf8")), { code: 0, out: "https://github.com/acme/api/pull/9" }) : { code: 1, out: "gh is stubbed" }) : sh(argv, cwd));
+  const run: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: `{"address":"t${++term}"}` } : argv[0] === "gh" ? (argv[1] === "pr" && ["ready", "merge"].includes(argv[2]) ? { code: 0, out: "" } : argv[1] === "pr" && argv[2] === "create" ? (bodies.push(readFileSync(argv[argv.indexOf("--body-file") + 1], "utf8")), { code: 0, out: "https://github.com/acme/api/pull/9" }) : { code: 1, out: "gh is stubbed" }) : sh(argv, cwd));
   const ticket = (id: number) => db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as any;
   const commit = (wt: string, file: string, text: string) => {
     writeFileSync(join(wt, file), text);
@@ -119,4 +125,152 @@ test("a change that touches no blueprint writes no DRYRUN.md", () => {
   s.finish(id);
   expect(existsSync(join(s.dir, "tickets", String(id), "DRYRUN.md"))).toBe(false);
   expect(s.bodies[0]).not.toContain("Dry run");
+});
+
+// ---- the account config: proposed in the ticket's folder, checked, shown, applied on merge
+
+const accountPath = () => join(process.env.FACTORY_HOME!, "config.yaml");
+const BEFORE = "# mine\nplan: { pause_at: 85% }\n";
+
+test("an account config change is checked, its diff rides on the PR, and it applies only when the PR merges, with a backup", () => {
+  const s = setup();
+  writeFileSync(accountPath(), BEFORE);
+  const { id } = request(s.db, { text: "Add 'small diffs' to my taste and raise max_running", repo: "acme/api", run: s.run, now, dir: s.dir });
+  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
+  const copy = proposeAccount(s.dir, id);
+  expect(readFileSync(copy, "utf8")).toBe(BEFORE); // the maintainer starts from the file as it is
+  writeFileSync(copy, BEFORE + "profile: { taste: [small diffs over clever ones] }\n");
+  s.commit(s.ticket(id).worktree, ".factory/factory.yaml", "name: t\nquality_floor: [\"true\"]\nmax_running: 4\n");
+  s.finish(id);
+  expect(evidence(s.db, id).find((e) => e.check_name === "account config")).toMatchObject({ result: "PASS" });
+  expect(evidence(s.db, id).find((e) => e.check_name === "only .factory/")).toMatchObject({ result: "PASS" }); // the proposal isn't a repo file
+  expect(s.bodies[0]).toContain("## The account config (~/.factory/config.yaml)");
+  expect(s.bodies[0]).toContain("+profile: { taste: [small diffs over clever ones] }");
+  expect(s.ticket(id)).toMatchObject({ stage: "merge", state: "ready", pr_number: 9 });
+  // Waiting at the gate, nothing is applied, however often the daemon looks.
+  applyMergedAccounts(s.db, { dir: s.dir, now });
+  expect(readFileSync(accountPath(), "utf8")).toBe(BEFORE);
+  // You merge: the checked copy is written, the old file kept beside it; a second pass does nothing.
+  mergeTicket(s.db, { repo: s.repo, id, run: s.run, now, dir: s.dir });
+  const log: string[] = [];
+  applyMergedAccounts(s.db, { dir: s.dir, now, log: (l) => log.push(l) });
+  expect(readFileSync(accountPath(), "utf8")).toContain("small diffs over clever ones");
+  const backups = readdirSync(process.env.FACTORY_HOME!).filter((f) => f.startsWith("config.yaml.bak-"));
+  expect(backups).toHaveLength(1);
+  expect(readFileSync(join(process.env.FACTORY_HOME!, backups[0]), "utf8")).toBe(BEFORE);
+  expect(log[0]).toContain("applied the account config");
+  applyMergedAccounts(s.db, { dir: s.dir, now, log: (l) => log.push(l) });
+  expect(log).toHaveLength(1);
+  expect(readdirSync(process.env.FACTORY_HOME!).filter((f) => f.startsWith("config.yaml.bak-"))).toHaveLength(1);
+});
+
+test("a bad account config proposal fails the factory check and goes back to the maintainer", () => {
+  const s = setup();
+  const { id } = request(s.db, { text: "Pause at 90%", repo: "acme/api", run: s.run, now, dir: s.dir });
+  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
+  writeFileSync(proposeAccount(s.dir, id), "plan: { pause_at: 90% }\nprofle: { rules: [x] }\n");
+  s.finish(id);
+  expect(evidence(s.db, id).find((e) => e.check_name === "account config")).toMatchObject({ result: "FAIL" });
+  expect(evidence(s.db, id).find((e) => e.check_name === "account config")!.detail).toContain("profle");
+  expect(s.ticket(id)).toMatchObject({ stage: "maintain", state: "running" });
+  expect(existsSync(accountPath())).toBe(false);
+});
+
+test("an account-only request opens no PR: it waits at the merge gate, and m applies it", () => {
+  const s = setup();
+  const { id } = request(s.db, { text: "Never push to main, in every factory", repo: "acme/api", run: s.run, now, dir: s.dir });
+  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
+  writeFileSync(proposeAccount(s.dir, id), "profile: { rules: [never push to main] }\n");
+  s.finish(id);
+  expect(s.bodies).toHaveLength(0);
+  expect(s.ticket(id)).toMatchObject({ stage: "merge", state: "ready", pr_number: null });
+  expect(existsSync(join(s.dir, "tickets", String(id), "ACCOUNT-CONFIG.md"))).toBe(true);
+  expect(existsSync(accountPath())).toBe(false);
+  expect(mergeTicket(s.db, { repo: s.repo, id, run: s.run, now, dir: s.dir })).toMatchObject({ pr: null });
+  applyMergedAccounts(s.db, { dir: s.dir, now });
+  expect(readFileSync(accountPath(), "utf8")).toBe("profile: { rules: [never push to main] }\n");
+  expect(s.ticket(id).state).toBe("merged");
+});
+
+test("an account config someone changed after the check is left alone", () => {
+  const s = setup();
+  writeFileSync(accountPath(), BEFORE);
+  const { id } = request(s.db, { text: "Pause at 90%", repo: "acme/api", run: s.run, now, dir: s.dir });
+  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
+  writeFileSync(proposeAccount(s.dir, id), "plan: { pause_at: 90% }\n");
+  s.finish(id);
+  writeFileSync(accountPath(), BEFORE + "cloud: { on_sleep: off }\n"); // your own edit, meanwhile
+  mergeTicket(s.db, { repo: s.repo, id, run: s.run, now, dir: s.dir });
+  const log: string[] = [];
+  applyMergedAccounts(s.db, { dir: s.dir, now, log: (l) => log.push(l) });
+  expect(readFileSync(accountPath(), "utf8")).toBe(BEFORE + "cloud: { on_sleep: off }\n");
+  expect(log[0]).toContain("changed after the check; nothing was applied");
+  expect(s.db.query("SELECT what FROM decisions WHERE ticket = ? AND who = 'daemon' ORDER BY id DESC LIMIT 1").get(id)).toEqual({ what: "account config not applied" });
+});
+
+// ---- the learner files maintainer requests
+
+test("an override that held for learn.promote_after merged tickets becomes one learner request, with its evidence", () => {
+  const s = setup("name: t\nquality_floor: [\"true\"]\nlearn:\n  target: cost_per_pr\n  tunable: [agents.reviewer.model]\n  promote_after: 3\n");
+  setOverride(s.db, { key: "agents.reviewer.model", value: "claude-haiku-5", reason: "cheaper, same verdicts", tunable: ["agents.reviewer.model"], now });
+  const ticketWith = (id: number, settings: object, usd: number) => {
+    s.db.query("INSERT INTO tickets (id, title, state, blueprint, settings, updated_at) VALUES (?, 'x', 'merged', 'feature', ?, ?)").run(id, JSON.stringify(settings), now);
+    s.db.query("INSERT INTO usage (message_id, ticket, at, model, input, cache_write_5m, cache_write_1h, cache_read, output, usd) VALUES (?, ?, ?, 'm', 1, 0, 0, 0, 1, ?)").run(`m${id}`, id, now, usd);
+  };
+  ticketWith(1, {}, 3); ticketWith(2, {}, 5);
+  ticketWith(3, { "agents.reviewer.model": "claude-haiku-5" }, 1);
+  ticketWith(4, { "agents.reviewer.model": "claude-haiku-5" }, 2);
+  const o = { dir: s.dir, repo: s.repo, slug: "acme/api", run: s.run, now };
+  expect(promoteOverrides(s.db, o)).toEqual([]); // two tickets: not yet
+  ticketWith(5, { "agents.reviewer.model": "claude-haiku-5" }, 3);
+  const [r] = promoteOverrides(s.db, o);
+  expect(r.title).toBe('Make agents.reviewer.model = "claude-haiku-5" permanent (override #1, held for 3 tickets)');
+  expect(s.ticket(r.id)).toMatchObject({ blueprint: "factory", state: "queued", trigger_name: "learner" });
+  const md = readFileSync(join(s.dir, "tickets", String(r.id), "REQUEST.md"), "utf8");
+  expect(md).toContain("From: the learner");
+  expect(md).toContain("Metric (learn.target): cost_per_pr. Before: $4.00 over 2 tickets. After: $2.00 over 3 tickets.");
+  expect(md).toContain("Held for 3 merged tickets");
+  expect(s.db.query("SELECT who FROM decisions WHERE ticket = ? ORDER BY id").all(r.id)).toEqual([{ who: "learner" }, { who: "learner" }]);
+  // Config's Pending changes says who asked.
+  const status = buildStatus(s.db);
+  expect(validateStatus(status)).toEqual([]);
+  expect(status.tickets.find((t: any) => t.id === r.id)).toMatchObject({ requested_by: "learner" });
+  // No second request for it, while it's open or after.
+  ticketWith(6, { "agents.reviewer.model": "claude-haiku-5" }, 1);
+  expect(promoteOverrides(s.db, o)).toEqual([]);
+  s.db.query("UPDATE tickets SET state = 'closed' WHERE id = ?").run(r.id);
+  expect(promoteOverrides(s.db, o)).toEqual([]);
+  // A new override for the same setting may be promoted on its own evidence, but not while one is open.
+  setOverride(s.db, { key: "agents.reviewer.model", value: "claude-sonnet-5-5", tunable: ["agents.reviewer.model"], now });
+  for (const id of [7, 8, 9]) ticketWith(id, { "agents.reviewer.model": "claude-sonnet-5-5" }, 2);
+  s.db.query("UPDATE tickets SET state = 'queued' WHERE id = ?").run(r.id);
+  expect(promoteOverrides(s.db, o)).toEqual([]);
+  s.db.query("UPDATE tickets SET state = 'merged' WHERE id = ?").run(r.id);
+  expect(promoteOverrides(s.db, o).map((x) => x.title)).toEqual(['Make agents.reviewer.model = "claude-sonnet-5-5" permanent (override #2, held for 3 tickets)']);
+});
+
+test("a lesson loaded into many briefs, and a suggestion outside the tunables, become learner requests once each", () => {
+  const s = setup("name: t\nquality_floor: [\"true\"]\nlearn:\n  promote_after: 2\n");
+  const { id: lesson } = addLesson(s.db, { area: "src/auth/**", text: "rotate the session id after login", now });
+  s.db.query("UPDATE lessons SET hits = 2 WHERE id = ?").run(lesson);
+  const o = { dir: s.dir, repo: s.repo, slug: "acme/api", run: s.run, now };
+  const [r] = promoteOverrides(s.db, o);
+  expect(r.title).toBe(`Turn lesson #${lesson} (src/auth/**) into a lint rule or test`);
+  expect(readFileSync(join(s.dir, "tickets", String(r.id), "REQUEST.md"), "utf8")).toContain("Loaded into 2 ticket briefs");
+  expect(promoteOverrides(s.db, o)).toEqual([]);
+
+  expect(() => learnerSuggest(s.db, { ...o, text: "Add a lint step", evidence: " " })).toThrow(/--why/);
+  const a = learnerSuggest(s.db, { ...o, text: "Give the reviewer the diff stat first", evidence: "review_rounds_per_pr 2.1 → 1.4 on 12 tickets in a benchmark" })!;
+  expect(s.ticket(a.id)).toMatchObject({ trigger_name: "learner" });
+  expect(learnerSuggest(s.db, { ...o, text: "give the reviewer the diff-stat first!", evidence: "again" })).toBeNull();
+  expect(getMeta(s.db, `learner:lesson:${lesson}`)).toBe(String(r.id));
+});
+
+test("a request from you says so on the ticket and in REQUEST.md", () => {
+  const s = setup();
+  const { id } = request(s.db, { text: "Raise the day's budget", repo: "acme/api", run: s.run, now, dir: s.dir });
+  expect(readFileSync(join(s.dir, "tickets", String(id), "REQUEST.md"), "utf8")).toContain("From: you, in Overwatch");
+  expect(buildStatus(s.db).tickets.find((t: any) => t.id === id)).toMatchObject({ requested_by: "you" });
+  expect(buildStatus(s.db).tickets.find((t: any) => t.blueprint !== "factory")?.requested_by).toBeUndefined();
+  expect(ACCOUNT_PROPOSAL).toBe("ACCOUNT-CONFIG.yaml");
 });
