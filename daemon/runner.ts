@@ -24,7 +24,8 @@ import { finishSlice, readSlices, sliceInHand } from "./slices.ts";
 import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
 import { chooseNext } from "./orchestrate.ts";
 import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
-import { accountPending, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount } from "./maintainer.ts";
+import { APP_BRANCH, appPath, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount, checkFactoryAgents, outsidePending, requestKind, unreachableBlueprints } from "./maintainer.ts";
+import { checkCleanup } from "./cleanup.ts";
 import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
 import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from "./artifacts.ts";
@@ -282,20 +283,53 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     record("evidence", ok, ok ? `${latest.length} checks pass` : latest.length ? `${latest.filter((r) => r.result !== "PASS").length} failing` : "no checks recorded");
     return ok;
   }
-  if (o.check === "factory") {
-    // A maintainer's change: every .factory/ file passes the schema check, and nothing
-    // outside .factory/ changed (the maintainer looks after the factory, not the code).
-    const bad = validateDir(join(o.worktree, ".factory")).filter((r) => r.errors.length);
-    record("factory validate", !bad.length, bad.length ? bad.map((r) => `${r.path}: ${r.errors[0]}`).join("; ").slice(0, 200) : "every .factory/ file passes");
-    const outside = changedFiles(o.run, o.repo, o.worktree).filter((f) => !f.startsWith(".factory/"));
-    record("only .factory/", !outside.length, outside.length ? `changed outside .factory/: ${outside.slice(0, 5).join(", ")}` : "every change is in .factory/");
-    const dry = bad.length || !o.dir ? true : dryRunChanged(db, { ...o, dir: o.dir, record });
-    // The account config isn't in the repo: its proposal sits in the ticket's folder (maintainer.ts).
-    const account = o.dir ? checkAccount(o.dir, o.id) : null;
-    if (account) record("account config", account.ok, account.detail);
-    return !bad.length && !outside.length && dry && (account?.ok ?? true);
-  }
+  if (o.check === "factory") return factoryCheck(db, { ...o, record });
   throw new Error(`unknown check "${o.check}"`);
+}
+
+// A maintainer's change (maintainer.ts), checked by its request's kind, in the repo its
+// worktree is in (the request's repo: the lead, another of the factory's, or the app).
+function factoryCheck(db: Database, o: { id: number; repo: string; worktree: string; run: Run; now: string; dir?: string; record: (name: string, ok: boolean, detail: string) => void }) {
+  const kind = requestKind(db, o.id);
+  const own = ticketRepos(db, o.id)[0];
+  const base = (db.query("SELECT base FROM tickets WHERE id = ?").get(o.id) as { base: string | null } | null)?.base ?? undefined;
+  const changed = changedFiles(o.run, own.path, o.worktree, base);
+  if (kind === "cleanup") {
+    // Housekeeping changes no file: its list is in the ticket's folder, removed only on merge (cleanup.ts).
+    o.record("no file changes", !changed.length, changed.length ? `a cleanup changes no file, but changed: ${changed.slice(0, 5).join(", ")}` : "a cleanup changes no file");
+    const c = o.dir ? checkCleanup(db, { dir: o.dir, id: o.id, run: o.run, now: o.now }) : { ok: false, detail: "no ticket folder" };
+    o.record("cleanup", c.ok, c.detail);
+    return !changed.length && c.ok;
+  }
+  if (kind === "look") {
+    // The factory app's own repo: only its look, proven by the repo's own check.
+    const outside = changed.filter((f) => !appPath(f));
+    o.record("only the factory's look", !outside.length, outside.length ? `changed outside the app's look: ${outside.slice(0, 5).join(", ")}` : "every change is in the app's mods, themes, lib or layouts");
+    const r = o.run(["env", `PATH=${toolPath()}`, "bash", "scripts/check.sh"], o.worktree);
+    const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
+    o.record("scripts/check.sh", r.code === 0, r.code === 0 ? "every test, the generated files and herdr-app check on each mod pass" : `exit ${r.code}: ${tail}`);
+    return !outside.length && r.code === 0;
+  }
+  // config, blueprint, agents: every .factory/ file passes the schema check, nothing outside
+  // .factory/ changed (the maintainer looks after the factory, not the code), a changed
+  // blueprint gets a dry run, and a new one is one grooming or a trigger can start.
+  const dir = join(o.worktree, ".factory");
+  const bad = existsSync(dir) ? validateDir(dir).filter((r) => r.errors.length) : [];
+  o.record("factory validate", !bad.length, bad.length ? bad.map((r) => `${r.path}: ${r.errors[0]}`).join("; ").slice(0, 200) : "every .factory/ file passes");
+  const outside = changed.filter((f) => !f.startsWith(".factory/"));
+  o.record("only .factory/", !outside.length, outside.length ? `changed outside .factory/: ${outside.slice(0, 5).join(", ")}` : "every change is in .factory/");
+  const dry = bad.length || !o.dir ? true : dryRunChanged(db, { ...o, dir: o.dir, repo: own.path, changed });
+  const from = base ?? o.run(["git", "-C", own.path, "rev-parse", "HEAD"]).out.trim();
+  const added = changed.map((f) => f.match(/^\.factory\/blueprints\/([^/]+)\.ya?ml$/)?.[1]).filter((n): n is string => !!n && existsSync(join(dir, "blueprints", `${n}.yaml`)))
+    .filter((n) => o.run(["git", "-C", o.worktree, "cat-file", "-e", `${from}:.factory/blueprints/${n}.yaml`]).code !== 0);
+  const stranded = bad.length ? [] : unreachableBlueprints(dir, added);
+  if (added.length) o.record("new blueprint can start", !stranded.length, stranded.length ? `nothing starts ${stranded.join(", ")}: add it to grooming.blueprints in factory.yaml, or a trigger` : `${added.join(", ")} can be picked once this merges`);
+  // Files no repo holds: proposals in the ticket's folder (maintainer.ts).
+  const account = o.dir ? checkAccount(o.dir, o.id) : null;
+  if (account) o.record("account config", account.ok, account.detail);
+  const agents = o.dir ? checkFactoryAgents(o.dir, o.id) : null;
+  if (agents) o.record("factory agents", agents.ok, agents.detail);
+  return !bad.length && !outside.length && dry && !stranded.length && (account?.ok ?? true) && (agents?.ok ?? true);
 }
 
 // verify.features (flow-stack's feature map): the scenario of each feature the ticket's
@@ -316,9 +350,9 @@ function featureScenarios(o: { repo: string; worktree: string; run: Run; record:
 
 // A changed blueprint gets a dry run: DRYRUN.md in the ticket's folder, which the PR body
 // carries (ready.ts). A draft whose graph names a stage that isn't there fails the check.
-function dryRunChanged(db: Database, o: { id: number; repo: string; worktree: string; run: Run; dir: string; record: (name: string, ok: boolean, detail: string) => void }) {
+function dryRunChanged(db: Database, o: { id: number; repo: string; worktree: string; run: Run; dir: string; changed: string[]; record: (name: string, ok: boolean, detail: string) => void }) {
   const out = join(o.dir, "tickets", String(o.id), "DRYRUN.md");
-  const files = changedFiles(o.run, o.repo, o.worktree).filter((f) => f === ".factory/blueprint.yaml" || /^\.factory\/blueprints\/[^/]+\.yaml$/.test(f));
+  const files = o.changed.filter((f) => f === ".factory/blueprint.yaml" || /^\.factory\/blueprints\/[^/]+\.yaml$/.test(f));
   const drafts = files.filter((f) => existsSync(join(o.worktree, f)));
   if (!drafts.length) { if (existsSync(out)) unlinkSync(out); return true; }
   try {
@@ -333,9 +367,10 @@ function dryRunChanged(db: Database, o: { id: number; repo: string; worktree: st
   }
 }
 
-// Files the ticket's branch changed since it left the repo's checkout, committed or not.
-function changedFiles(run: Run, repo: string, worktree: string) {
-  const head = run(["git", "-C", repo, "rev-parse", "HEAD"]).out.trim();
+// Files the ticket's branch changed since it left the repo's checkout (or `from`, where
+// its worktree started), committed or not.
+function changedFiles(run: Run, repo: string, worktree: string, from?: string) {
+  const head = from ?? run(["git", "-C", repo, "rev-parse", "HEAD"]).out.trim();
   const fork = run(["git", "-C", worktree, "merge-base", "HEAD", head]);
   const committed = fork.code === 0 ? run(["git", "-C", worktree, "diff", "--name-only", fork.out.trim(), "HEAD"]).out.split("\n") : [];
   const loose = [["diff", "--name-only", "HEAD"], ["ls-files", "--others", "--exclude-standard"]].flatMap((a) => run(["git", "-C", worktree, ...a]).out.split("\n"));
@@ -497,15 +532,17 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   }
   // One PR per repo. A cross-repo change's bodies then name each other's PRs.
   const repos = ticketRepos(db, o.id);
-  // A request that changes only the account config has no commits to open a PR from: it
-  // waits for you at the merge gate, and `m` applies it.
-  if (t.blueprint === FACTORY_BLUEPRINT && t.pr_number == null && accountPending(o.dir, o.id) && !changedFiles(run, o.repo, t.worktree).length) {
-    db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'no PR: only the account config changes', ?, ?)")
-      .run(o.id, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}; ACCOUNT-CONFIG.md in the ticket's folder shows the diff`, now);
+  // A request that changes only what no repo holds (the account config, the factory agents,
+  // a cleanup) has no commits to open a PR from: it waits for you at the merge gate, and `m` applies it.
+  if (t.blueprint === FACTORY_BLUEPRINT && t.pr_number == null && outsidePending(o.dir, o.id) && !changedFiles(run, repos[0].path, t.worktree, t.base ?? undefined).length) {
+    db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'no PR: nothing in a repo changes', ?, ?)")
+      .run(o.id, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}; the ticket's folder shows what changes (ACCOUNT-CONFIG.md, FACTORY-AGENTS.md, CLEANUP.md)`, now);
     return advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, opened: true });
   }
   const prs = repos.map((r) => {
-    const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number,
+    // The factory app's PRs go to its develop branch (a look request, maintainer.ts).
+    const app = !!(db.query("SELECT app FROM repos WHERE slug = ?").get(r.repo) as { app: number } | null)?.app;
+    const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number, base: app ? APP_BRANCH : undefined,
       others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })), closes: closesIssue(db, o.id, r, repos.length > 1) });
     setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now }, r.repo);
     return { ...r, pr_number: number };
@@ -538,9 +575,10 @@ export function mergeTicket(db: Database, o: { repo: string; id: number; run?: R
   const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT state, pr_number, blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; pr_number: number | null; blueprint: string } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
-  // An account-only request: your `m` is the gate; the caller applies the change (applyMergedAccounts).
-  if (t.state === "ready" && t.pr_number == null && t.blueprint === FACTORY_BLUEPRINT && o.dir && accountPending(o.dir, o.id)) {
-    finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: "the account config change" });
+  // A request with no PR (the account config, factory agents, a cleanup): your `m` is the
+  // gate; the caller applies the change (applyMerged in maintainer.ts).
+  if (t.state === "ready" && t.pr_number == null && t.blueprint === FACTORY_BLUEPRINT && o.dir && outsidePending(o.dir, o.id)) {
+    finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: "a change outside the repo" });
     return { pr: null, merged: [] as string[] };
   }
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready ticket's PR merges`);
