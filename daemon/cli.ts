@@ -46,7 +46,7 @@ import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { liveOverwatch, overwatch } from "./overwatch.ts";
-import { ask as askAgent, askerOf, deliverToOverwatch, doneAsk, noteText, openAsks, type AskResult } from "./ask.ts";
+import { ask as askAgent, askerOf, deliverToOverwatch, doneAsk, doneAsks, noteText, openAsks, type AskResult } from "./ask.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
@@ -434,8 +434,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       }
       const list = openAsks(db, sub);
       if (json) return log(JSON.stringify(list));
+      const done = sub ? doneAsks(db, sub) : [];
       for (const a of list) log(noteText(a, name));
       if (!list.length) log(`no open notes${sub ? ` for ${sub}` : ""}`);
+      for (const a of done) log(`Note #${a.id} from ${a.from === "you" ? "the person" : a.from}${a.about ? ` about #${a.about}` : ""}: ${a.text} [done]`);
       return;
     } else if (cmd === "account") {
       // The account config isn't in any repo: the maintainer edits a copy in the request's folder.
