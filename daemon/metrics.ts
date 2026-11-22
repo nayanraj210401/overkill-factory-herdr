@@ -3,13 +3,28 @@
 import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
 import type { Run } from "./runner.ts";
+import { planFile, readPlan, usedNow } from "./planline.ts";
 
 const HOUR = 3_600_000;
 
-// Your plan's limits are yours, not the repo's: `factory plan 20M 400M` keeps them in
-// meta. The meters count tokens in and out that this factory's agents used in the
-// last 5 hours and 7 days; your own sessions outside the factory aren't seen.
+// The plan meters. First choice: Claude Code's own reading of your account's 5-hour and
+// weekly windows, which every factory agent's status line saves to <FACTORY_HOME>/plan.json
+// (daemon/planline.ts); a window past its reset reads 0. Without one, the old estimate:
+// this factory's tokens in the last 5 hours and 7 days against the limits
+// `factory plan 20M 400M` keeps in meta (your sessions outside the factory unseen).
 export function planMeters(db: Database, now: Date) {
+  const r = readPlan(planFile());
+  const five = usedNow(r?.five_hour, now);
+  const week = usedNow(r?.seven_day, now);
+  const est = estimatedMeters(db, now);
+  const source = five != null ? "claude" : Number(getMeta(db, "plan_5h") ?? 0) > 0 ? "estimate" : "none";
+  return { window_5h: five ?? est.window_5h, week: week ?? est.week, source, as_of: source === "claude" ? r!.at : null };
+}
+
+// Whether the meters have anything to go on: a reading, or limits set by hand.
+export const planKnown = (db: Database) => Boolean(readPlan(planFile())?.five_hour) || Number(getMeta(db, "plan_5h") ?? 0) > 0;
+
+function estimatedMeters(db: Database, now: Date) {
   const used = (ms: number) => (db.query("SELECT SUM(input + cache_write_5m + cache_write_1h + output) AS n FROM usage WHERE at >= ?")
     .get(new Date(now.getTime() - ms).toISOString()) as { n: number | null }).n ?? 0;
   const frac = (key: string, ms: number) => {

@@ -18,9 +18,9 @@ test("plan meters: the last 5 hours' and 7 days' tokens against your limits; 0 u
   use(db, "a", "2026-11-21T11:00:00Z", 1_000_000, 0);   // in the 5h window (cache reads don't count)
   use(db, "b", "2026-11-21T06:00:00Z", 2_000_000, 0);   // only in the week
   use(db, "c", "2026-11-10T00:00:00Z", 9_000_000, 0);   // neither
-  expect(buildStatus(db, now).plan).toEqual({ window_5h: 0, week: 0, hold: null });
+  expect(buildStatus(db, now).plan).toEqual({ window_5h: 0, week: 0, source: "none", as_of: null, hold: null });
   setPlan(db, 10_000_000, 30_000_000);
-  expect(buildStatus(db, now).plan).toEqual({ window_5h: 0.1, week: 0.1, hold: null });
+  expect(buildStatus(db, now).plan).toEqual({ window_5h: 0.1, week: 0.1, source: "estimate", as_of: null, hold: null });
 });
 
 test("interactions per PR count your steps before it opened; the revert rate counts reverted merges", () => {
