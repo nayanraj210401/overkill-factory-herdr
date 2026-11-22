@@ -49,9 +49,10 @@ export function reviewRoundsLeft(db: Database, repo: string, ticket: number) {
 }
 
 // Files the ticket changed (committed or not) that match a `never` glob.
-export function forbiddenTouched(db: Database, o: { repo: string; worktree: string; run: Run }) {
+// `always`: check even when you aren't marked away (a move to the cloud runs unattended either way).
+export function forbiddenTouched(db: Database, o: { repo: string; worktree: string; run: Run; always?: boolean }) {
   const never = awayPolicy(o.repo).never;
-  if (!isAway(db) || !never?.length) return [];
+  if ((!o.always && !isAway(db)) || !never?.length) return [];
   const base = o.run(["git", "-C", o.repo, "symbolic-ref", "--short", "HEAD"]).out;
   const from = o.run(["git", "-C", o.worktree, "merge-base", base, "HEAD"]).out;
   const files = [

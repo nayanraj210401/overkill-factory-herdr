@@ -196,7 +196,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; cloud?: { on_sleep?: "move" | "off" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");

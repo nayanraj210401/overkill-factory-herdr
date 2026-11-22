@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { join } from "node:path";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { validateDir, validateFile } from "./validate.ts";
+import { validateAccount, validateDir, validateFile } from "./validate.ts";
 
 test("the sample .factory/ from plan.md is valid", () => {
   const results = validateDir(join(import.meta.dir, "../fixtures/acme-api/.factory"));
@@ -13,7 +13,7 @@ test("the sample .factory/ from plan.md is valid", () => {
 test("unknown keys, wrong types and bad enums are named, one line each", () => {
   const errors = validateFile("factory.yaml", "name: x\nmax_runing: 3\nmerge: sometimes\nrepos: acme/api\n");
   expect(errors).toEqual([
-    "max_runing: unknown key (allowed: name, repos, cross_check, tickets, queue, grooming, max_running, defaults, budget, plan, learn, review, away, maintainer, ready, quality_floor, hard_stops, merge, merge_method, secrets, mcp)",
+    "max_runing: unknown key (allowed: name, repos, cross_check, tickets, queue, grooming, max_running, defaults, budget, plan, learn, review, away, cloud, maintainer, ready, quality_floor, hard_stops, merge, merge_method, secrets, mcp)",
     'merge: "sometimes" is not one of human, auto',
     "repos: expected a list of text, got string",
   ]);
@@ -64,4 +64,13 @@ test("duplicate keys are caught, per block, not across blocks or list items", as
   expect(duplicateKeys("a:\n  x: 1\nb:\n  x: 2\n")).toEqual([]);
   expect(duplicateKeys("variants:\n  - name: a\n  - name: b\n")).toEqual([]);
   expect(duplicateKeys("a:\n  x: 1\n  x: 2\n")).toEqual(["line 3: x appears twice; YAML would keep only this one"]);
+});
+
+test("cloud.on_sleep is move or off, in factory.yaml and in the account's config.yaml", () => {
+  expect(validateFile("factory.yaml", "name: x\ncloud: { on_sleep: move }\n")).toEqual([]);
+  expect(validateFile("factory.yaml", "name: x\ncloud: { on_sleep: off }\n")).toEqual([]);
+  expect(validateFile("factory.yaml", "name: x\ncloud: { on_sleep: always }\n")).toEqual(['cloud.on_sleep: "always" is not one of move, off']);
+  expect(validateFile("factory.yaml", "name: x\ncloud: { on_slep: move }\n")[0]).toContain("cloud.on_slep: unknown key");
+  expect(validateAccount("cloud: { on_sleep: move }\n")).toEqual([]);
+  expect(validateAccount("cloud: { on_sleep: maybe }\n")).toEqual(['cloud.on_sleep: "maybe" is not one of move, off']);
 });
