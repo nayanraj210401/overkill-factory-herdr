@@ -56,6 +56,15 @@ herdr-app do layout.switch '{"name":"factory-runs-test"}' >/dev/null; sleep 1.3
 herdr-app shot "$out/runs.png" >/dev/null
 errors
 herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
+# The Ticket page for states the sample's current ticket doesn't show: grooming with
+# several questions (421), a running ticket with its agent (412), parked after rounds (425), ready (409).
+for t in 421 412 425 409; do
+  echo "{\"id\":\"root\",\"type\":\"row\",\"children\":[{\"id\":\"t\",\"type\":\"block\",\"content\":{\"mod\":\"factory-ticket\",\"props\":{\"ticket\":$t}}}]}" > "$home/layouts/factory-ticket-test.json"
+  herdr-app do layout.switch '{"name":"factory-ticket-test"}' >/dev/null; sleep 1.3
+  herdr-app shot "$out/ticket-$t.png" >/dev/null
+  errors
+  herdr-app do layout.switch '{"name":"factory"}' >/dev/null; sleep 0.5
+done
 # Home's first-run checklist, which check never reaches (the sample has a .factory/).
 echo '{"id":"root","type":"row","children":[{"id":"h","type":"block","content":{"mod":"factory-home","props":{"setup":true}}}]}' > "$home/layouts/factory-setup-test.json"
 herdr-app do layout.switch '{"name":"factory-setup-test"}' >/dev/null; sleep 1.3
