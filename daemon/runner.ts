@@ -746,7 +746,7 @@ export function pause(db: Database, o: { id: number; run?: Run; now?: string; wh
   const open_ = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   db.query("UPDATE stages SET ended_at = ?, detail = 'paused' WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
-  db.query("UPDATE tickets SET state = 'paused', detail = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
+  db.query("UPDATE tickets SET state = 'paused', detail = NULL, resume_at = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(o.id, o.who ?? "you", `paused at ${t.stage ?? "start"}`, now);
   // Last, so a failed kill (the terminal already gone) leaves the pause recorded.
   for (const s of open_) run(["hc", "kill", s.terminal]);

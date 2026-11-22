@@ -21,7 +21,8 @@
 // Experiments are held (the ticket runs on its snapshot alone, and the decision says why) during
 // learn.warmup_tickets, while the 5-hour window or the day's budget is past learn.pause_above, and
 // once budget.learning is spent. A ticket that runs on a value other than the one in force spends
-// from budget.learning: its tokens count there, beside the learner's own runs.
+// from budget.learning: its tokens count there (budget.ts learningUsage), beside the learner's and
+// the benchmarks' runs.
 import type { Database } from "bun:sqlite";
 import { activeOverrides, fileValue, setOverride, undoOverride } from "./learn.ts";
 import { learnerHold, learningCap, learningSpent, ticketMetric, WARMUP_TICKETS } from "./learner.ts";
@@ -155,25 +156,10 @@ export function chooseArm(stats: ArmStats[], base: Value, rng: () => number): Ch
 
 // ---- the holds and the learning budget ---------------------------------------------
 
-// Today's tokens of tickets that ran on a value other than the one in force.
-export function experimentSpent(db: Database, now: Date): Tokens {
-  const r = db.query(`SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o FROM usage
-    WHERE at >= ? AND ticket IN (SELECT ticket FROM experiment_pulls WHERE explored = 1)`).get(now.toISOString().slice(0, 10)) as { i: number | null; o: number | null };
-  return { input: r.i ?? 0, output: r.o ?? 0 };
-}
-
-// Why experiments are off right now, or null: the learner's holds (warmup, learn.pause_above,
-// budget.learning by its own runs), then budget.learning with the experiments' spend added.
-export function experimentHold(db: Database, repo: string, now: Date): string | null {
-  const held = learnerHold(db, repo, now);
-  if (held) return held;
-  const cap = learningCap(repo);
-  if (!cap) return null;
-  const a = learningSpent(db, now), b = experimentSpent(db, now);
-  const spent = { input: a.input + b.input, output: a.output + b.output };
-  return spent.input >= cap.input || spent.output >= cap.output
-    ? `budget.learning is spent for today (${Math.round(spent.input)}/${Math.round(cap.input)} in, ${Math.round(spent.output)}/${Math.round(cap.output)} out)` : null;
-}
+// Why experiments are off right now, or null: the learner's holds (learner.ts) — warmup,
+// learn.pause_above, and budget.learning (learningHold), which counts the tokens of tickets on a
+// value other than the one in force (the experiment_spend view) beside learner and benchmark runs.
+export const experimentHold = (db: Database, repo: string, now: Date) => learnerHold(db, repo, now);
 
 // ---- a ticket's start and finish ----------------------------------------------------
 
@@ -285,7 +271,7 @@ export function learningMetrics(db: Database, repo: string, now = new Date()): L
   const learn = learnOf(repo);
   const target = learn.target ?? TARGET;
   const merged = (db.query("SELECT COUNT(*) AS n FROM tickets WHERE state = 'merged' AND blueprint != 'factory'").get() as { n: number }).n;
-  const a = learningSpent(db, now), b = experimentSpent(db, now);
+  const spent = learningSpent(db, now);
   const groups = db.query("SELECT DISTINCT key, context FROM experiment_pulls ORDER BY key, context").all() as { key: string; context: string }[];
   const experiments = groups.map(({ key, context }) => {
     const { arms, base, file } = armsFor(db, repo, key);
@@ -305,7 +291,7 @@ export function learningMetrics(db: Database, repo: string, now = new Date()): L
   return {
     target, hold: experimentHold(db, repo, now),
     warmup: { merged, needed: learn.warmup_tickets ?? WARMUP_TICKETS },
-    budget: { spent: { input: a.input + b.input, output: a.output + b.output }, cap: tokens(learningCap(repo)) },
+    budget: { spent: tokens(spent)!, cap: tokens(learningCap(repo)) },
     experiments, overrides, shifts,
   };
 }

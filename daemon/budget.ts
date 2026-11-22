@@ -40,17 +40,33 @@ export function pauseAt(repo: string) {
   return String(v).includes("%") || n > 1 ? n / 100 : n;
 }
 
+// What learning spent today (UTC day): learner runs, benchmark runs and experiments (the
+// tokens of tickets on a value other than the one in force, experiments.ts), the one total
+// budget.learning caps. An old database lacks a table: nothing.
+const LEARNING_TABLES = ["learner_runs", "bench_runs", "experiment_spend"];
+// Experiment tickets' tokens are in usage already; the day's total mustn't count them twice.
+const IN_USAGE = ["experiment_spend"];
+export function learningUsage(db: Database, now: Date, tables = LEARNING_TABLES): Tokens {
+  const day = now.toISOString().slice(0, 10);
+  let input = 0, output = 0;
+  for (const t of tables) {
+    try {
+      const r = db.query(`SELECT SUM(tokens_in) AS i, SUM(tokens_out) AS o FROM ${t} WHERE started_at >= ?`).get(day) as { i: number | null; o: number | null };
+      input += r.i ?? 0; output += r.o ?? 0;
+    } catch { /* not there yet */ }
+  }
+  return { input, output };
+}
+
 // Today's tokens: this factory's, or with every set, all the factories beside it under FACTORY_HOME.
 export function tokensToday(db: Database, now: Date, every = false): Tokens {
   const q = "SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o FROM usage WHERE at >= ?";
   const day = now.toISOString().slice(0, 10);
-  // The learner's own calls (learner.ts) count too: budget.learning is a share of the day.
+  // Learning (the learner's calls, benchmarks) counts too: budget.learning is a share of the day.
   const one = (d: Database) => {
     const r = d.query(q).get(day) as { i: number | null; o: number | null };
-    try {
-      const l = d.query("SELECT SUM(tokens_in) AS i, SUM(tokens_out) AS o FROM learner_runs WHERE started_at >= ?").get(day) as { i: number | null; o: number | null };
-      return { i: (r.i ?? 0) + (l.i ?? 0), o: (r.o ?? 0) + (l.o ?? 0) };
-    } catch { return r; } // a database from before learner runs
+    const l = learningUsage(d, now, LEARNING_TABLES.filter((t) => !IN_USAGE.includes(t)));
+    return { i: (r.i ?? 0) + l.input, o: (r.o ?? 0) + l.output };
   };
   const rows = [one(db)];
   if (every) {
@@ -85,13 +101,19 @@ export function startHold(db: Database, repo: string, now: Date): string | null 
   if (at != null && planKnown(db)) {
     const w = planMeters(db, now).window_5h;
     if (w >= at) {
-      const first = (db.query("SELECT MIN(at) AS at FROM usage WHERE at >= ?").get(new Date(now.getTime() - 5 * HOUR).toISOString()) as { at: string | null }).at;
-      const reset = first ? new Date(Date.parse(first) + 5 * HOUR) : null;
+      const reset = estimatedReset(db, now);
       const hhmm = reset ? `${String(reset.getHours()).padStart(2, "0")}:${String(reset.getMinutes()).padStart(2, "0")}` : null;
       return `5-hour window at ${Math.round(w * 100)}%${hhmm ? `, resets ${hhmm}` : ""}`;
     }
   }
   return null;
+}
+
+// The estimate's 5-hour reset: five hours after the window's first message (this factory's
+// usage, as the estimated meters count it); null with nothing sent in the last five hours.
+export function estimatedReset(db: Database, now: Date): Date | null {
+  const first = (db.query("SELECT MIN(at) AS at FROM usage WHERE at >= ?").get(new Date(now.getTime() - 5 * HOUR).toISOString()) as { at: string | null }).at;
+  return first ? new Date(Date.parse(first) + 5 * HOUR) : null;
 }
 
 // How far a ticket is through its budget: the larger of input and output.

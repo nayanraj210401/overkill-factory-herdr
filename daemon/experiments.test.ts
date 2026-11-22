@@ -9,6 +9,7 @@ import { activeOverrides, setOverride, undoOverride } from "./learn.ts";
 import { finishPr, type Run } from "./runner.ts";
 import { promoteOverrides } from "./learner.ts";
 import { MODELS } from "./models.ts";
+import { tokensToday } from "./budget.ts";
 import { armStats, chooseArm, floorOf, learningMetrics, MIN_TRIES, recordOutcome, seeded, sizeOf, startExperiments, type ArmStats } from "./experiments.ts";
 import { validateMetrics } from "../lib/metrics.js";
 
@@ -129,6 +130,8 @@ test("budget.learning: tickets on a value other than the one in force spend from
   const m = learningMetrics(s.db, s.repo, new Date(NOW));
   expect(m.hold).toContain("budget.learning is spent");
   expect(m.budget).toEqual({ spent: { input: 6000, output: 1 }, cap: { input: 5000, output: 1_000_000 } });
+  // The day's total counts those tokens once: they are work usage that learning pays for.
+  expect(tokensToday(s.db, new Date(NOW))).toEqual({ input: 6000, output: 1 });
 });
 
 test("a ticket's settings are fixed at its start: a shift while it runs, or a restart, doesn't change them", () => {

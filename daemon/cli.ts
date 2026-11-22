@@ -22,7 +22,7 @@ import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { applyMerged, isKind, proposeAccount, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
 import { cleanupPlan, planMarkdown, proposeCleanup } from "./cleanup.ts";
-import { learnerDigest, learnerDue, learnerHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
+import { learnerDigest, learnerDue, learnerHold, learningHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
 import { noteAttention, waiting } from "./attention.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
@@ -38,6 +38,7 @@ import { powerWatcher } from "./power.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { watchContext } from "./handoff.ts";
+import { resumeWaiting, watchLimit } from "./planlimit.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
 import { writeRuns } from "./runs.ts";
 import { validateMetrics } from "../lib/metrics.js";
@@ -50,7 +51,7 @@ import { ask as askAgent, askerOf, deliverToOverwatch, doneAsk, noteText, openAs
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
-import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
+import { describePlan, hcAgent, holdSuite, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { publishFailed, recordArtifact } from "./artifacts.ts";
 import { migrateFlowStack } from "./migrate.ts";
@@ -869,11 +870,14 @@ export function runTriggers(db: Database, o: { dir: string; repo: string; slug: 
 // The stamp is written first: a suite that fails waits for its next turn like one that works.
 // A suite the daemon sees for the first time is stamped, not run: it costs real money, so
 // the first run is one interval away (or `factory bench`, which stamps too).
-export function runScheduledBenchmarks(db: Database, o: { repo: string; name: string; now: string; log: (s: string) => void; launch: (argv: string[]) => void }) {
+export function runScheduledBenchmarks(db: Database, o: { dir?: string; repo: string; name: string; now: string; log: (s: string) => void; launch: (argv: string[]) => void }) {
   for (const s of scheduledSuites(o.repo)) {
     const key = `bench_at:${s.name}`;
     const last = getMeta(db, key);
     if (last && !isDue(last, Date.parse(o.now), s.ms)) continue;
+    // Due but the day's learning budget is used: held, not stamped, so the next tick after it resets runs it.
+    const held = last ? learningHold(db, o.repo, new Date(o.now)) : null;
+    if (held) { holdSuite(db, { dir: o.dir, name: s.name, why: held, at: o.now }); continue; }
     setMeta(db, key, o.now);
     if (!last) continue;
     o.launch(["bun", import.meta.path, "bench", s.name, "--name", o.name]);
@@ -894,12 +898,12 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   // Sessions near their context limit: asked to hand off, or replaced by the next one. Before the exits below see them.
   change(db, () => watchContext(db, { dir: p.dir, repo: repoDir, run, now: new Date().toISOString(), log }));
   // A ticket in the cloud is out of sight until ⇧L brings it back: its sessions aren't watched.
-  const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
+  const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.argv, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as
-    { id: number; ticket: number; terminal: string; in_space: number; agent_seen: number; started_at: string }[];
+    { id: number; ticket: number; terminal: string; argv: string; in_space: number; agent_seen: number; started_at: string }[];
   // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
   // A pr stage whose agent is still writing PR.md waits for it.
-  for (const { id } of db.query(`SELECT id FROM tickets t WHERE state = 'running' AND stage = 'pr' AND location != 'cloud'
+  for (const { id } of db.query(`SELECT id FROM tickets t WHERE state = 'running' AND stage = 'pr' AND location != 'cloud' AND resume_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL)`).all() as { id: number }[]) {
     try {
       let r: any;
@@ -965,6 +969,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   // Split tickets: a part goes on once the one before it is done; a parent closes after its last part.
   try { change(db, () => followSplits(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log })); }
   catch (e) { log(`factory: following splits: ${(e as Error).message}`); }
+  // Tickets the plan limit stopped: after the reset, one fresh session at a time (planlimit.ts).
+  try { change(db, () => { resumeWaiting(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
+  catch (e) { log(`factory: resuming after the plan reset: ${(e as Error).message}`); }
   // Groomed tickets waiting for room: one starts as another stops running.
   try {
     let started: number[] = [];
@@ -986,6 +993,14 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     const stopped = hasHardStop(hardStopLog(p.dir, s.ticket));
     if (stopped && state !== "exited") run(["hc", "kill", s.terminal]);
     const gone = stopped || state === "exited" || (s.in_space === 1 && state === "shell" && (s.agent_seen === 1 || idle));
+    // Stopped by the plan limit: its work is committed, it ends, and it waits for the reset.
+    if (!stopped) {
+      try {
+        let hit = false;
+        change(db, () => { hit = watchLimit(db, { dir: p.dir, repo: repoDir, run, now: nowIso, s, info, log }); });
+        if (hit) continue;
+      } catch (e) { log(`factory: #${s.ticket}: watching for the plan limit: ${(e as Error).message}`); }
+    }
     // Waiting on you in its terminal (a question, a prompt): Needs you says so until it moves on.
     try {
       let noted: string | null = null;
@@ -1089,7 +1104,7 @@ function runAll(interval: number, log: (s: string) => void) {
         // Notes for Overwatch that its terminal hasn't had yet (it was busy, or not running).
         deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(sh), name });
         const lead = leadRepo(db);
-        if (lead) runScheduledBenchmarks(db, { repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
+        if (lead) runScheduledBenchmarks(db, { dir: p.dir, repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
         writeAll(db, p);
       } catch (e) {
         log(`factory ${name}: ${(e as Error).message}`);

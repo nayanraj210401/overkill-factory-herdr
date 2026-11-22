@@ -4,7 +4,15 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const MIGRATIONS = [
+// A column a migration adds unless it is there already: an abandoned branch's migration added
+// some (tickets.resume_at) to live databases without the repo knowing.
+const addColumn = (table: string, column: string, type: string) => (db: Database) => {
+  const cols = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+};
+
+// Each migration is SQL, or a function for one that must look before it changes anything.
+export const MIGRATIONS: (string | ((db: Database) => void))[] = [
   `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
    CREATE TABLE tickets (
      id INTEGER PRIMARY KEY,
@@ -224,6 +232,8 @@ export const MIGRATIONS = [
      about INTEGER, request INTEGER REFERENCES tickets(id), at TEXT NOT NULL, delivered_at TEXT, done_at TEXT
    );
    CREATE INDEX asks_open ON asks(to_agent) WHERE done_at IS NULL;`,
+  // The plan limit (planlimit.ts): when a ticket the limit stopped starts its next session.
+  addColumn("tickets", "resume_at", "TEXT"),
   // Bandit tuning (experiments.ts): the value each ticket ran with for each tunable setting it
   // was experimented on, chosen at its start, and its outcome once it finished; and each time a
   // winner became an override.
@@ -237,7 +247,11 @@ export const MIGRATIONS = [
    CREATE TABLE experiment_shifts (
      id INTEGER PRIMARY KEY, key TEXT NOT NULL, context TEXT NOT NULL, from_value TEXT, to_value TEXT NOT NULL,
      override INTEGER, why TEXT NOT NULL, at TEXT NOT NULL
-   );`,
+   );
+   -- A ticket on a value other than the one in force spends from budget.learning (budget.ts LEARNING_TABLES).
+   CREATE VIEW experiment_spend AS
+     SELECT u.at AS started_at, u.input + u.cache_write_5m + u.cache_write_1h AS tokens_in, u.output AS tokens_out FROM usage u
+     WHERE u.ticket IN (SELECT ticket FROM experiment_pulls WHERE explored = 1);`,
 ];
 
 export function open(path: string): Database {
@@ -249,7 +263,9 @@ export function open(path: string): Database {
   const { user_version } = db.query("PRAGMA user_version").get() as { user_version: number };
   for (let v = user_version; v < MIGRATIONS.length; v++) {
     db.transaction(() => {
-      db.exec(MIGRATIONS[v]);
+      const m = MIGRATIONS[v];
+      if (typeof m === "string") db.exec(m);
+      else m(db);
       db.exec(`PRAGMA user_version = ${v + 1}`);
     })();
   }
