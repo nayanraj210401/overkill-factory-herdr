@@ -80,7 +80,9 @@ export function withHandoffHook(argv: string[], dir: string, id: number, also?: 
   const others = also ? JSON.parse(also).hooks?.PreToolUse ?? [] : [];
   // The status line saves Claude Code's plan-usage reading for the plan meters (planline.ts).
   const statusLine = { type: "command", command: `${quote(process.execPath)} ${quote(join(dirname(import.meta.path), "planline.ts"))} ${quote(planFile())}` };
-  writeFileSync(settings, JSON.stringify({ permissions: { allow: agentAllow(commands), additionalDirectories: [...new Set(dirs.filter(Boolean))] }, hooks: { PreToolUse: [...others, ours], PreCompact: [precompact] }, statusLine }, null, 2) + "\n");
+  // skipAutoPermissionPrompt: registering a repo with the factory is the consent to auto mode, so
+  // Claude Code's one-time "Enable auto mode?" dialog never holds up an agent.
+  writeFileSync(settings, JSON.stringify({ skipAutoPermissionPrompt: true, permissions: { allow: agentAllow(commands), additionalDirectories: [...new Set(dirs.filter(Boolean))] }, hooks: { PreToolUse: [...others, ours], PreCompact: [precompact] }, statusLine }, null, 2) + "\n");
   return ["claude", "--permission-mode", "auto", "--settings", settings, ...argv.slice(1)];
 }
 

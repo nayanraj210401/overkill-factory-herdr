@@ -96,10 +96,13 @@ test("the hook script, as Claude Code runs it from the settings file: exit 2 onl
   expect(existsSync(flagFile(dir, 412))).toBe(false);
 });
 
-test("the session may work in its ticket folder, repos and worktrees without a permission prompt", () => {
+test("the session may work in its ticket folder, repos and worktrees, and starts in auto mode without its consent dialog", () => {
   const dir = mkdtempSync(join(tmpdir(), "hook-"));
   const argv = withHandoffHook(["claude", "go"], dir, 5, null, [], ["/f/tickets/5", "/r/api", "", "/r/api", "/w/api"]);
-  expect(JSON.parse(readFileSync(argv[4], "utf8")).permissions.additionalDirectories).toEqual(["/f/tickets/5", "/r/api", "/w/api"]);
+  const settings = JSON.parse(readFileSync(argv[4], "utf8"));
+  expect(settings.permissions.additionalDirectories).toEqual(["/f/tickets/5", "/r/api", "/w/api"]);
+  // registering the repo is the consent: Claude Code's one-time auto mode dialog is skipped
+  expect(settings.skipAutoPermissionPrompt).toBe(true);
 });
 
 function setup() {
