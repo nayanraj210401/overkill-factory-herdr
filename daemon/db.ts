@@ -210,6 +210,10 @@ export const MIGRATIONS = [
      merged INTEGER NOT NULL, tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, usd REAL,
      proposals INTEGER NOT NULL DEFAULT 0, filed TEXT
    );`,
+  // The maintainer's request kinds (maintainer.ts), and the factory app's own checkout: a
+  // repo the maintainer works in for a look request, never one tickets or watchers list.
+  `ALTER TABLE tickets ADD COLUMN request_kind TEXT;
+   ALTER TABLE repos ADD COLUMN app INTEGER NOT NULL DEFAULT 0;`,
   // What GitHub last said of each PR (open, draft, merged, closed), for the window's PR links; null before the first look.
   `ALTER TABLE ticket_repos ADD COLUMN pr_state TEXT CHECK (pr_state IN ('open', 'draft', 'merged', 'closed'));`,
 ];
@@ -237,11 +241,13 @@ export const setMeta = (db: Database, key: string, value: string) =>
 
 // The factory's repos. The lead is the repo the factory was made for (its factory.yaml
 // is the factory's config); the others join cross-repo tickets.
-export type Repo = { slug: string; path: string; lead: boolean };
-const repoRow = (r: { slug: string; path: string; lead: number } | null): Repo | null => r && { slug: r.slug, path: r.path, lead: r.lead === 1 };
+// The factory app's checkout (app) is a repo row too, so a ticket can work in it, but it
+// is no repo of the factory: listRepos leaves it out.
+export type Repo = { slug: string; path: string; lead: boolean; app?: boolean };
+const repoRow = (r: { slug: string; path: string; lead: number; app?: number } | null): Repo | null => r && { slug: r.slug, path: r.path, lead: r.lead === 1, ...(r.app ? { app: true } : {}) };
 
 export const leadRepo = (db: Database) => repoRow(db.query("SELECT * FROM repos WHERE lead = 1").get() as any);
-export const listRepos = (db: Database) => (db.query("SELECT * FROM repos ORDER BY lead DESC, slug").all() as any[]).map((r) => repoRow(r)!);
+export const listRepos = (db: Database) => (db.query("SELECT * FROM repos WHERE app = 0 ORDER BY lead DESC, slug").all() as any[]).map((r) => repoRow(r)!);
 
 // The lead repo, or why there's none: every command that touches a checkout needs it.
 export function needLead(db: Database): Repo {
@@ -254,7 +260,7 @@ export function needLead(db: Database): Repo {
 // repos: still lists (`listed`, read by the caller from the lead's factory.yaml).
 export function repoOf(db: Database, slug: string, listed: string[] | undefined): Repo {
   const r = repoRow(db.query("SELECT * FROM repos WHERE slug = ?").get(slug) as any);
-  if (r?.lead) return r;
+  if (r?.lead || r?.app) return r;
   if (!(listed ?? []).includes(slug)) throw new Error(`${slug} isn't in factory.yaml's repos:`);
   if (!r) throw new Error(`${slug} has no checkout here; run factory repo add ${slug} --path <dir>`);
   return r;

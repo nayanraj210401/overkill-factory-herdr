@@ -29,6 +29,9 @@ test("the built-in templates give the briefs the code used to build", () => {
   expect(brief({ id: 1, title: "t" }, "verify", "P", "/f", "verify")).toBe(snap.stageHoldout);
   expect(brief({ id: 1, title: "t" }, "review", "P", "/f", "review")).toBe(snap.stageReview);
   expect(brief({ id: 1, title: "t" }, "implement", "P", dir, "build", repos).split(dir).join("/f")).toBe(snap.stageFix);
+  // The maintainer's brief: its whole territory and the request kinds (maintainer.md).
+  const maintainer = readFileSync(join(import.meta.dir, "../agents/maintainer.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
+  expect(brief({ id: 10001, title: "Use a warmer accent" }, "maintain", maintainer, "/f", "maintain")).toBe(snap.stageMaintainer);
   expect(overwatchBrief({ name: "acme", dir: "/d", repo: null })).toBe(snap.overwatchNone);
   // The one change: the repo sentence is its own paragraph now (it was glued on to the line above).
   expect(overwatchBrief({ name: "acme", dir: "/d", repo: "/src/api" })).toBe(snap.overwatchRepo.replace("PR.md). The repo", "PR.md).\n\nThe repo"));
