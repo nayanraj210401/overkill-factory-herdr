@@ -50,9 +50,15 @@ export function buildStatus(db: Database, now = new Date()) {
   const lead = leadRepo(db);
   const work = Map.groupBy(db.query("SELECT * FROM ticket_repos ORDER BY ticket, lead DESC, repo").all() as Row[], (r) => r.ticket);
   const reposOf = (id: number) => work.get(id) ?? (lead ? [{ repo: lead.slug, lead: 1 }] : undefined);
+  const open = Map.groupBy(db.query("SELECT ticket, n, kind, text FROM questions WHERE answer IS NULL ORDER BY ticket, n").all() as Row[], (q) => q.ticket);
+  const questionsOf = (id: number) => (open.get(id) ?? []).map((q) => ({ n: q.n, kind: q.kind, text: q.text }));
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal,
     (SELECT COUNT(*) FROM sessions s WHERE s.ticket = t.id AND s.agent != 'cloud') AS sessions
-    FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null));
+    FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ({
+    ...ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null),
+    // The open grooming questions, numbered as the `A1:` answers are.
+    ...(r.state === "grooming" && open.has(r.id) ? { questions: questionsOf(r.id) } : {}),
+  }));
   const setup = lead ? setupField(db, lead.path) : null;
   const hold = lead ? startHold(db, lead.path, now) : null;
   const perDay = lead ? dayCap(lead.path) : null;

@@ -8,8 +8,6 @@ import { ticketOf } from "./status.ts";
 type Stage = { name: string; detail: string | null; started_at: string; ended_at: string | null };
 type Check = { check_name: string; result: "PASS" | "FAIL"; detail: string | null; at: string };
 
-const minutes = (from: string, to: string) => `${Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 60000))}m`;
-
 // One plain sentence first (PRD 6.3), so the main point is never buried.
 export function summary(t: ReturnType<typeof ticketOf>) {
   const cost = `$${t.usd.toFixed(2)} so far`;
@@ -19,21 +17,48 @@ export function summary(t: ReturnType<typeof ticketOf>) {
     case "parked": return `${t.title} is parked: ${t.needs?.text ?? "it is stuck"}.`;
     case "paused": return `${t.title} is paused at ${t.stage ?? "its start"}, at ${cost}.`;
     case "blocked": return `${t.title} waits on #${t.blocked_by}.`;
-    case "grooming": return `${t.title} is being groomed${t.needs ? `: ${t.needs.text}` : ""}.`;
+    case "grooming": return `${t.title} is being groomed${t.needs ? `: ${t.needs.text.split(" · ")[0]}` : ""}.`; // the questions have their own card
     case "merged": return `${t.title} is merged, at $${t.usd.toFixed(2)}.`;
     case "closed": return `${t.title} is closed.`;
     default: return `${t.title} is queued.`;
   }
 }
 
+// A stage entered again (verify fails, implement runs again) is one step with rounds, in the
+// order each stage first appeared. A round followed by an earlier stage was sent back
+// ("failed"); "then passed" shows only once the ticket moved on to a later stage.
+// The latest round's detail shows; every round stays in `stages` as the history.
+export type Step = { name: string; detail: string | null; ms: number; open: boolean; rounds: string | null };
+export function groupStages(stages: Stage[], now: string): Step[] {
+  const order = [...new Set(stages.map((s) => s.name.toLowerCase()))];
+  const groups = new Map<string, { rows: Stage[]; failed: number; passed: boolean }>();
+  stages.forEach((s, i) => {
+    const key = s.name.toLowerCase();
+    const g = groups.get(key) ?? { rows: [], failed: 0, passed: false };
+    groups.set(key, g);
+    g.rows.push(s);
+    const next = stages[i + 1]?.name.toLowerCase();
+    g.passed = false;
+    if (next === undefined || next === key) return;
+    if (order.indexOf(next) < order.indexOf(key)) g.failed++;
+    else g.passed = true;
+  });
+  return [...groups.values()].map((g) => {
+    const last = g.rows[g.rows.length - 1];
+    const rounds = g.failed ? `failed ${g.failed}×${g.passed ? ", then passed" : ""}` : g.rows.length > 1 ? `${g.rows.length} rounds` : null;
+    return { name: last.name, detail: last.detail, open: !last.ended_at, rounds,
+      ms: g.rows.reduce((a, r) => a + Math.max(0, Date.parse(r.ended_at ?? now) - Date.parse(r.started_at)), 0) };
+  });
+}
+
 export function statusMd(t: ReturnType<typeof ticketOf>, stages: Stage[], planned: string[], now: string) {
-  const line = (state: string, s: Stage) =>
-    `- ${state} ${s.name} · ${minutes(s.started_at, s.ended_at ?? now)}${s.detail ? ` · ${s.detail}` : ""}`;
+  const steps = groupStages(stages, now);
+  const names = new Set(steps.map((s) => s.name.toLowerCase()));
   return [
     summary(t),
     "",
-    ...stages.map((s) => line(s.ended_at ? "done" : "now", s)),
-    ...planned.map((name) => `- next ${name}`),
+    ...steps.map((s) => `- ${s.open ? "now" : "done"} ${s.name} · ${Math.round(s.ms / 60000)}m${s.rounds ? ` · ${s.rounds}` : ""}${s.detail ? ` · ${s.detail}` : ""}`),
+    ...planned.filter((n) => !names.has(n.toLowerCase())).map((name) => `- next ${name}`),
     "",
   ].join("\n");
 }

@@ -32,7 +32,7 @@ import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { overwatch } from "./overwatch.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
-import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
+import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
@@ -300,12 +300,19 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const id = Number(sub);
       if (!Number.isInteger(id)) throw new Error(`usage: factory ${cmd} <id>…`);
       let out = "";
+      const closing: string[] = [];
       change(db, () => {
         if (cmd === "groom") out = `#${id}: triage agent in ${startGrooming(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() })}`;
         else if (cmd === "pick") { pick(db, { repo: repoDir, id, blueprint: rest[0] ?? "", now: now() }); out = `#${id} runs the ${rest[0]} blueprint`; }
+        else if ((db.query("SELECT state FROM tickets WHERE id = ?").get(id) as { state: string } | null)?.state === "running") {
+          const q = askMidRun(db, { repo: repoDir, id, kind: rest[0] ?? "", text: rest.slice(1).join(" "), run: sh, now: now() });
+          out = `#${id}: Q${q.n} asked; the ticket is parked until it's answered. Stop work now.`;
+          closing.push(...q.terminals);
+        }
         else out = `#${id}: Q${ask(db, { id, kind: rest[0] ?? "", text: rest.slice(1).join(" "), now: now() })} asked`;
       });
       log(out);
+      for (const t of closing) closeFinished(t, id);
     } else if (cmd === "start") {
       const repoDir = needLead(db).path;
       let terminal: string | null = null;
