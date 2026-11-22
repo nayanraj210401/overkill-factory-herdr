@@ -13,7 +13,7 @@ const TICKET = ["ticket.id", "ticket.title"];
 export const PLACEHOLDERS: Record<string, string[]> = {
   groom: [...TICKET, "neighbours", "repo", "slug", "folder", "blueprints", "agent.prompt", "repos", "issue"],
   stage: [...TICKET, "neighbours", "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "fix_brief", "slice", "shared", "publish"],
-  handoff: [...TICKET, "neighbours", "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot", "publish_handoff"],
+  handoff: [...TICKET, "neighbours", "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot", "tail", "publish_handoff"],
   overwatch: ["neighbours", "agent.prompt", "home", "factories"],
 };
 export const placeholdersFor = (name: string) => PLACEHOLDERS[name] ?? PLACEHOLDERS.stage;

@@ -38,6 +38,7 @@ import { powerWatcher } from "./power.ts";
 import { sessionState } from "./herdr.ts";
 import { recordUsage } from "./usage.ts";
 import { watchContext } from "./handoff.ts";
+import { resumeWaiting, watchLimit } from "./planlimit.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
 import { writeRuns } from "./runs.ts";
 import { validateMetrics } from "../lib/metrics.js";
@@ -895,12 +896,12 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   // Sessions near their context limit: asked to hand off, or replaced by the next one. Before the exits below see them.
   change(db, () => watchContext(db, { dir: p.dir, repo: repoDir, run, now: new Date().toISOString(), log }));
   // A ticket in the cloud is out of sight until ⇧L brings it back: its sessions aren't watched.
-  const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
+  const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.argv, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as
-    { id: number; ticket: number; terminal: string; in_space: number; agent_seen: number; started_at: string }[];
+    { id: number; ticket: number; terminal: string; argv: string; in_space: number; agent_seen: number; started_at: string }[];
   // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
   // A pr stage whose agent is still writing PR.md waits for it.
-  for (const { id } of db.query(`SELECT id FROM tickets t WHERE state = 'running' AND stage = 'pr' AND location != 'cloud'
+  for (const { id } of db.query(`SELECT id FROM tickets t WHERE state = 'running' AND stage = 'pr' AND location != 'cloud' AND resume_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL)`).all() as { id: number }[]) {
     try {
       let r: any;
@@ -966,6 +967,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   // Split tickets: a part goes on once the one before it is done; a parent closes after its last part.
   try { change(db, () => followSplits(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log })); }
   catch (e) { log(`factory: following splits: ${(e as Error).message}`); }
+  // Tickets the plan limit stopped: after the reset, one fresh session at a time (planlimit.ts).
+  try { change(db, () => { resumeWaiting(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
+  catch (e) { log(`factory: resuming after the plan reset: ${(e as Error).message}`); }
   // Groomed tickets waiting for room: one starts as another stops running.
   try {
     let started: number[] = [];
@@ -987,6 +991,14 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     const stopped = hasHardStop(hardStopLog(p.dir, s.ticket));
     if (stopped && state !== "exited") run(["hc", "kill", s.terminal]);
     const gone = stopped || state === "exited" || (s.in_space === 1 && state === "shell" && (s.agent_seen === 1 || idle));
+    // Stopped by the plan limit: its work is committed, it ends, and it waits for the reset.
+    if (!stopped) {
+      try {
+        let hit = false;
+        change(db, () => { hit = watchLimit(db, { dir: p.dir, repo: repoDir, run, now: nowIso, s, info, log }); });
+        if (hit) continue;
+      } catch (e) { log(`factory: #${s.ticket}: watching for the plan limit: ${(e as Error).message}`); }
+    }
     // Waiting on you in its terminal (a question, a prompt): Needs you says so until it moves on.
     try {
       let noted: string | null = null;
