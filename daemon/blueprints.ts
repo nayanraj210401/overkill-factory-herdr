@@ -1,6 +1,7 @@
 // blueprints.json, beside status.json: each blueprint's stages as the Blueprint page
 // draws them, with how many times each ran in the last 7 days (retries count again).
 import type { Database } from "bun:sqlite";
+import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadAgent, loadBlueprint } from "./runner.ts";
@@ -38,7 +39,6 @@ export function writeBlueprints(db: Database, repo: string, path: string, now = 
   const doc = buildBlueprints(db, repo, now);
   const errors = validateBlueprints(doc);
   if (errors.length) throw new Error(`blueprints.json would break the contract:\n${errors.join("\n")}`);
-  writeFileSync(`${path}.tmp`, JSON.stringify(doc, null, 2) + "\n");
-  renameSync(`${path}.tmp`, path);
+  writeIfChanged(path, JSON.stringify(doc, null, 2) + "\n");
   return doc;
 }

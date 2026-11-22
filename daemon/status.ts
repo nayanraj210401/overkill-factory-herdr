@@ -1,6 +1,7 @@
 // Builds status.json (the contract in lib/status.js) from SQLite rows. The
 // window reads only this file, so the daemon stays the one source of truth.
 import type { Database } from "bun:sqlite";
+import { writeIfChanged } from "./files.ts";
 import { renameSync, writeFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
 import { getMeta, leadRepo, listRepos, mergeOrder } from "./db.ts";
@@ -100,7 +101,6 @@ export function writeStatus(db: Database, path: string, now = new Date()) {
   const status = buildStatus(db, now);
   const errors = validateStatus(status);
   if (errors.length) throw new Error(`status.json would break the contract:\n${errors.join("\n")}`);
-  writeFileSync(`${path}.tmp`, JSON.stringify(status, null, 2) + "\n");
-  renameSync(`${path}.tmp`, path);
+  writeIfChanged(path, JSON.stringify(status, null, 2) + "\n");
   return status;
 }

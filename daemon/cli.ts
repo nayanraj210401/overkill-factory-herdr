@@ -3,6 +3,7 @@
 // `factory run`, the daemon. Every change is checked against the status.json
 // contract inside its transaction, so a bad write never lands.
 import { homedir } from "node:os";
+import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync } from "node:fs";
 import { recordVerdict } from "./ready.ts";
 import { basename, dirname, join, resolve } from "node:path";
@@ -683,8 +684,7 @@ export function writeMetrics(db: Database, path: string, now = new Date()) {
   const doc = buildMetrics(db, now);
   const errors = validateMetrics(doc);
   if (errors.length) throw new Error(`metrics.json would break the contract:\n${errors.join("\n")}`);
-  writeFileSync(`${path}.tmp`, JSON.stringify(doc) + "\n");
-  renameSync(`${path}.tmp`, path);
+  writeIfChanged(path, JSON.stringify(doc) + "\n");
   return doc;
 }
 
