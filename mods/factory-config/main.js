@@ -32,7 +32,7 @@ export default class FactoryConfig extends View {
     const wait = (ms) => new Promise((done) => cx.timer.after(ms, done));
     cx.spawn(async (cx) => {
       await this.list();
-      if (this.files.length) await this.select(this.files[0], cx);
+      if (this.files.length) await this.select(this.files[0]);
       cx.notify();
       if (checking()) return;
       for (;;) {
@@ -43,7 +43,7 @@ export default class FactoryConfig extends View {
         else await Promise.race([watchFolder(this.dir), wait(30000)]);
         await wait(300); // one reload for a burst of saves
         await this.list();
-        if (this.selected) await this.select(this.selected, cx);
+        if (this.selected) await this.select(this.selected);
         cx.notify();
       }
     });
@@ -161,7 +161,8 @@ export default class FactoryConfig extends View {
     });
   }
 
-  async select(file, cx) {
+  // Shows a file. The caller repaints, with a cx of its own (see tests/mods.test.mjs).
+  async select(file) {
     const t = theme();
     const text = (await readTextFile(`${this.dir}/${file.path}`)) ?? "";
     // A file's language is fixed when its editor is made: one editor per file, kept, so
@@ -174,7 +175,6 @@ export default class FactoryConfig extends View {
     } else if (editor.value() !== text) editor.set_value(text);
     this.editor = editor;
     this.selected = file;
-    cx.notify();
   }
 
   render() {
@@ -183,7 +183,8 @@ export default class FactoryConfig extends View {
       const on = f.path === this.selected?.path;
       return h_flex().id(`f-${f.path}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
         .bg(on ? t.selected : t.surface).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => this.select(f, cx))
+        // select awaits the file; this click's cx is gone by then, so a spawned task repaints.
+        .on_click((_e, cx) => cx.spawn(async (cx) => { await this.select(f); cx.notify(); }))
         .child(svg(`mods/workspace-chrome/${f.language === "markdown" ? "file-text" : "settings"}.svg`).size(13))
         .child(div().flex_1().truncate().child(f.path))
         .when(Boolean(this.checks[f.path]), (el) => el.child(div().text_size(11)
