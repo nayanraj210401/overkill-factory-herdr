@@ -30,7 +30,8 @@ import { judge } from "./comments.ts";
 import { disagreements, examples, label, pushbackGate, runAgreement } from "./agreement.ts";
 import { importRoutine, LOG_BRANCH, routineDue, routineSteps, writeRoutine } from "./routine.ts";
 import { isAway, setAway } from "./away.ts";
-import { startHold } from "./budget.ts";
+import { dayCap, startHold } from "./budget.ts";
+import { linkCharts, removeStale, writeCharts } from "./charts.ts";
 import { noteCloudFailure, toCloud, toLocal } from "./cloud.ts";
 import { bringAll, cloudPolicy, moveAll, noteGap, onSleep, onWake, wakeTick } from "./sleep.ts";
 import { powerWatcher } from "./power.ts";
@@ -983,11 +984,18 @@ function writeAll(db: Database, p: ReturnType<typeof paths>) {
 }
 
 // metrics.json for the Metrics page, checked against lib/metrics.js and written atomically.
+// Its charts are drawn first (daemon/charts.ts, into charts/ beside it), so the page never reads
+// a manifest naming a file not yet written; the files it stops naming go after.
 export function writeMetrics(db: Database, path: string, now = new Date()) {
-  const doc = buildMetrics(db, now);
+  const lead = leadRepo(db);
+  const doc: ReturnType<typeof buildMetrics> & { charts?: unknown } = buildMetrics(db, now, lead ? dayCap(lead.path)?.input ?? null : null);
   const errors = validateMetrics(doc);
   if (errors.length) throw new Error(`metrics.json would break the contract:\n${errors.join("\n")}`);
+  const charts = writeCharts(dirname(path), doc);
+  doc.charts = charts.manifest;
   writeIfChanged(path, JSON.stringify(doc) + "\n");
+  removeStale(charts.stale);
+  try { linkCharts(dirname(path)); } catch (e) { console.error(`charts link: ${(e as Error).message}`); }
   return doc;
 }
 

@@ -812,7 +812,7 @@ Each milestone ends when its "done when" passes on a real ticket.
 
 Open questions:
 
-- Can a mod draw the blueprint graph and the Metrics charts itself, or does the daemon render SVGs the mod shows with `image()`? The SVG path works today.
+- Can a mod draw the blueprint graph and the Metrics charts itself, or does the daemon render SVGs the mod shows with `image()`? Settled for Metrics: the charts are daemon-rendered SVG (`daemon/charts.ts`), a light and a dark file per chart named by a hash of its content, since `image()` caches by path and loads only paths inside Herdr's folder (a real factory's `charts/` is reached through a link at `factory-charts/<factory>`). The blueprint graph is still open.
 - Does the orchestrator run as its own long-lived agent per ticket, or does the daemon call it once per stage change?
 - Which Claude Code interface does the daemon use to start a cloud session from a branch and to fetch one back, and can it start worker sessions with the flow-stack plugin turned off? Both need checking before M3.
 - The scheduled cloud agent that watches PRs is a Claude Code cloud scheduled task (formerly a routine). It can be made only on claude.ai/code/routines, in the Desktop app, or with `/schedule` in an interactive session, and runs at most hourly. Still to check: whether its session can read review comments and reply through `gh` or the GitHub connector (docs/slices.md, M3).
