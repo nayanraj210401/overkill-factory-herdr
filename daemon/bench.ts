@@ -5,6 +5,7 @@
 // applied to this run's copy of the settings and never to .factory/. Then the held-out
 // tests come back and run. The result is a report; nothing here changes the factory.
 import type { Database } from "bun:sqlite";
+import { writeIfChanged } from "./files.ts";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { benchmarkMarkdown, validateBenchmarks } from "../lib/benchmarks.js";
@@ -373,8 +374,7 @@ export function writeBenchmarks(db: Database, dir: string, now = new Date()) {
   const errors = validateBenchmarks(doc);
   if (errors.length) throw new Error(`benchmarks.json would break the contract:\n${errors.join("\n")}`);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "benchmarks.json.tmp"), JSON.stringify(doc) + "\n");
-  renameSync(join(dir, "benchmarks.json.tmp"), join(dir, "benchmarks.json"));
+  writeIfChanged(join(dir, "benchmarks.json"), JSON.stringify(doc) + "\n");
   const md = benchmarkMarkdown(doc);
   const file = join(dir, "BENCHMARK.md");
   if (!existsSync(file) || readFileSync(file, "utf8") !== md) writeFileSync(file, md);

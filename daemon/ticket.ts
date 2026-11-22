@@ -1,6 +1,7 @@
 // The ticket folder's state files, written only by the daemon from rows:
 // STATUS.md (the Ticket page's timeline) and EVIDENCE.md (its Checks tab).
 import type { Database } from "bun:sqlite";
+import { writeIfChanged } from "./files.ts";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ticketOf } from "./status.ts";
@@ -89,10 +90,7 @@ export function evidenceMd(checks: Check[], verdicts: Verdict[] = []) {
   ].join("\n");
 }
 
-const write = (path: string, text: string) => {
-  writeFileSync(`${path}.tmp`, text);
-  renameSync(`${path}.tmp`, path);
-};
+const write = writeIfChanged;
 
 export function writeTicketFiles(db: Database, dir: string, id: number, now = new Date().toISOString()) {
   const row = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as Record<string, any> | null;
