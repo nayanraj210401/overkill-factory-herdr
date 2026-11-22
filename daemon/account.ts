@@ -5,6 +5,7 @@
 //   budget:  { per_day: { input: 40M, output: 2M } }      # across every factory, today
 //   away:    { blueprints: [chore], budget: 1M/100k, review_rounds: 2, never: ["src/auth/**"] }
 //   cloud:   { on_sleep: move | off }                     # move running tickets to the cloud at sleep, back at wake
+//   artifacts: { as: artifact | doc | off, publish: [INTENT.md, SLICES.md] }  # share plans on claude.ai (artifacts.ts)
 //   profile: { taste: ["…"], rules: ["…"] }                # in every agent's brief
 //
 // A repo's factory.yaml wins key by key where it sets the same thing (plan.pause_at, away.*);
@@ -19,6 +20,7 @@ export type Account = {
   budget?: { per_day?: { input?: string | number; output?: string | number } };
   away?: Record<string, unknown>;
   cloud?: { on_sleep?: "move" | "off" };
+  artifacts?: { as?: "artifact" | "doc" | "off"; publish?: string[] };
   profile?: { taste?: string[]; rules?: string[] };
   claude?: { path?: string };
 };

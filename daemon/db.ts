@@ -196,6 +196,11 @@ export const MIGRATIONS = [
      yours TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('you', 'kept')), got TEXT, why TEXT,
      PRIMARY KEY (run, ticket, n)
    );`,
+  // Shared plans: each ticket file an agent published to claude.ai, one stable link per file (artifacts.ts).
+  `CREATE TABLE ticket_artifacts (
+     ticket INTEGER NOT NULL REFERENCES tickets(id), file TEXT NOT NULL, url TEXT NOT NULL,
+     kind TEXT NOT NULL CHECK (kind IN ('artifact', 'doc')), published_at TEXT NOT NULL, PRIMARY KEY (ticket, file)
+   );`,
 ];
 
 export function open(path: string): Database {

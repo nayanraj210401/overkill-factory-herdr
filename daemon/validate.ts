@@ -21,6 +21,9 @@ const gate = { enum: ["human", "auto"] };
 const AWAY: Rule = { object: { blueprints: strs, budget: str, review_rounds: num, never: strs, min_agreement: num } };
 // cloud: in factory.yaml and in the account's config.yaml (daemon/sleep.ts).
 const CLOUD: Rule = { object: { on_sleep: { enum: ["move", "off"] } } };
+// artifacts: in factory.yaml and in the account's config.yaml (daemon/artifacts.ts).
+export const PUBLISHABLE = ["INTENT.md", "SLICES.md", "PR.md", "HANDOFF.md"];
+const ARTIFACTS: Rule = { object: { as: { enum: ["artifact", "doc", "off"] }, publish: { list: { enum: PUBLISHABLE } } } };
 const TICKET_SOURCE = { enum: ["github", "linear", "local"] };
 const LEARN_TARGETS = ["cost_per_pr", "time_to_pr", "interactions_per_pr", "review_rounds_per_pr"];
 
@@ -39,7 +42,7 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, maintainer: { object: { gate } },
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, artifacts: ARTIFACTS, maintainer: { object: { gate } },
       verify: { object: { features: str } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
@@ -74,6 +77,7 @@ export const ACCOUNT: Rule = {
     budget: { object: { per_day: { object: { input: "any", output: "any" } } } },
     away: AWAY,
     cloud: CLOUD,
+    artifacts: ARTIFACTS,
     profile: { object: { taste: strs, rules: strs } },
     claude: { object: { path: str } }, // which claude every session runs (claude-bin.ts)
   },

@@ -57,6 +57,8 @@ export function buildStatus(db: Database, now = new Date()) {
   const reposOf = (id: number) => work.get(id) ?? (lead ? [{ repo: lead.slug, lead: 1 }] : undefined);
   const open = Map.groupBy(db.query("SELECT ticket, n, kind, text FROM questions WHERE answer IS NULL ORDER BY ticket, n").all() as Row[], (q) => q.ticket);
   const questionsOf = (id: number) => (open.get(id) ?? []).map((q) => ({ n: q.n, kind: q.kind, text: q.text }));
+  // Each ticket's files shared on claude.ai (artifacts.ts), for the Ticket page's links.
+  const shared = Map.groupBy(db.query("SELECT ticket, file, url, kind, published_at FROM ticket_artifacts ORDER BY ticket, file").all() as Row[], (a) => a.ticket);
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal,
     -- the live agent's session number within its stage: a handoff starts the next one in the same stage
     (SELECT COUNT(*) FROM sessions s, (SELECT stage FROM sessions l WHERE l.ticket = t.id AND l.ended_at IS NULL AND l.agent IS NOT 'cloud' ORDER BY l.id DESC LIMIT 1) live
@@ -65,6 +67,7 @@ export function buildStatus(db: Database, now = new Date()) {
     ...ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null),
     // The open grooming questions, numbered as the `A1:` answers are.
     ...(r.state === "grooming" && open.has(r.id) ? { questions: questionsOf(r.id) } : {}),
+    ...(shared.has(r.id) ? { artifacts: shared.get(r.id)!.map((a) => ({ file: a.file, url: a.url, kind: a.kind, at: a.published_at })) } : {}),
   }));
   const setup = lead ? setupField(db, lead.path) : null;
   const hold = lead ? startHold(db, lead.path, now) : null;

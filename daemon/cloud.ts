@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { getMeta, ticketRepos } from "./db.ts";
 import { openAgent } from "./herdr.ts";
 import { pushbackGate } from "./agreement.ts";
+import { artifactPolicy, sharedLinks, type Kind, type Link } from "./artifacts.ts";
 import { enterStage } from "./ticket.ts";
 import { loadBlueprint, plannedPath, readFactory, restartStage, startStage, title, type Run } from "./runner.ts";
 
@@ -27,9 +28,11 @@ const RULES: Record<string, string> = {
 export const runDir = (id: number) => join(".factory-run", String(id));
 
 export function handoffMd(o: { id: number; title: string; branch: string; blueprint: string; stage: string; left: string[]; agent: string | null;
-  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[]; noPushbacks?: string | null }) {
+  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[]; noPushbacks?: string | null; shared?: Link[]; as?: Kind }) {
   const here = runDir(o.id);
   const others = o.others ?? [];
+  const shared = o.shared ?? [];
+  const tool = o.as === "doc" ? "the Claude Docs connector (mcp__claude_ai_Claude_Docs__read)" : "your Artifact tool (action read)";
   return `# #${o.id} ${o.title}: continue in the cloud
 
 You're continuing a ticket the local factory was running. The factory isn't reachable from here (there is no \`factory\` command), so you report through files. Work only on the branch \`${o.branch}\`. Never push to main, and never open, edit or merge a pull request.
@@ -42,7 +45,8 @@ This ticket changes ${others.length + 1} repos, each on the same branch \`${o.br
 - Stage now: **${o.stage}**${o.agent ? `, run by the \`${o.agent}\` agent: follow \`.factory/agents/${o.agent}.md\`` : ""}.
 - Stages left after it: ${o.left.length ? o.left.join(" → ") : "none"}. For each stage with an agent, follow that agent's prompt in \`.factory/agents/\`.
 - The ticket's files from the factory are in \`${here}/\`: ${o.files.length ? o.files.join(", ") : "none yet"}. Act on every note in REVIEW.md and GATES.md.
-
+${shared.length ? `- The plan is shared on claude.ai too: ${shared.map((l) => `${l.file} ${l.url}`).join(", ")}. Read it there with ${tool} if the copy in \`${here}/\` is missing; the two hold the same text. If you change one of those files, republish it to the same link (best-effort: carry on if the publish fails).
+` : ""}
 ## Rules
 
 - The PR opens only when these ready rules pass: ${o.ready.map((r) => `${r} (${RULES[r] ?? r})`).join("; ")}.
@@ -110,6 +114,7 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
     id: o.id, title: t.title, branch: t.branch, blueprint: t.blueprint, stage, left: plannedPath(b, stage), agent: b.stages[stage]?.agent ?? null,
     ready: f.ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], floor: f.quality_floor ?? [], hardStops: f.hard_stops ?? [...STOPS], files,
     others: repos.slice(1).map((r) => r.repo), noPushbacks: gate.ok ? null : gate.why,
+    shared: sharedLinks(db, o.id, artifactPolicy(f)), as: artifactPolicy(f).as,
   }));
   // Every repo's work in progress goes up on its branch while the local agent is still alive; the pack
   // rides in the lead's. A retry commits nothing new when nothing changed, so it never duplicates the commit.

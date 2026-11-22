@@ -461,6 +461,23 @@ Everything runs locally by default, so a sleeping laptop stops running tickets a
 
 Cloud runs keep the same gates, ready rules and hard stops.
 
+### Shared plans as Claude artifacts
+
+A ticket's spec and plan live as files in the factory's data folder, which a cloud session can't see. With sharing on, the agent that writes one also publishes it to claude.ai, so any session the person owns reads it by link.
+
+```yaml
+# .factory/factory.yaml, or ~/.factory/config.yaml for every factory
+artifacts:
+  as: artifact          # artifact (a page) | doc (a Claude Doc) | off (the default)
+  publish: [INTENT.md, SLICES.md, PR.md, HANDOFF.md]   # the default when as is set
+```
+
+- **Who publishes.** Only an agent: the Artifact tool and the Claude Docs connector exist inside an interactive Claude Code session signed in to claude.ai, and no command or API publishes from outside one. A stage whose `output:` is listed ends with publishing it, as is (Markdown renders as a page), then `factory artifact <id> <file> <url>`. A handoff's next session publishes the handoff it starts from as HANDOFF.md.
+- **One link per file.** The daemon keeps each link in SQLite (`ticket_artifacts`). Every later session (a new stage run, a slice, a review round, a handoff) is given the link and republishes to it, so it never changes. Links start private; the person shares one from the page if they want.
+- **Who reads.** Every brief that points at the files also gives the links: stage and handoff briefs, CLOUD.md for `⇧C`, and ROUTINE.md beside each watched PR. A cloud session reads the plan with its own Artifact tool; the pack's copies still travel.
+- **Best-effort.** The local files stay the source of truth, and no ready rule reads a link. A failed publish (`factory artifact <id> <file> --fail <why>`), or a stage that ends with no new link, adds one line to the decision log and nothing else.
+- **What you see.** The Ticket page shows "Shared on claude.ai" with a link per file; status.json carries them.
+
 ## Away mode
 
 When tickets run in the cloud and you're away, nobody is there to ask, so the agents have to carry your judgement with them. The babysitter does most of the unattended work (review rounds, fixes, pushbacks), so most of this is about the babysitter.
