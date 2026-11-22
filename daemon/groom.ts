@@ -18,6 +18,7 @@ import { withHandoffHook } from "./handoff-hook.ts";
 import { estimateBudget, startHold } from "./budget.ts";
 import { compact } from "../lib/model.js";
 import { loadPrompt, render } from "./prompts.ts";
+import { splitGate } from "./split.ts";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
 
@@ -250,6 +251,9 @@ export function answerQuestions(db: Database, o: { dir: string; repo: string; id
 
 // No questions left: the ticket is groomed, queued in order, and starts if there's room.
 function groomed(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
+  // Triage found it is several tickets: the split waits for you, or its parts are groomed now.
+  const split = splitGate(db, o);
+  if (split) return { ...split, stage: "groom" };
   db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
   db.query("UPDATE tickets SET state = 'queued', stage = NULL, detail = NULL, needs_kind = NULL, needs_text = NULL, groomed_at = ?, updated_at = ? WHERE id = ?").run(o.now, o.now, o.id);
   const b = (db.query("SELECT blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { blueprint: string }).blueprint;
@@ -293,7 +297,8 @@ export function startGroomed(db: Database, o: { dir: string; repo: string; run: 
 // Answers on the issue: `A1:` comments newer than the questions, not the factory's own.
 export function readIssueAnswers(db: Database, o: { dir: string; repo: string; run: Run; now: string; log?: (s: string) => void }) {
   if (!grooming(o.repo).questions.includes("issue")) return;
-  const waiting = db.query("SELECT id FROM tickets WHERE state = 'grooming' AND needs_kind = 'question' AND id < ?").all(LOCAL_IDS) as { id: number }[];
+  const waiting = db.query(`SELECT id FROM tickets t WHERE state = 'grooming' AND needs_kind = 'question' AND id < ?
+    AND EXISTS (SELECT 1 FROM questions q WHERE q.ticket = t.id AND q.answer IS NULL)`).all(LOCAL_IDS) as { id: number }[];
   for (const { id } of waiting) {
     const since = (db.query("SELECT MIN(asked_at) AS at FROM questions WHERE ticket = ? AND answer IS NULL").get(id) as { at: string }).at;
     const r = o.run(["gh", "issue", "view", String(id), "--repo", needLead(db).slug, "--json", "comments"]);

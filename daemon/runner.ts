@@ -20,6 +20,7 @@ import { DEFAULT_MODEL, pinModel } from "./models.ts";
 import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
 import { closeRound, latestBrief } from "./round.ts";
 import { loadPrompt, render } from "./prompts.ts";
+import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
 import { chooseNext } from "./orchestrate.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
@@ -116,7 +117,7 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
   // Every repo the ticket works in gets a worktree on the same branch; a repo factory.yaml
   // stopped listing refuses the start.
   const listed = readFactory(o.repo).repos;
-  const repos = ticketRepos(db, o.id).map((r) => ({ slug: r.repo, path: repoOf(db, r.repo, listed).path }));
+  const repos = ticketRepos(db, o.id).map((r) => ({ slug: r.repo, lead: r.lead === 1, path: repoOf(db, r.repo, listed).path }));
   for (const r of repos) {
     const worktree = worktreePath(r.path, branch);
     mkdirSync(dirname(worktree), { recursive: true });
@@ -125,7 +126,9 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
     const here = existsSync(worktree) && run(["git", "-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"]).out === branch;
     if (!here) {
       const known = run(["git", "-C", r.path, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).code === 0;
-      const wt = run(["git", "-C", r.path, "worktree", "add", ...(known ? [worktree, branch] : ["-b", branch, worktree])]);
+      // A split's part that keeps the work starts from its parent's branch (split.ts).
+      const base = r.lead && t.base ? [t.base] : [];
+      const wt = run(["git", "-C", r.path, "worktree", "add", ...(known ? [worktree, branch] : ["-b", branch, worktree, ...base])]);
       if (wt.code !== 0) throw new Error(`git worktree add failed in ${r.slug}: ${wt.out}`);
     }
     setWork(db, o.id, { worktree, branch }, r.slug);
@@ -177,7 +180,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -280,6 +283,9 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
     db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
     return { parked: true, stage: at };
   }
+  // The stage's agent proposed a split: it stops for you, or the parts are made now.
+  const split = o.failed ? null : splitGate(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
+  if (split) return { ...split, stage: at };
   const verdict = o.failed || gate ? null : stageVerdict(db, { dir: o.dir, repo: o.repo, id: o.id, stage: at, s: b.stages[at], now });
   return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? gate?.failed ?? verdict?.failed ?? null }));
 }
@@ -547,6 +553,12 @@ export function answer(db: Database, o: { dir: string; repo: string; id: number;
   const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
+  // A proposed split: yes makes the parts, no goes on as one ticket.
+  if (t.needs_kind === "question" && pendingParts(db, o.id).length) {
+    const yes = /^\s*(y|yes|approve|ok|split)\b/i.test(o.text), no = /^\s*(n|no|reject|keep)\b/i.test(o.text);
+    if (yes === no) throw new Error(`#${o.id} has a split proposed: answer approve (make the parts) or reject (one ticket)`);
+    return { stage: t.stage, ...decideSplit(db, { dir: o.dir, repo: o.repo, id: o.id, approve: yes, run, now }) };
+  }
   if (t.state === "grooming" && t.needs_kind === "question")
     return { stage: "groom", ...answerQuestions(db, { dir: o.dir, repo: o.repo, id: o.id, text: o.text, by: "you", where: "herdr", run, now }) };
   if (t.state !== "parked") throw new Error(`#${o.id} is ${t.state}; only a parked ticket waits for an answer`);
@@ -583,6 +595,8 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "paused") throw new Error(`#${o.id} is ${t.state}; only a paused ticket resumes`);
+  if (pendingParts(db, o.id).length) throw new Error(`#${o.id} has a split proposed: factory split ${o.id} approve|reject`);
+  if (childrenOf(db, o.id).length) throw new Error(`#${o.id} is split into ${childrenOf(db, o.id).map((c) => `#${c.id}`).join(", ")}; it closes when they're done`);
   // Paused before it ever started (pulled back while queued): "keep" puts it back in the queue.
   if (!t.worktree) {
     db.query("UPDATE tickets SET state = 'queued', needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
