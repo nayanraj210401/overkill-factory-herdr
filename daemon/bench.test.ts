@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import { sh, type Run } from "./runner.ts";
 import { runScheduledBenchmarks } from "./cli.ts";
-import { applySet, buildTasks, describePlan, planSuite, readSuite, resolveVariant, runSuite, scheduledSuites, usageIn, type Agent } from "./bench.ts";
+import { applySet, buildTasks, describePlan, planSuite, readSuite, resolveVariant, runSuite, scheduledSuites, usageIn, benchArgv, type Agent } from "./bench.ts";
 import { transcriptDir } from "./usage.ts";
 import { validateFile, parseSchedule } from "./validate.ts";
 import { buildRuns } from "./runs.ts";
@@ -241,4 +241,17 @@ test("benchmark files are validated: a target names one of stage or blueprint, v
   expect(bad(SUITE.replace("holdout: tests-added-by-pr", "holdout: all"))[0]).toContain("is not one of tests-added-by-pr");
   expect(bad(SUITE + "limits2: 1\n")[0]).toContain("unknown key");
   expect([parseSchedule("weekly"), parseSchedule("daily"), parseSchedule("hourly"), parseSchedule("6h"), parseSchedule("never")]).toEqual([604_800_000, 86_400_000, 3_600_000, 21_600_000, null]);
+});
+
+test("a Claude replay runs with acceptEdits and an allowlist of file tools, read-only git and the repo's tests", () => {
+  const step = { stage: "implement", agent: "builder", harness: "claude", model: "sonnet", prompt: "" } as any;
+  const task = { title: "t", body: "b" } as any;
+  const argv = benchArgv(step, task, { cwd: "/w", log: "/l", commands: ["bun test", "npm run typecheck && echo ok"] });
+  expect(argv.slice(0, 4)).toEqual(["claude", "-p", "--permission-mode", "acceptEdits"]);
+  expect(argv).not.toContain("bypassPermissions");
+  const settings = JSON.parse(argv[argv.indexOf("--settings") + 1]);
+  expect(settings.permissions.allow).toEqual(expect.arrayContaining(["Edit", "Write", "Bash(git diff:*)", "Bash(bun test)", "Bash(bun test:*)", "Bash(npm run typecheck && echo ok)", "Bash(npm run:*)"]));
+  expect(settings.permissions.allow.some((a: string) => /Bash\((git push|rm|curl)/.test(a))).toBe(false);
+  expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain("guard.ts");
+  expect(benchArgv({ ...step, harness: "codex" }, task, { cwd: "/w", log: "/l" }).slice(0, 3)).toEqual(["codex", "exec", "--full-auto"]);
 });
