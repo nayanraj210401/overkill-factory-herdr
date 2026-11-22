@@ -96,6 +96,12 @@ test("the hook script, as Claude Code runs it from the settings file: exit 2 onl
   expect(existsSync(flagFile(dir, 412))).toBe(false);
 });
 
+test("the session may work in its ticket folder, repos and worktrees without a permission prompt", () => {
+  const dir = mkdtempSync(join(tmpdir(), "hook-"));
+  const argv = withHandoffHook(["claude", "go"], dir, 5, null, [], ["/f/tickets/5", "/r/api", "", "/r/api", "/w/api"]);
+  expect(JSON.parse(readFileSync(argv[4], "utf8")).permissions.additionalDirectories).toEqual(["/f/tickets/5", "/r/api", "/w/api"]);
+});
+
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));

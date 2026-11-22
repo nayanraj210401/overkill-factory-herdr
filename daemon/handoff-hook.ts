@@ -64,7 +64,10 @@ export function refusal(flag: { message?: string } | null, input: { tool_name?: 
 // reads only one --settings. The session runs in Claude Code's auto mode plus agentAllow(commands)
 // (allow.ts): safe actions run on their own and risky ones are refused, so nothing waits at a
 // permission prompt. Questions for the person are asked in the terminal (the daemon flags them).
-export function withHandoffHook(argv: string[], dir: string, id: number, also?: string | null, commands: string[] = []) {
+// `dirs` are the folders the session works in besides its own (the ticket folder, the repos and
+// worktrees): Claude Code asks before touching a folder outside its working directories, even in
+// auto mode, so they go in additionalDirectories.
+export function withHandoffHook(argv: string[], dir: string, id: number, also?: string | null, commands: string[] = [], dirs: string[] = []) {
   const flag = flagFile(dir, id);
   for (const f of [flag, snapshotFile(dir, id)]) if (existsSync(f)) unlinkSync(f);
   if (argv[0] !== "claude") return argv;
@@ -77,7 +80,7 @@ export function withHandoffHook(argv: string[], dir: string, id: number, also?: 
   const others = also ? JSON.parse(also).hooks?.PreToolUse ?? [] : [];
   // The status line saves Claude Code's plan-usage reading for the plan meters (planline.ts).
   const statusLine = { type: "command", command: `${quote(process.execPath)} ${quote(join(dirname(import.meta.path), "planline.ts"))} ${quote(planFile())}` };
-  writeFileSync(settings, JSON.stringify({ permissions: { allow: agentAllow(commands) }, hooks: { PreToolUse: [...others, ours], PreCompact: [precompact] }, statusLine }, null, 2) + "\n");
+  writeFileSync(settings, JSON.stringify({ permissions: { allow: agentAllow(commands), additionalDirectories: [...new Set(dirs.filter(Boolean))] }, hooks: { PreToolUse: [...others, ours], PreCompact: [precompact] }, statusLine }, null, 2) + "\n");
   return ["claude", "--permission-mode", "auto", "--settings", settings, ...argv.slice(1)];
 }
 
