@@ -5,7 +5,7 @@
 // groomed, and groomed tickets start on their own, up to max_running at once.
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
-import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { enterStage } from "./ticket.ts";
 import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
@@ -66,6 +66,12 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const g = grooming(o.repo);
   const folder = join(o.dir, "tickets", String(o.id));
   mkdirSync(folder, { recursive: true });
+  // Grooming again starts clean: what an earlier triager asked and nobody answered is withdrawn
+  // (the new one asks again if it still matters), and its GROOMING.md is kept aside, since a
+  // GROOMING.md is how a finished triage is told from one that died (finishGrooming).
+  db.query("DELETE FROM questions WHERE ticket = ? AND answer IS NULL").run(o.id);
+  const before = join(folder, "GROOMING.md");
+  if (existsSync(before)) renameSync(before, join(folder, "GROOMING.before.md"));
   const agent = loadAgent(o.repo, g.agent);
   const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
     triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));

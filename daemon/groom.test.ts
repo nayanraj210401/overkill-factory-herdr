@@ -232,3 +232,24 @@ test("triage that stops before GROOMING.md (killed, crashed) parks the ticket in
   expect(startGrooming(db, { dir, repo, id: 412, run: quiet, now })).toBe("t1"); // `factory groom` reruns it
   expect(ticket().needs_kind).toBe(null);
 });
+
+test("grooming again withdraws the questions nobody answered and keeps the old GROOMING.md aside", () => {
+  const { db, dir, repo, run, add, ticket } = setup();
+  add(412);
+  startGrooming(db, { dir, repo, id: 412, run, now });
+  ask(db, { id: 412, kind: "product", text: "Which plan?", now });
+  ask(db, { id: 412, kind: "engineering", text: "Redis or memory?", now });
+  db.query("UPDATE questions SET answer = 'memory', answered_by = 'you', answered_at = ? WHERE ticket = 412 AND n = 2").run(now);
+  advance(db, { dir, repo, id: 412, run, now }); // the triager's terminal is gone: waits on Q1
+  expect(ticket()).toMatchObject({ state: "grooming", needs_kind: "question" });
+  writeFileSync(join(dir, "tickets/412/GROOMING.md"), "first look\n");
+  // The fake triager writes a new GROOMING.md only when it is told to (triaged); this one dies early.
+  const dies: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: '{"address":"t9"}' } : run(argv, cwd));
+  startGrooming(db, { dir, repo, id: 412, run: dies, now });
+  expect(ticket()).toMatchObject({ state: "grooming", needs_kind: null });
+  expect(db.query("SELECT n, answer FROM questions WHERE ticket = 412").all()).toEqual([{ n: 2, answer: "memory" }]);
+  expect(readFileSync(join(dir, "tickets/412/GROOMING.before.md"), "utf8")).toBe("first look\n");
+  // Without a fresh GROOMING.md, the second triager counts as stopped early, not finished.
+  expect(advance(db, { dir, repo, id: 412, run: dies, now })).toMatchObject({ stage: "groom" });
+  expect(ticket().needs_text).toContain("Triage stopped before it finished");
+});
