@@ -1,5 +1,6 @@
 // Builds status.json (the contract in lib/status.js) from SQLite rows. The
 // window reads only this file, so the daemon stays the one source of truth.
+import { claudeChoice } from "./claude-bin.ts";
 import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
 import { renameSync, writeFileSync } from "node:fs";
@@ -94,6 +95,8 @@ export function buildStatus(db: Database, now = new Date()) {
     away: digest(db, now.toISOString()),
     // No .factory/ yet: Home shows the setup checklist instead.
     ...(setup ? { setup } : {}),
+    // Which claude the sessions run, for Config (claude-bin.ts); tests never look one up.
+    ...(process.env.FACTORY_TEST_SANDBOX ? {} : { claude: (() => { try { return claudeChoice(); } catch (e) { return { error: (e as Error).message, found: [] }; } })() }),
     overrides: overridesOf(db, lead?.path),
     to_review: 0,
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,

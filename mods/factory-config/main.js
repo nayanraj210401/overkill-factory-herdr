@@ -131,6 +131,19 @@ export default class FactoryConfig extends View {
         .child(div().flex_none().text_size(12).text_color(t.muted).child(r.pr ? `PR #${r.pr} · ${r.state}` : r.stage ? `${r.stage} · ${r.state}` : r.state))));
   }
 
+  // Which claude every factory session runs (claude.path in config.yaml, else the newest
+  // found), and the others on this machine. Changing it goes through Overwatch like any config.
+  claudeCard(t, c) {
+    const why = c.why === "configured" ? "claude.path in config.yaml" : "the newest found";
+    return v_flex().id("claude").flex_none().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .child(h_flex().px(8).pb(4).gap(8).child(div().text_size(11).text_color(t.dim).child("CLAUDE CODE"))
+        .child(div().text_size(11).text_color(t.muted).child(`every session runs this one · ${why}${c.found.length > 1 ? " · ask Overwatch to use another" : ""}`)))
+      .children(c.found.map((f) => h_flex().h(24).px(8).gap(10).items_center()
+        .child(div().w(14).flex_none().text_color(t.done).child(f.path === c.path ? "▸" : ""))
+        .child(div().flex_1().min_w_0().truncate().text_color(f.path === c.path ? t.foreground : t.muted).child(f.path))
+        .child(div().flex_none().text_size(12).text_color(t.dim).child(f.version ?? "?"))));
+  }
+
   overridesCard(t, rows) {
     const focused = this.handle.is_focused();
     const show = (v) => (v == null ? "not set" : String(v));
@@ -217,6 +230,7 @@ export default class FactoryConfig extends View {
     this.at = clamp(this.at, overrides.length);
     const pending = pendingRequests(status()?.tickets);
     return v_flex().size_full().gap(8).text_size(13).child(this.daemonBar(t))
+      .when(Boolean(status()?.claude?.found?.length), (el) => el.child(this.claudeCard(t, status().claude)))
       .when(pending.length > 0, (el) => el.child(this.pendingCard(t, pending)))
       .when(overrides.length > 0, (el) => el.child(this.overridesCard(t, overrides))).child(h_flex().flex_1().w_full().gap(8)
       .child(v_flex().id("files").w(240).flex_none().h_full().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()

@@ -3,6 +3,7 @@
 // and opens as an unnamed space, which Herdr nests under the repo's space. Each
 // stage's agent is a tab there. When the app isn't running (the daemon runs from
 // launchd), callers fall back to a free-floating `hc run`.
+import { resolveClaude } from "./claude-bin.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -18,9 +19,12 @@ if (process.env.NODE_ENV === "test" && !process.env.FACTORY_TEST_SANDBOX)
 // folder or a worktree) doesn't name one. \`dir\` is the factory's data folder,
 // <FACTORY_HOME>/<name>; the command is a small script in <FACTORY_HOME>/bin that runs
 // this checkout's CLI with bun.
-// The PATH agents and checks run with: bun's own folder and Homebrew's first, so a
-// daemon started by launchd (whose PATH is /usr/bin:/bin) still finds the repo's tools.
-export const toolPath = () => [...new Set([dirname(process.execPath), "/opt/homebrew/bin", "/usr/local/bin", ...(process.env.PATH ?? "/usr/bin:/bin").split(":")])].join(":");
+// The PATH agents and checks run with: bun's own folder, then your PATH in its own order
+// (the service keeps the one you installed it from), then Homebrew's as a fallback, so a
+// daemon started with a bare PATH still finds the repo's tools. Your order wins: a stale
+// Homebrew copy of claude must never shadow the one your shell runs.
+export const toolPath = (path = process.env.PATH ?? "/usr/bin:/bin") =>
+  [...new Set([dirname(process.execPath), ...path.split(":").filter(Boolean), "/opt/homebrew/bin", "/usr/local/bin"])].join(":");
 
 export function withFactory(argv: string[], dir: string) {
   const home = dirname(dir);
@@ -32,7 +36,8 @@ export function withFactory(argv: string[], dir: string) {
     writeFileSync(file, script);
     chmodSync(file, 0o755);
   }
-  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${toolPath()}`, ...argv];
+  // Every terminal (overwatch, triage, stages, handoffs) starts the same claude (claude-bin.ts).
+  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${toolPath()}`, ...resolveClaude(argv)];
 }
 
 const appHome = () => process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");

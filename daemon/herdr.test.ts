@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { open, setMeta, setRepo, setWork } from "./db.ts";
 import { sh, startTicket, mergeTicket, type Run } from "./runner.ts";
 import { watchSessions } from "./cli.ts";
-import { branchSlug, openAgent, sessionState, withFactory, worktreePath, worktreeRoot } from "./herdr.ts";
+import { branchSlug, openAgent, sessionState, toolPath, withFactory, worktreePath, worktreeRoot } from "./herdr.ts";
 
 const realHome = process.env.HERDR_APP_HOME!;
 const realTrees = process.env.FACTORY_WORKTREES!;
@@ -132,4 +132,12 @@ test("an agent's command finds `factory` on its PATH, pointed at its own factory
   expect(argv.slice(0, 3)).toEqual(["env", `FACTORY_HOME=${dirname(dir)}`, "FACTORY_NAME=acme-api"]);
   const r = Bun.spawnSync(argv, { cwd: tmpdir(), env: process.env });
   expect(r.stdout.toString().split("\n").slice(0, 2)).toEqual(["acme-api", expect.stringContaining("factory <command>")]);
+});
+
+test("agents find the claude your shell runs: your PATH's order wins over Homebrew's", () => {
+  const p = toolPath("/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin").split(":");
+  expect(p[0]).toBe(dirname(process.execPath));
+  expect(p.indexOf("/Users/me/.local/bin")).toBeLessThan(p.indexOf("/opt/homebrew/bin"));
+  // a bare launchd PATH still gets Homebrew's tools, after it
+  expect(toolPath("/usr/bin:/bin").split(":").slice(1)).toEqual(["/usr/bin", "/bin", "/opt/homebrew/bin", "/usr/local/bin"]);
 });

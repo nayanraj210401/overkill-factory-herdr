@@ -26,13 +26,14 @@ import { chooseNext } from "./orchestrate.ts";
 import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { accountPending, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount } from "./maintainer.ts";
 import { readFeatures, touched } from "./features.ts";
+import { resolveClaude } from "./claude-bin.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
   // Tests stub claude; one that forgot must never start the user's real Claude.
   // Tests never reach real agents or GitHub: a stub that falls through to sh gets a failure.
   if (["claude", "codex", "gh"].includes(argv[0]) && process.env.FACTORY_TEST_SANDBOX) return { code: 1, out: `${argv[0]} is stubbed in tests` };
-  const r = Bun.spawnSync(argv, { cwd });
+  const r = Bun.spawnSync(resolveClaude(argv), { cwd }); // the one claude every session runs (claude-bin.ts)
   return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() };
 };
 
