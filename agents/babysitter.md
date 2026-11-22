@@ -33,7 +33,7 @@ factory opened, in every repo, from the moment it opens until it merges or close
 
 - **The maintainer**, for a change to the factory. For example, a comment that keeps
   coming back across PRs should become a lint rule or a lesson:
-  `factory request "<the change, and why>"`.
+  `factory ask maintainer "<the change, and why>" --why "<the PRs and comments>"`.
 - **Overwatch**, for a question only the person can answer, such as a product question:
   escalate the comment (`factory comment <id> C<n> escalate <why>`). The ticket waits in
   Needs you.

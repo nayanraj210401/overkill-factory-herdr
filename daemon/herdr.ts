@@ -26,7 +26,8 @@ if (process.env.NODE_ENV === "test" && !process.env.FACTORY_TEST_SANDBOX)
 export const toolPath = (path = process.env.PATH ?? "/usr/bin:/bin") =>
   [...new Set([dirname(process.execPath), ...path.split(":").filter(Boolean), "/opt/homebrew/bin", "/usr/local/bin"])].join(":");
 
-export function withFactory(argv: string[], dir: string) {
+// `who`: the agent the session runs as, and its ticket, so `factory ask` knows who is asking.
+export function withFactory(argv: string[], dir: string, who: { agent?: string | null; ticket?: number } = {}) {
   const home = dirname(dir);
   const bin = join(home, "bin");
   const script = `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, "cli.ts")}' "$@"\n`;
@@ -37,7 +38,8 @@ export function withFactory(argv: string[], dir: string) {
     chmodSync(file, 0o755);
   }
   // Every terminal (overwatch, triage, stages, handoffs) starts the same claude (claude-bin.ts).
-  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${toolPath()}`, ...resolveClaude(argv)];
+  const as = [...(who.agent ? [`FACTORY_AGENT=${who.agent}`] : []), ...(who.ticket != null ? [`FACTORY_TICKET=${who.ticket}`] : [])];
+  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, ...as, `PATH=${bin}:${toolPath()}`, ...resolveClaude(argv)];
 }
 
 const appHome = () => process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");

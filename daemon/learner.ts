@@ -11,10 +11,11 @@
 // request per override, and none while another for the same setting is still open.
 import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
+import { notesSection, openAsks, takeNotes } from "./ask.ts";
 import { request } from "./maintainer.ts";
 import { interactionsBefore, planKnown, planMeters } from "./metrics.ts";
 import { readFactory, type Run } from "./runner.ts";
-import { loadAgent } from "./agents.ts";
+import { factoryMap, loadAgent } from "./agents.ts";
 import { accountDayCap, dayCap, tokensToday } from "./budget.ts";
 import { pinModel } from "./models.ts";
 import { parseTokens } from "../lib/model.js";
@@ -322,7 +323,9 @@ export function runLearner(db: Database, o: { dir: string; repo: string; slug: s
   const agent = loadAgent(o.repo, "learner");
   if (!agent) throw new Error("no learner agent: neither ~/.factory/agents/learner.md nor the shipped agents/learner.md is there");
   const digest = learnerDigest(db, o.repo);
-  const prompt = learnerPrompt(agent.prompt as string, digest);
+  const notes = openAsks(db, "learner"); // factory ask learner: read now, handled once the run answers
+  // The neighbour map first (stable, cached), then its role, the digest and any notes for it.
+  const prompt = [factoryMap(db), learnerPrompt(agent.prompt as string, digest), notesSection(notes)].filter(Boolean).join("\n\n");
   const hold = learnerHold(db, o.repo, now, Math.ceil(prompt.length / 4));
   if (hold) return { ran: false, why: hold, filed: [], skipped: [] };
   const model = pinModel(typeof agent.model === "string" ? agent.model : "sonnet")!;
@@ -348,6 +351,7 @@ export function runLearner(db: Database, o: { dir: string; repo: string; slug: s
       ].join("\n");
       out.filed.push(file(db, { keys: [key], text: p.change, evidence, dir: o.dir, slug: o.slug, run: o.run, now: o.now }));
     }
+    if (status === "done") takeNotes(db, "learner", o.now);
     db.query("UPDATE learner_runs SET filed = ? WHERE id = ?").run(out.filed.length ? out.filed.map((f) => f.id).join(",") : null, id);
   });
   return out;

@@ -7,6 +7,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { validateFile } from "./validate.ts";
+import type { Database } from "bun:sqlite";
+import { leadRepo } from "./db.ts";
 
 export const FACTORY_AGENTS = ["overwatch", "babysitter", "maintainer", "learner"] as const;
 export type FactoryAgent = (typeof FACTORY_AGENTS)[number];
@@ -62,4 +64,64 @@ export function installFactoryAgents(home?: string) {
 export const factoryAgentFiles = (home?: string) => {
   const dir = factoryAgentsDir(home);
   return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).sort().map((f) => join(dir, f)) : [];
+};
+
+// ---- the neighbour map ---------------------------------------------------------------
+// Every brief opens with the factory's agents: name, tier, territory, and how to ask each.
+// It's built from the agents' headers only, sorted, so it reads the same in every session
+// and stays in the cached front of the brief (plan: Cache-friendly order).
+
+// An agent with no `territory:` gets its role's.
+const ROLE_TERRITORY: Record<string, string> = {
+  orchestrator: "Which stage runs next, when a blueprint offers more than one",
+  triage: "Grooming one ticket before it starts", spec: "INTENT.md for its ticket", plan: "SLICES.md for its ticket",
+  build: "Its ticket's work, in the ticket's worktree", review: "The review verdict on its ticket's diff", verify: "Hidden checks and the holdout verdict for its ticket",
+  scorer: "Scoring benchmark runs", maintain: "The factory itself", overwatch: "Talking with you, and the state of every ticket",
+  babysit: "Every PR the factory opened", learn: "What would move learn.target",
+};
+const HOW: Record<FactoryAgent, string> = {
+  overwatch: 'factory ask overwatch "<what the person should hear or decide>"; the only agent that talks to the person',
+  babysitter: 'factory ask babysitter "<text>"; read on its next run',
+  maintainer: 'factory ask maintainer "<the change, and why>" --why "<evidence>"; it comes back as a PR',
+  learner: 'factory ask learner "<text>" --why "<evidence>"; read on its next run',
+};
+
+const territoryOf = (a: Agent | null) => (a?.territory ?? (a?.role ? ROLE_TERRITORY[a.role] : undefined) ?? "Its own stage of its own ticket").replace(/\.$/, "");
+
+function safeLoad(repo: string | null, name: string) {
+  try { return loadAgent(repo, name); } catch { return null; } // a bad file fails its own stage, not every brief
+}
+
+// The repo agents of one repo, by name.
+export function repoAgents(repo: string) {
+  const dir = join(repo, ".factory", "agents");
+  return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).filter((n) => !isFactoryAgent(n)).sort() : [];
+}
+
+export function neighbourMap(repos: { slug: string; path: string }[]) {
+  const lines = [
+    "## The factory's agents",
+    "",
+    "Each agent acts only in its own territory. When something belongs to another agent, ask it rather than doing it yourself.",
+    "",
+    "Factory agents, one each for every repo:",
+    ...FACTORY_AGENTS.map((n) => `- ${n}: ${territoryOf(safeLoad(null, n))}. Ask: ${HOW[n]}.`),
+  ];
+  for (const r of [...repos].sort((a, b) => a.slug.localeCompare(b.slug))) {
+    const names = repoAgents(r.path);
+    if (!names.length) continue;
+    lines.push("", `Repo agents in ${r.slug}, each running one stage of one ticket; ask overwatch to route work to them:`);
+    for (const n of names) {
+      const a = safeLoad(r.path, n);
+      lines.push(`- ${n}${a?.role ? ` (${a.role})` : ""}: ${territoryOf(a)}.`);
+    }
+  }
+  return lines.join("\n");
+}
+
+// The map in one factory's briefs: the factory agents and its lead repo's agents, whose
+// .factory/agents/ every ticket's stages run from.
+export const factoryMap = (db: Database) => {
+  const lead = leadRepo(db);
+  return neighbourMap(lead ? [lead] : []);
 };

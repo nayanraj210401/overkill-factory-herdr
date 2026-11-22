@@ -11,6 +11,7 @@ import { request } from "./maintainer.ts";
 import { tokensToday } from "./budget.ts";
 import { learnerDigest, learnerDue, learnerHold, learningCap, learningSpent, parseProposals, runLearner } from "./learner.ts";
 import { validateFile } from "./validate.ts";
+import { ask, openAsks } from "./ask.ts";
 
 // Each test gets its own FACTORY_HOME; put the preload's back so other files never see one with agents in it.
 const HOME0 = process.env.FACTORY_HOME;
@@ -204,4 +205,18 @@ test("budget.learning: a share of the day's budget or tokens, charged with each 
 test("factory.yaml's learn.review_every validates", () => {
   expect(validateFile("factory.yaml", "name: t\nlearn: { review_every: 10 }\n")).toEqual([]);
   expect(validateFile("factory.yaml", "name: t\nlearn: { review_every: often }\n").join()).toContain("review_every");
+});
+
+test("a run opens with the neighbour map, carries the notes asked of the learner, and handles them once it answers", () => {
+  const s = setup("learn: { warmup_tickets: 0 }\n");
+  const note = ask(s.db, { to: "learner", from: "overwatch", text: "Is the spec stage worth it for chores?", why: "the person asked", slug: "acme/api", dir: s.dir, run: () => ({ code: 1, out: "" }), now: NOW });
+  s.say.code = 1; // a failed run leaves the note waiting
+  s.go();
+  expect(openAsks(s.db, "learner").map((a) => a.id)).toEqual([note.ask.id]);
+  s.say.code = 0;
+  s.go(NOW, true);
+  const prompt = s.calls.filter((c) => c[0] === "claude").at(-1)![6];
+  expect(prompt.startsWith("## The factory's agents")).toBe(true);
+  expect(prompt).toContain(`- Note #${note.ask.id} from overwatch: Is the spec stage worth it for chores? (evidence: the person asked)`);
+  expect(openAsks(s.db, "learner")).toEqual([]);
 });
