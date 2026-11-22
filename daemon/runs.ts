@@ -3,6 +3,7 @@
 // kind benchmark, with no ticket and a negative id so it never matches a session's.
 // Maintenance runs aren't recorded yet; the file's contract already has room for them.
 import type { Database } from "bun:sqlite";
+import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateRuns } from "../lib/runs.js";
@@ -66,7 +67,6 @@ export function writeRuns(db: Database, path: string, now = new Date()) {
   const doc = buildRuns(db, now);
   const errors = validateRuns(doc);
   if (errors.length) throw new Error(`runs.json would break the contract:\n${errors.join("\n")}`);
-  writeFileSync(`${path}.tmp`, JSON.stringify(doc) + "\n");
-  renameSync(`${path}.tmp`, path);
+  writeIfChanged(path, JSON.stringify(doc) + "\n");
   return doc;
 }

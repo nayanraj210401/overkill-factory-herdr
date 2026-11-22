@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, window, run, notify } from "herdr";
-import { compact, factoryRepos } from "./lib/model.js";
+import { compact, factoryRepos, planPct } from "./lib/model.js";
 import { startLoader, state } from "./lib/store.js";
 
 // Top of the sidebar: factory name, daemon, plan window. With props.footer: the day's budget bar.
@@ -41,7 +41,7 @@ export default class FactoryChrome extends View {
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // not a window drag
           .on_click(() => run("layout.select", { stack: "pages", child: "config" }))
           .child(div().size(7).rounded_full().bg(s.factory.daemon ? t.done : t.dim))
-          .child(`${s.source === "fixture" ? "sample data" : s.factory.daemon ? "daemon on" : "daemon off"} · 5h ${Math.round(s.plan.window_5h * 100)}%`)
+          .child(`${s.source === "fixture" ? "sample data" : s.factory.daemon ? "daemon on" : "daemon off"} · 5h ${planPct(s.plan, "window_5h")}`)
       : div().text_color(t.blocked).truncate().child(errors[0] ?? "no status");
     return v_flex().size_full().justify_end().px(16).pb(8).bg(t.chrome).when(mac, (el) => el.pt(30))
       .child(this.name(t, s))

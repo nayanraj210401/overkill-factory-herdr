@@ -191,3 +191,11 @@ test("a ticket's space and its worktree's space show their factory, not a factor
   assert.equal(factoryOf(`${h}/Project/factory-sandbox/`, h), "factory-sandbox");
   assert.equal(factoryOf(undefined, h), null);
 });
+
+test("planPct shows a dash when nothing reports the plan's usage", async () => {
+  const { planPct } = await import("../lib/model.js");
+  const assert = (await import("node:assert/strict")).default;
+  assert.equal(planPct({ window_5h: 0.62, source: "claude" }, "window_5h"), "62%");
+  assert.equal(planPct({ window_5h: 0, source: "none" }, "window_5h"), "–");
+  assert.equal(planPct({ week: 0.42 }, "week"), "42%"); // the sample has no source
+});

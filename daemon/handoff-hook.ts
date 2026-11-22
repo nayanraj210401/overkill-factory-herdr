@@ -5,6 +5,7 @@
 //   bun handoff-hook.ts <flag file>     (the hook's JSON arrives on stdin)
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { planFile } from "./planline.ts";
 
 export const EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 
@@ -32,7 +33,9 @@ export function withHandoffHook(argv: string[], dir: string, id: number, also?: 
   mkdirSync(dirname(flag), { recursive: true });
   const ours = { matcher: EDIT_TOOLS.join("|"), hooks: [{ type: "command", command: `${quote(process.execPath)} ${quote(import.meta.path)} ${quote(flag)}` }] };
   const others = also ? JSON.parse(also).hooks?.PreToolUse ?? [] : [];
-  writeFileSync(settings, JSON.stringify({ hooks: { PreToolUse: [...others, ours] } }, null, 2) + "\n");
+  // The status line saves Claude Code's plan-usage reading for the plan meters (planline.ts).
+  const statusLine = { type: "command", command: `${quote(process.execPath)} ${quote(join(dirname(import.meta.path), "planline.ts"))} ${quote(planFile())}` };
+  writeFileSync(settings, JSON.stringify({ hooks: { PreToolUse: [...others, ours] }, statusLine }, null, 2) + "\n");
   return ["claude", "--settings", settings, ...argv.slice(1)];
 }
 
