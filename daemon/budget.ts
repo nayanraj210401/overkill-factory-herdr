@@ -40,13 +40,16 @@ export function pauseAt(repo: string) {
   return String(v).includes("%") || n > 1 ? n / 100 : n;
 }
 
-// What learning spent today (UTC day): learner runs and benchmark runs, the one total
-// budget.learning caps. Experiments add their table here. An old database lacks a table: nothing.
-const LEARNING_TABLES = ["learner_runs", "bench_runs"];
-export function learningUsage(db: Database, now: Date): Tokens {
+// What learning spent today (UTC day): learner runs, benchmark runs and experiments (the
+// tokens of tickets on a value other than the one in force, experiments.ts), the one total
+// budget.learning caps. An old database lacks a table: nothing.
+const LEARNING_TABLES = ["learner_runs", "bench_runs", "experiment_spend"];
+// Experiment tickets' tokens are in usage already; the day's total mustn't count them twice.
+const IN_USAGE = ["experiment_spend"];
+export function learningUsage(db: Database, now: Date, tables = LEARNING_TABLES): Tokens {
   const day = now.toISOString().slice(0, 10);
   let input = 0, output = 0;
-  for (const t of LEARNING_TABLES) {
+  for (const t of tables) {
     try {
       const r = db.query(`SELECT SUM(tokens_in) AS i, SUM(tokens_out) AS o FROM ${t} WHERE started_at >= ?`).get(day) as { i: number | null; o: number | null };
       input += r.i ?? 0; output += r.o ?? 0;
@@ -62,7 +65,7 @@ export function tokensToday(db: Database, now: Date, every = false): Tokens {
   // Learning (the learner's calls, benchmarks) counts too: budget.learning is a share of the day.
   const one = (d: Database) => {
     const r = d.query(q).get(day) as { i: number | null; o: number | null };
-    const l = learningUsage(d, now);
+    const l = learningUsage(d, now, LEARNING_TABLES.filter((t) => !IN_USAGE.includes(t)));
     return { i: (r.i ?? 0) + l.input, o: (r.o ?? 0) + l.output };
   };
   const rows = [one(db)];

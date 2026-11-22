@@ -766,6 +766,137 @@
    }
   ]
  },
+ "learning": {
+  "target": "cost_per_pr",
+  "hold": null,
+  "warmup": {
+   "merged": 31,
+   "needed": 20
+  },
+  "budget": {
+   "spent": {
+    "input": 1840000,
+    "output": 61000
+   },
+   "cap": {
+    "input": 4000000,
+    "output": 200000
+   }
+  },
+  "experiments": [
+   {
+    "key": "agents.builder.model",
+    "context": "feature/m",
+    "current": "claude-haiku-5-5",
+    "file": "claude-sonnet-5-5",
+    "winner": "claude-haiku-5-5",
+    "decided": true,
+    "epsilon": 0.229,
+    "outcomes": 19,
+    "arms": [
+     {
+      "value": "claude-haiku-5-5",
+      "pulls": 8,
+      "pending": 1,
+      "n": 7,
+      "mean": 1.62,
+      "first_try": 0.857,
+      "revert_rate": 0,
+      "floor": "ok",
+      "in_force": true
+     },
+     {
+      "value": "claude-sonnet-5-5",
+      "pulls": 7,
+      "pending": 0,
+      "n": 7,
+      "mean": 2.31,
+      "first_try": 0.857,
+      "revert_rate": 0,
+      "floor": "ok",
+      "in_force": false
+     },
+     {
+      "value": "claude-opus-5-5",
+      "pulls": 5,
+      "pending": 0,
+      "n": 5,
+      "mean": 4.4,
+      "first_try": 1,
+      "revert_rate": 0,
+      "floor": "ok",
+      "in_force": false
+     }
+    ]
+   },
+   {
+    "key": "budget.handoff_at_context",
+    "context": "feature/m",
+    "current": "60%",
+    "file": "60%",
+    "winner": null,
+    "decided": false,
+    "epsilon": 0.333,
+    "outcomes": 9,
+    "arms": [
+     {
+      "value": "60%",
+      "pulls": 4,
+      "pending": 0,
+      "n": 4,
+      "mean": 2.05,
+      "first_try": 0.75,
+      "revert_rate": 0,
+      "floor": "ok",
+      "in_force": true
+     },
+     {
+      "value": "50%",
+      "pulls": 3,
+      "pending": 0,
+      "n": 3,
+      "mean": 1.71,
+      "first_try": 0.333,
+      "revert_rate": 0,
+      "floor": "below",
+      "in_force": false
+     },
+     {
+      "value": "70%",
+      "pulls": 3,
+      "pending": 1,
+      "n": 2,
+      "mean": 2.2,
+      "first_try": 1,
+      "revert_rate": 0,
+      "floor": "unknown",
+      "in_force": false
+     }
+    ]
+   }
+  ],
+  "overrides": [
+   {
+    "id": 4,
+    "key": "agents.builder.model",
+    "value": "claude-haiku-5-5",
+    "since": "2026-11-19T15:02:00.000Z",
+    "reason": "experiment: cost_per_pr in feature/m: claude-haiku-5-5 1.62 over 6 tickets against claude-sonnet-5-5 2.31 over 6",
+    "from_experiment": true
+   }
+  ],
+  "shifts": [
+   {
+    "at": "2026-11-19T15:02:00.000Z",
+    "key": "agents.builder.model",
+    "context": "feature/m",
+    "from": "claude-sonnet-5-5",
+    "to": "claude-haiku-5-5",
+    "override": 4,
+    "why": "cost_per_pr in feature/m: claude-haiku-5-5 1.62 over 6 tickets (first try 0.833, reverts 0) against claude-sonnet-5-5 2.31 over 6 (first try 0.833, reverts 0)"
+   }
+  ]
+ },
  "charts": {
   "7": {
    "time-to-pr": {

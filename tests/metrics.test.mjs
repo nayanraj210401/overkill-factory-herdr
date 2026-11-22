@@ -66,3 +66,16 @@ test("chart paths are relative to Herdr's folder: the sample in place, a real fa
   assert.equal(chartAsset("/u/.config/herdr-app/factory-data/acme-api", "/u/.config/herdr-app", "7-a.svg"), "factory-data/acme-api/charts/7-a.svg");
   assert.equal(chartAsset("/u/.factory/acme-api", "/u/.config/herdr-app", "7-a.svg"), "factory-charts/acme-api/7-a.svg");
 });
+
+test("learning: the sample's experiments keep the contract, and a broken arm or shift is caught", () => {
+  assert.equal(doc.learning.experiments.length, 2);
+  const l = doc.learning;
+  assert.deepEqual(validateMetrics({ ...doc, learning: null }), []);
+  const arm = { ...l.experiments[0].arms[0], floor: "maybe" };
+  const bad = { ...doc, learning: { ...l, experiments: [{ ...l.experiments[0], arms: [arm] }], shifts: [{ ...l.shifts[0], at: 5 }] } };
+  assert.deepEqual(validateMetrics(bad), [
+    "learning.experiments[0].arms[0]: needs floor (ok, below, unknown) and in_force",
+    "learning.shifts[0]: needs at, key, context, from, to, override (or null) and why",
+  ]);
+  assert.deepEqual(validateMetrics({ ...doc, learning: { target: "cost_per_pr" } }).length > 0, true);
+});

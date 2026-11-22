@@ -18,6 +18,7 @@ import { budgetUse, roundUse, startHold } from "./budget.ts";
 import { profileText } from "./account.ts";
 import { DEFAULT_MODEL, pinModel } from "./models.ts";
 import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
+import { recordOutcome, startExperiments } from "./experiments.ts";
 import { closeRound, latestBrief } from "./round.ts";
 import { loadPrompt, render } from "./prompts.ts";
 import { finishSlice, readSlices, sliceInHand } from "./slices.ts";
@@ -155,6 +156,7 @@ export function startTicket(db: Database, o: { dir: string; repo: string; id: nu
   }
   // The ticket runs on the settings in force now, whatever is tuned while it runs.
   snapshotSettings(db, o.id, readFactory(o.repo).learn?.tunable);
+  startExperiments(db, { repo: o.repo, id: o.id, now }); // and the values it tries, logged with their context
   db.query("UPDATE tickets SET state = 'running' WHERE id = ?").run(o.id);
   return startStage(db, { ...o, run, now, blueprint: b, stage: b.start });
 }
@@ -231,7 +233,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; arms?: Record<string, unknown[]>; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -724,6 +726,7 @@ export function finishPr(db: Database, o: { repo: string; id: number; run: Run; 
   db.query("UPDATE tickets SET state = ?, detail = NULL, needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(o.state, o.now, o.id);
   setWork(db, o.id, { pr_watched: 0, merged_at: o.state === "merged" ? o.now : null });
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.who ?? "you", pr == null ? `${o.state} with no PR` : `${o.state} PR #${pr}`, o.why, o.now);
+  recordOutcome(db, { repo: o.repo, id: o.id, state: o.state, now: o.now }); // the experiments' outcome, and any shift it makes
   // Every repo's worktree goes; one with uncommitted work stays (and so does the space's id).
   const repos = ticketRepos(db, o.id).filter((r) => r.worktree);
   if (repos.length) closeSpace(o.run, (db.query("SELECT space FROM tickets WHERE id = ?").get(o.id) as { space: string | null }).space);
