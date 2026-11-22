@@ -39,7 +39,7 @@ export function commentsNote(o: { ticket: number; pr: number; rows: Row[]; limit
   return [
     `Give every comment a verdict before you finish: factory comment ${o.ticket} C<n> fix|pushback|escalate <reason>.`,
     `- fix: it's correct and required; change the code, and say so in PR.md.`,
-    `- pushback: reply on the PR first (gh pr comment ${o.pr}, or a reply on the line) with a reason a reviewer can check. After ${o.limit} pushback${o.limit === 1 ? "" : "s"} in a thread, a reviewer who insists wins.`,
+    `- pushback: give a reason a reviewer can check, in the verdict; don't post it yourself: the factory replies on PR #${o.pr} with it (marked as the factory's) once the round's fixes are pushed. After ${o.limit} pushback${o.limit === 1 ? "" : "s"} in a thread, a reviewer who insists wins.`,
     `- escalate: a product question, or a call you shouldn't make; the ticket stops and asks the person.`,
     "",
     ...o.rows.map((c) => `- **C${c.n} · @${c.author}**${c.place ? ` (${c.place})` : ""}${c.insisted ? " · **insisted after pushbacks: fix it, or escalate**" : ""}: ${c.body.trim().replace(/\n/g, "\n  ")}${c.suggested ? `\n  Suggested: **${c.suggested}**${c.why ? ` (${c.why})` : ""}. A cheap model's guess; your verdict decides.` : ""}`),
