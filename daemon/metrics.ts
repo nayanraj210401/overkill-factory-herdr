@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
 import type { Run } from "./runner.ts";
 import { planFile, readPlan, usedNow } from "./planline.ts";
+import { readAccount } from "./account.ts";
+import { parseTokens } from "../lib/model.js";
 
 const HOUR = 3_600_000;
 
@@ -17,18 +19,24 @@ export function planMeters(db: Database, now: Date) {
   const five = usedNow(r?.five_hour, now);
   const week = usedNow(r?.seven_day, now);
   const est = estimatedMeters(db, now);
-  const source = five != null ? "claude" : Number(getMeta(db, "plan_5h") ?? 0) > 0 ? "estimate" : "none";
+  const source = five != null ? "claude" : limitsSet(db) ? "estimate" : "none";
   return { window_5h: five ?? est.window_5h, week: week ?? est.week, source, as_of: source === "claude" ? r!.at : null };
 }
 
 // Whether the meters have anything to go on: a reading, or limits set by hand.
-export const planKnown = (db: Database) => Boolean(readPlan(planFile())?.five_hour) || Number(getMeta(db, "plan_5h") ?? 0) > 0;
+export const planKnown = (db: Database) => Boolean(readPlan(planFile())?.five_hour) || limitsSet(db);
+
+// Limits for the estimate: `factory plan` (this factory), else config.yaml's plan.limits (the account).
+const tokenCount = (v: unknown) => (typeof v === "number" ? v : parseTokens(String(v ?? ""))) || 0;
+const limitsSet = (db: Database) => Number(getMeta(db, "plan_5h") ?? 0) > 0 || tokenCount(readAccount().plan?.limits?.five_hour) > 0;
 
 function estimatedMeters(db: Database, now: Date) {
   const used = (ms: number) => (db.query("SELECT SUM(input + cache_write_5m + cache_write_1h + output) AS n FROM usage WHERE at >= ?")
     .get(new Date(now.getTime() - ms).toISOString()) as { n: number | null }).n ?? 0;
+  const own = readAccount().plan?.limits;
+  const fallback: Record<string, unknown> = { plan_5h: own?.five_hour, plan_week: own?.week };
   const frac = (key: string, ms: number) => {
-    const limit = Number(getMeta(db, key) ?? 0);
+    const limit = Number(getMeta(db, key) ?? 0) || tokenCount(fallback[key]);
     return limit > 0 ? +(used(ms) / limit).toFixed(3) : 0;
   };
   return { window_5h: frac("plan_5h", 5 * HOUR), week: frac("plan_week", 7 * 24 * HOUR) };

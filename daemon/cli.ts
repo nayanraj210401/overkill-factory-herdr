@@ -4,7 +4,7 @@
 // contract inside its transaction, so a bad write never lands.
 import { homedir } from "node:os";
 import { writeIfChanged } from "./files.ts";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { recordVerdict } from "./ready.ts";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -15,12 +15,13 @@ import { validateStatus } from "../lib/status.js";
 import { parseTokens } from "../lib/model.js";
 import { service, servicePid } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
-import { validateDir } from "./validate.ts";
+import { validateAccount, validateDir } from "./validate.ts";
+import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
 import { judge } from "./comments.ts";
-import { setAway } from "./away.ts";
+import { isAway, setAway } from "./away.ts";
 import { startHold } from "./budget.ts";
 import { toCloud, toLocal } from "./cloud.ts";
 import { sessionState } from "./herdr.ts";
@@ -64,7 +65,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   sessions <id>                      the agent sessions started for a ticket, with their tokens
   cloud <id> | --all                 hand a running ticket (or every one) to a Claude Code cloud session
   local <id>                         bring a ticket back from the cloud and resume it here
-  away on|off                        you're away: factory.yaml's away: policy applies; Home shows a digest when you're back
+  away on|off                        you're away, in every factory: away: (config.yaml, then factory.yaml) applies; Home shows a digest when you're back
   learn set <key> <value> [--why reason]  tune a setting learn.tunable lists, for tickets that start from now on
   learn undo <key> | learn list      drop an override / show the active ones beside the file's value
   learn export                       print the edits that make the overrides permanent, as a patch (never writes .factory/)
@@ -171,6 +172,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json });
   if (cmd === "validate") {
     const results = validateDir(sub ?? ".factory");
+    if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
     if (json) return log(JSON.stringify(results));
     for (const r of results) log(r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `✓ ${r.path}`);
     const bad = results.filter((r) => r.errors.length).length;
@@ -425,8 +427,18 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       return;
     } else if (cmd === "away") {
       if (sub !== "on" && sub !== "off") throw new Error("usage: factory away on|off");
-      change(db, () => setAway(db, sub === "on", now()));
-      log(sub === "on" ? "away: the away policy applies until factory away off" : "back: Home shows what happened while you were away");
+      // You are away, not a repo: every factory under FACTORY_HOME follows.
+      const on = sub === "on";
+      const moved: string[] = [];
+      for (const n of new Set([name, ...factories()])) {
+        const other = n === name ? db : open(paths(n).db);
+        try {
+          if (isAway(other) !== on) { change(other, () => setAway(other, on, now())); moved.push(n); }
+          if (other !== db) writeStatus(other, paths(n).status);
+        } finally { if (other !== db) other.close(); }
+      }
+      if (!moved.length) throw new Error(on ? "already away" : "you aren't away");
+      log(`${on ? "away: the away policy applies until factory away off" : "back: Home shows what happened while you were away"} (${moved.join(", ")})`);
     } else if (cmd === "learn") {
       const lead = needLead(db);
       if (sub === "set") {

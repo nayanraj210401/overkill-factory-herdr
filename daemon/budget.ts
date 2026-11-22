@@ -1,11 +1,14 @@
 // Budget caps (plan: Budgets). Three things stop new work: the day's token cap
 // (budget.per_day), the 5-hour plan window passing plan.pause_at, and a ticket
 // reaching its own budget. Running tickets finish their stage; only starts are held.
-import type { Database } from "bun:sqlite";
+import { Database as DB, type Database } from "bun:sqlite";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { getMeta } from "./db.ts";
 import { compact, parseTokens } from "../lib/model.js";
 import { readFactory } from "./runner.ts";
 import { planKnown, planMeters } from "./metrics.ts";
+import { readAccount } from "./account.ts";
 
 type Tokens = { input: number; output: number };
 const HOUR = 3_600_000;
@@ -25,19 +28,35 @@ export const dayCap = (repo: string) => capOf(section(repo, "budget").per_day);
 
 export const headroom = (repo: string) => Number(section(repo, "budget").headroom) || 1.5;
 
-// plan.pause_at as a fraction: "85%", or 0.85.
+// The account's day cap (~/.factory/config.yaml budget.per_day), over every factory.
+export const accountDayCap = () => capOf(readAccount().budget?.per_day);
+
+// plan.pause_at as a fraction: "85%", or 0.85. factory.yaml's, else the account's.
 export function pauseAt(repo: string) {
-  const v = section(repo, "plan").pause_at;
+  const v = section(repo, "plan").pause_at ?? readAccount().plan?.pause_at;
   if (v == null) return null;
   const n = parseFloat(String(v));
   if (!(n > 0)) return null;
   return String(v).includes("%") || n > 1 ? n / 100 : n;
 }
 
-export function tokensToday(db: Database, now: Date): Tokens {
-  const r = db.query("SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o FROM usage WHERE at >= ?")
-    .get(now.toISOString().slice(0, 10)) as { i: number | null; o: number | null };
-  return { input: r.i ?? 0, output: r.o ?? 0 };
+// Today's tokens: this factory's, or with every set, all the factories beside it under FACTORY_HOME.
+export function tokensToday(db: Database, now: Date, every = false): Tokens {
+  const q = "SELECT SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o FROM usage WHERE at >= ?";
+  const day = now.toISOString().slice(0, 10);
+  const one = (d: Database) => d.query(q).get(day) as { i: number | null; o: number | null };
+  const rows = [one(db)];
+  if (every) {
+    const mine = db.filename ? resolve(db.filename) : null;
+    const home = mine ? dirname(dirname(mine)) : null;
+    for (const name of home && existsSync(home) ? readdirSync(home) : []) {
+      const file = join(home!, name, "factory.db");
+      if (file === mine || !existsSync(file)) continue;
+      const other = new DB(file, { readonly: true });
+      try { rows.push(one(other)); } catch { /* an old or locked database counts as nothing */ } finally { other.close(); }
+    }
+  }
+  return { input: rows.reduce((n, r) => n + (r.i ?? 0), 0), output: rows.reduce((n, r) => n + (r.o ?? 0), 0) };
 }
 
 // Why nothing new starts right now, in words for the status bar; null when starting is fine.
@@ -47,6 +66,12 @@ export function startHold(db: Database, repo: string, now: Date): string | null 
     const used = tokensToday(db, now);
     if (used.input >= cap.input) return `daily budget reached (${compact(used.input)}/${compact(cap.input)} in)`;
     if (used.output >= cap.output) return `daily budget reached (${compact(used.output)}/${compact(cap.output)} out)`;
+  }
+  const all = accountDayCap();
+  if (all) {
+    const used = tokensToday(db, now, true);
+    if (used.input >= all.input) return `account's daily budget reached (${compact(used.input)}/${compact(all.input)} in, every factory)`;
+    if (used.output >= all.output) return `account's daily budget reached (${compact(used.output)}/${compact(all.output)} out, every factory)`;
   }
   const at = pauseAt(repo);
   // No reading and no limits set means no window data: the guard is off.

@@ -11,12 +11,14 @@ import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
 import { parseTokens } from "../lib/model.js";
 import { readFactory, type Run } from "./runner.ts";
+import { readAccount } from "./account.ts";
 
 export type AwayPolicy = { blueprints?: string[]; budget?: string; review_rounds?: number; never?: string[]; min_agreement?: number };
 
 export const awaySince = (db: Database) => (getMeta(db, "away_until") ? null : getMeta(db, "away_since"));
 export const isAway = (db: Database) => awaySince(db) != null;
-export const awayPolicy = (repo: string): AwayPolicy => ((readFactory(repo) as any).away ?? {}) as AwayPolicy;
+// The account's away: (config.yaml) under the factory's own, key by key.
+export const awayPolicy = (repo: string): AwayPolicy => ({ ...readAccount().away, ...(readFactory(repo) as any).away }) as AwayPolicy;
 
 export function setAway(db: Database, on: boolean, now: string) {
   if (on === isAway(db)) throw new Error(on ? `already away since ${awaySince(db)}` : "you aren't away");

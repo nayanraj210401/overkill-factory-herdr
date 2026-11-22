@@ -6,6 +6,9 @@ It spans {{repo_count}} repos, each checked out on the same branch: {{repos}}. C
 
 {{verdict}}
 
+Your person's rules and taste, for every ticket:
+{{profile}}
+
 Lessons for the code this ticket touches (from earlier tickets and reviews):
 {{lessons}}
 
