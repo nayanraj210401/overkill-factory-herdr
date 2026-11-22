@@ -118,9 +118,9 @@ test("factory ask, asks and asks done from the CLI; factory request stays a requ
     cli("ask", "overwatch", "The", "spec", "contradicts", "the", "issue", "--why", "INTENT says 5, the issue says 10");
     expect(out.at(-1)).toMatch(/^note #1 for overwatch, from reviewer: in Needs you/);
     cli("request", "Raise", "the", "day's", "budget");
-    expect(out.at(-1)).toMatch(/a request for the maintainer from you/);
+    expect(out.at(-1)).toMatch(/a config request for the maintainer from you, in acme\/api/);
     cli("ask", "maintainer", "Make the reviewer stricter", "--from", "learner", "--why", "3 reverts");
-    expect(out.at(-1)).toMatch(/a request for the maintainer from learner/);
+    expect(out.at(-1)).toMatch(/request for the maintainer from learner/);
   } finally { delete process.env.FACTORY_AGENT; delete process.env.FACTORY_TICKET; }
   const status = JSON.parse(readFileSync(paths("acme-api").status, "utf8"));
   expect(validateStatus(status)).toEqual([]);

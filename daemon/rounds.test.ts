@@ -132,7 +132,7 @@ test("after the round's fixes are pushed: a reply to each pushed-back comment an
   s.db.query("UPDATE tickets SET state = 'running', needs_kind = NULL WHERE id = 7").run();
   advance(s.db, { dir: s.dir, repo: s.repo, id: 7, run: s.run, now: "2026-11-21T11:00:00Z" });
   const sent = s.posts();
-  expect(sent[0]).toEqual(["gh", "api", "repos/acme/api/pulls/42/comments/60/replies", "-f", "body=max is the public name; see api.md"]);
+  expect(sent[0]).toEqual(["gh", "api", "repos/acme/api/pulls/42/comments/60/replies", "-f", "body=max is the public name; see api.md\n\n<!-- factory -->"]);
   expect(sent[1].slice(0, 6)).toEqual(["gh", "pr", "comment", "42", "--repo", "acme/api"]);
   const body = sent[1][7];
   expect(body).toContain("factory-round 7-1");

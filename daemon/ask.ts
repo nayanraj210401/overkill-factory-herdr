@@ -7,7 +7,7 @@
 // Repo agents work one stage of one ticket and aren't asked directly: Overwatch routes that work.
 import type { Database } from "bun:sqlite";
 import { FACTORY_AGENTS, isFactoryAgent, type FactoryAgent } from "./agents.ts";
-import { request } from "./maintainer.ts";
+import { request, type Kind } from "./maintainer.ts";
 import type { Run } from "./runner.ts";
 
 export type Ask = { id: number; from: string; to: FactoryAgent; text: string; why: string | null; about: number | null; request: number | null; at: string; delivered_at: string | null; done_at: string | null };
@@ -16,11 +16,12 @@ const row = (r: any): Ask => ({ id: r.id, from: r.from_agent, to: r.to_agent, te
 // The asker: --from, else the agent this session runs as (FACTORY_AGENT, set by withFactory), else you.
 export const askerOf = (flag: string | null | undefined, env = process.env) => flag || env.FACTORY_AGENT || "you";
 
-export type AskResult = { kind: "request"; ask: Ask; id: number; title: string } | { kind: "note"; ask: Ask; delivered: boolean };
+export type AskResult = { kind: "request"; ask: Ask; id: number; title: string; requestKind: Kind; repo: string } | { kind: "note"; ask: Ask; delivered: boolean };
 
 export function ask(db: Database, o: {
   to: string; text: string; why?: string | null; from: string; about?: number | null;
   slug: string; dir: string; run: Run; now: string; overwatch?: () => string | null; name?: string;
+  requestKind?: Kind; target?: string; // for the maintainer: the request's kind and repo (maintainer.ts)
 }): AskResult {
   const to = o.to.trim().toLowerCase();
   const text = o.text.trim().replace(/\s+/g, " ");
@@ -28,8 +29,8 @@ export function ask(db: Database, o: {
   if (!text) throw new Error(`say what you need: factory ask ${to} "<text>" [--why "<evidence>"]`);
   if (o.from === to) throw new Error(`${to} can't ask itself`);
   if (to === "maintainer") {
-    const r = request(db, { text, repo: o.slug, run: o.run, now: o.now, from: o.from, evidence: o.why ?? undefined, dir: o.dir, about: o.about });
-    return { kind: "request", ask: row(db.query("SELECT * FROM asks WHERE request = ?").get(r.id)), id: r.id, title: r.title };
+    const r = request(db, { text, repo: o.slug, run: o.run, now: o.now, from: o.from, evidence: o.why ?? undefined, dir: o.dir, about: o.about, kind: o.requestKind, target: o.target });
+    return { kind: "request", ask: row(db.query("SELECT * FROM asks WHERE request = ?").get(r.id)), id: r.id, title: r.title, requestKind: r.kind, repo: r.repo };
   }
   const id = Number(db.query("INSERT INTO asks (from_agent, to_agent, text, why, about, at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(o.from, to, text, o.why ?? null, o.about ?? null, o.now).lastInsertRowid);

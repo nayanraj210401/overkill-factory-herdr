@@ -11,6 +11,12 @@ export type GhComment = { ghId: string; thread: string; author: string; body: st
 export type Row = { n: number; hunk?: string | null; suggested?: string | null; why?: string | null; author: string; place: string | null; body: string; insisted: number; verdict: string | null; reason: string | null; thread: string };
 export const VERDICTS = ["fix", "pushback", "escalate"] as const;
 
+// Everything the factory posts on a PR carries a hidden marker. The factory runs as your gh
+// account, so the author can't tell its replies from your review: the marker can, and your
+// own comments on your own PRs count like anyone's.
+export const FACTORY_MARK = "<!-- factory -->";
+export const fromFactory = (body: string) => body.includes("<!-- factory");
+
 const pushbacksIn = (db: Database, ticket: number, thread: string) =>
   (db.query("SELECT COUNT(*) AS n FROM comments WHERE ticket = ? AND thread = ? AND verdict = 'pushback'").get(ticket, thread) as { n: number }).n;
 

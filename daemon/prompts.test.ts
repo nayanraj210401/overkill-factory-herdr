@@ -30,6 +30,9 @@ test("the built-in templates give the briefs the code used to build", () => {
   matchBrief("stageHoldout", brief({ id: 1, title: "t" }, "verify", "P", "/f", "verify"));
   matchBrief("stageReview", brief({ id: 1, title: "t" }, "review", "P", "/f", "review"));
   matchBrief("stageFix", brief({ id: 1, title: "t" }, "implement", "P", dir, "build", repos).split(dir).join("/f"));
+  // The maintainer's brief: its whole territory and the request kinds (maintainer.md).
+  const maintainer = readFileSync(join(import.meta.dir, "../agents/maintainer.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
+  matchBrief("stageMaintainer", brief({ id: 10001, title: "Use a warmer accent" }, "maintain", maintainer, "/f", "maintain"));
   matchBrief("overwatchNone", overwatchBrief({ name: "acme", dir: "/d", repo: null }));
   matchBrief("overwatchRepo", overwatchBrief({ name: "acme", dir: "/d", repo: "/src/api" }));
 });

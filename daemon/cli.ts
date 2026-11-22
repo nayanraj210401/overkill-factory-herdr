@@ -20,7 +20,8 @@ import { validateAccount, validateDir, validateFile } from "./validate.ts";
 import { factoryAgentFiles, factoryAgentsDir, installFactoryAgents } from "./agents.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
-import { applyMergedAccounts, proposeAccount, request } from "./maintainer.ts";
+import { applyMerged, isKind, proposeAccount, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
+import { cleanupPlan, planMarkdown, proposeCleanup } from "./cleanup.ts";
 import { learnerDigest, learnerDue, learnerHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
 import { noteAttention, waiting } from "./attention.ts";
 import { watchPrs } from "./watch.ts";
@@ -59,10 +60,15 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
-  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request, back as a PR), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run)
+  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request, back as a change you merge; takes --kind and --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run)
   asks [agent] [--json] | asks done <id>  the open notes (to one agent) / mark one handled
-  request <the change…>              ask the maintainer for a change to the factory itself, for you (.factory/ or the account config): it comes back as a PR
+  request [--kind k] [--repo owner/name] <the change…>  ask the maintainer, for you, for a change to the factory itself; it comes back as a change you merge.
+                                     kinds: config (.factory/, the account config), blueprint, agents (repo or factory agents),
+                                     cleanup (housekeeping), look (the factory app's pages and colours, a PR to its develop); guessed from the words
   account propose <id>               the maintainer's copy of ~/.factory/config.yaml to edit, in the request's folder (applied when the request merges)
+  agents propose <id> <name>         the maintainer's copy of a factory agent (~/.factory/agents/<name>.md) to edit, in the request's folder (applied when it merges)
+  cleanup [--dry-run] [--days N] [--folders] [--propose <id>]  housekeeping: --dry-run lists what would go (tickets finished N days ago, default 14);
+                                     --propose writes CLEANUP.md into a cleanup request; with neither, it files the request ("clean up")
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
   repos <id> owner/name…             the repos a ticket that hasn't started works in (the lead is always one)
@@ -198,13 +204,16 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const propose = flag(args, "propose");
   const fromFlag = flag(args, "from");
   const aboutFlag = flag(args, "ticket");
+  const kindFlag = flag(args, "kind");
+  const daysFlag = flag(args, "days");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
   const start = args.includes("--start");
   const dryRun = args.includes("--dry-run");
   const keepsWork = args.includes("--keeps-work");
-  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work"].includes(a));
+  const folders = args.includes("--folders");
+  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work", "--folders"].includes(a));
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0], login: loginFlag ?? undefined });
@@ -221,7 +230,11 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   if (cmd === "validate") {
     // An account config (the maintainer's ACCOUNT-CONFIG.yaml proposal) is checked as one.
     const accountLike = sub && /(^|\/)(ACCOUNT-CONFIG|config)\.yaml$/.test(sub) && existsSync(sub) && statSync(sub).isFile();
-    const results = accountLike ? [{ path: sub, errors: validateAccount(readFileSync(sub, "utf8")) }] : validateDir(sub ?? ".factory");
+    // A single agent file (a factory agent's FACTORY-AGENTS/<name>.md copy, say) is checked as an agent.
+    const agentLike = sub && !accountLike && sub.endsWith(".md") && existsSync(sub) && statSync(sub).isFile();
+    const results = accountLike ? [{ path: sub, errors: validateAccount(readFileSync(sub, "utf8")) }]
+      : agentLike ? [{ path: sub, errors: validateFile(`agents/${basename(sub)}`, readFileSync(sub, "utf8")) }]
+      : validateDir(sub ?? ".factory");
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
     // The factory agents, one set for every repo, are checked with the account config.
     if (!sub) for (const f of factoryAgentFiles()) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`agents/${basename(f)}`, readFileSync(f, "utf8")) });
@@ -272,7 +285,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (!found.length) throw new Error("no flow-stack here to migrate: no ~/.flow-stack/profile.md, no .flow/ in the repo, no flow-stack plugin");
         let r: any = null;
         change(db, () => {
-          r = request(db, { text: MIGRATION_REQUEST, repo: lead.slug, run: sh, now: now(), dir: p.dir, evidence: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --propose <this ticket's id>\`, then review what it wrote and finish what MIGRATION.md lists.` });
+          r = request(db, { text: MIGRATION_REQUEST, kind: "config", repo: lead.slug, run: sh, now: now(), dir: p.dir, evidence: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --propose <this ticket's id>\`, then review what it wrote and finish what MIGRATION.md lists.` });
           setMeta(db, MIGRATION_META, String(r.id));
         });
         log(`#${r.id}: the maintainer migrates flow-stack (found ${found.join(", ")}); it comes back as a PR for you`);
@@ -398,15 +411,16 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const [to, words] = cmd === "request" ? ["maintainer", [sub, ...rest]] : [sub ?? "", rest];
       const about = aboutFlag ?? process.env.FACTORY_TICKET ?? null;
       if (about !== null && !Number.isInteger(Number(about))) throw new Error("--ticket takes the ticket's id");
+      if (kindFlag !== null && !isKind(kindFlag)) throw new Error(`--kind is one of ${REQUEST_KINDS.join(", ")}`);
       let r!: AskResult;
       change(db, () => {
         r = askAgent(db, { to, text: words.filter(Boolean).join(" "), why, from: cmd === "request" ? fromFlag ?? "you" : askerOf(fromFlag), about: about === null ? null : Number(about),
-          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(db, sh) });
+          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(db, sh), requestKind: kindFlag ?? undefined, target: repo !== "unknown" ? repo : undefined });
       });
       writeStatus(db, p.status);
       if (r.kind === "request") {
         writeTicketFiles(db, p.dir, r.id);
-        return log(`#${r.id} ${r.title}: a request for the maintainer from ${r.ask.from}; it starts when a slot is free, and the change comes back as a PR for you`);
+        return log(`#${r.id} ${r.title}: a ${r.requestKind} request for the maintainer from ${r.ask.from}, in ${r.repo}; it starts when a slot is free, and the change comes back for you to merge`);
       }
       return log(`note #${r.ask.id} for ${r.ask.to}, from ${r.ask.from}: ${r.ask.to === "overwatch" ? (r.delivered ? "typed into Overwatch's terminal, and in Needs you" : "in Needs you; Overwatch gets it when its terminal is live") : `waits for the ${r.ask.to}'s next run`}`);
     } else if (cmd === "asks") {
@@ -428,6 +442,33 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
       log(`${proposeAccount(p.dir, Number(rest[0]))}: edit this copy; the factory check validates it and the PR shows the diff. It applies when the request merges.`);
       return;
+    } else if (cmd === "agents") {
+      // The factory agents aren't in any repo: the maintainer edits a copy in the request's folder.
+      if (sub !== "propose" || !Number.isInteger(Number(rest[0])) || !rest[1]) throw new Error("usage: factory agents propose <request id> <agent name>");
+      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
+      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
+      log(`${proposeFactoryAgent(p.dir, Number(rest[0]), rest[1])}: edit this copy; the factory check validates it and the PR shows the diff. It applies when the request merges.`);
+      return;
+    } else if (cmd === "cleanup") {
+      const days = daysFlag === null ? undefined : Number(daysFlag);
+      if (days !== undefined && !(Number.isFinite(days) && days >= 0)) throw new Error("--days takes a number of days, like --days 14");
+      if (dryRun) return log(planMarkdown(cleanupPlan(db, { dir: p.dir, run: sh, now: now(), days, folders }), "Cleanup (dry run: nothing removed)"));
+      if (propose !== null) {
+        // The maintainer's step in a cleanup request: the list goes into its ticket, removed only once you merge it.
+        const id = Number(propose);
+        const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(id) as { blueprint: string } | null;
+        if (t?.blueprint !== "factory" || requestKind(db, id) !== "cleanup") throw new Error(`#${propose} isn't a cleanup request for the maintainer`);
+        const plan = proposeCleanup(db, { dir: p.dir, id, run: sh, now: now(), days, folders });
+        return log(`${plan.items.length} to remove, ${plan.kept.length} kept → ${join(p.dir, "tickets", String(id), "CLEANUP.md")}; nothing is removed until the request merges`);
+      }
+      // `factory cleanup` alone: a cleanup request, like asking Overwatch to clean up.
+      const lead = needLead(db);
+      let r: any = null;
+      const text = `Clean up tickets closed or merged more than ${days ?? 14} days ago${folders ? ", their ticket folders too" : ""}`;
+      change(db, () => { r = request(db, { text, repo: lead.slug, run: sh, now: now(), dir: p.dir, kind: "cleanup" }); });
+      log(`#${r.id}: a cleanup request for the maintainer; its list waits for you to merge before anything is removed`);
+      writeStatus(db, p.status);
+      writeTicketFiles(db, p.dir, r.id);
     } else if (cmd === "new") {
       const text = [sub, ...rest].filter(Boolean).join(" ");
       const lead = needLead(db);
@@ -553,7 +594,9 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const repoDir = needLead(db).path;
       let r: any = null;
       change(db, () => { r = mergeTicket(db, { repo: repoDir, id: Number(sub), dir: p.dir }); });
-      change(db, () => applyMergedAccounts(db, { dir: p.dir, now: now(), log }));
+      let merged = { vacuum: false };
+      change(db, () => { merged = applyMerged(db, { dir: p.dir, now: now(), run: sh, log }); });
+      if (merged.vacuum) db.exec("VACUUM"); // a merged cleanup's; never inside a transaction
       if (r.failed) {
         // The merges that went through are recorded; the ticket stays ready for `m` again.
         writeStatus(db, p.status);
@@ -889,9 +932,13 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   } catch (e) {
     log(`factory: starting triage: ${(e as Error).message}`);
   }
-  // A merged request's account config change applies; an override that held files its request.
-  try { change(db, () => applyMergedAccounts(db, { dir: p.dir, now: nowIso, log })); }
-  catch (e) { log(`factory: applying the account config: ${(e as Error).message}`); }
+  // A merged request's changes outside its repo apply (the account config, factory agents, a
+  // cleanup); an override that held files its request.
+  try {
+    let merged = { vacuum: false };
+    change(db, () => { merged = applyMerged(db, { dir: p.dir, now: nowIso, run, log }); });
+    if (merged.vacuum) { db.exec("VACUUM"); log("factory: the database is compacted (VACUUM)"); }
+  } catch (e) { log(`factory: applying a merged request: ${(e as Error).message}`); }
   const lastLearn = getMeta(db, "learner_checked_at");
   if (!lastLearn || Date.now() - Date.parse(lastLearn) >= 600_000) {
     setMeta(db, "learner_checked_at", nowIso);
