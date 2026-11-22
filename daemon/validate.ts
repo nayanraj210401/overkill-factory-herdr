@@ -300,8 +300,9 @@ export function validateDir(dir: string) {
   });
 }
 
-// Files that pass but do nothing: a repo's copy of a factory agent is never read.
+// Files that pass but do nothing: a repo's copy of a factory agent, or of Overwatch's template, is never read.
 function warningOf(path: string) {
+  if (path === "prompts/overwatch.md") return "ignored: Overwatch is one for every repo and uses the built-in template; change ~/.factory/agents/overwatch.md instead (through the maintainer)";
   const name = path.match(/^agents\/([^/]+)\.md$/)?.[1];
   return name && isFactoryAgent(name) ? `ignored: ${name} is a factory agent, one for every repo; change ~/.factory/agents/${name}.md instead (through the maintainer)` : null;
 }

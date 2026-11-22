@@ -36,6 +36,8 @@ export const sh: Run = (argv, cwd) => {
   // Tests stub claude; one that forgot must never start the user's real Claude.
   // Tests never reach real agents or GitHub: a stub that falls through to sh gets a failure.
   if (["claude", "codex", "gh"].includes(argv[0]) && process.env.FACTORY_TEST_SANDBOX) return { code: 1, out: `${argv[0]} is stubbed in tests` };
+  // Nor start a real terminal: a test that reaches `hc run` through sh would leave a live agent behind.
+  if (argv[0] === "hc" && argv[1] === "run" && process.env.FACTORY_TEST_SANDBOX) return { code: 1, out: "hc run is stubbed in tests" };
   const r = Bun.spawnSync(resolveClaude(argv), { cwd }); // the one claude every session runs (claude-bin.ts)
   return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() };
 };
