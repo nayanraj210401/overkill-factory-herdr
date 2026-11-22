@@ -61,8 +61,9 @@ export function refusal(flag: { message?: string } | null, input: { tool_name?: 
 // the ticket's folder. Also clears a flag left by an earlier session: a new session
 // starts clean. Other programs have no such hook and run as they are. `also` is another
 // settings JSON (the hard-stop guard's) whose hooks go in the same file, since Claude Code
-// reads only one --settings. The session runs with acceptEdits and agentAllow(commands)
-// (allow.ts): unattended, so a `factory …` call or the repo's tests never wait for a person.
+// reads only one --settings. The session runs in Claude Code's auto mode plus agentAllow(commands)
+// (allow.ts): safe actions run on their own and risky ones are refused, so nothing waits at a
+// permission prompt. Questions for the person are asked in the terminal (the daemon flags them).
 export function withHandoffHook(argv: string[], dir: string, id: number, also?: string | null, commands: string[] = []) {
   const flag = flagFile(dir, id);
   for (const f of [flag, snapshotFile(dir, id)]) if (existsSync(f)) unlinkSync(f);
@@ -77,7 +78,7 @@ export function withHandoffHook(argv: string[], dir: string, id: number, also?: 
   // The status line saves Claude Code's plan-usage reading for the plan meters (planline.ts).
   const statusLine = { type: "command", command: `${quote(process.execPath)} ${quote(join(dirname(import.meta.path), "planline.ts"))} ${quote(planFile())}` };
   writeFileSync(settings, JSON.stringify({ permissions: { allow: agentAllow(commands) }, hooks: { PreToolUse: [...others, ours], PreCompact: [precompact] }, statusLine }, null, 2) + "\n");
-  return ["claude", "--permission-mode", "acceptEdits", "--settings", settings, ...argv.slice(1)];
+  return ["claude", "--permission-mode", "auto", "--settings", settings, ...argv.slice(1)];
 }
 
 if (import.meta.main && process.argv[2] === "--precompact") {

@@ -18,6 +18,7 @@ import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateAccount, validateDir } from "./validate.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
+import { noteAttention, waiting } from "./attention.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
 import { judge } from "./comments.ts";
@@ -763,7 +764,8 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   for (const s of open_) {
     const r = run(["hc", "get", s.terminal, "--json"]);
     let state = "exited";
-    try { if (r.code === 0) state = sessionState(JSON.parse(r.out)); } catch {}
+    let info: any = null;
+    try { if (r.code === 0) { info = JSON.parse(r.out); state = sessionState(info); } } catch {}
     // In a tab the shell outlives the agent: done once the agent was seen and the shell is back.
     if (s.in_space && state === "agent" && !s.agent_seen) db.query("UPDATE sessions SET agent_seen = 1 WHERE id = ?").run(s.id);
     // An agent quicker than a tick is never seen: a shell idle a minute after the start means it's over.
@@ -772,6 +774,12 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     const stopped = hasHardStop(hardStopLog(p.dir, s.ticket));
     if (stopped && state !== "exited") run(["hc", "kill", s.terminal]);
     const gone = stopped || state === "exited" || (s.in_space === 1 && state === "shell" && (s.agent_seen === 1 || idle));
+    // Waiting on you in its terminal (a question, a prompt): Needs you says so until it moves on.
+    try {
+      let noted: string | null = null;
+      change(db, () => { noted = noteAttention(db, { ticket: s.ticket, terminal: s.terminal, waiting: !gone && waiting(info), now: nowIso }); });
+      if (noted === "waiting") log(`factory: #${s.ticket}'s agent in ${s.terminal} is waiting on you`);
+    } catch (e) { log(`factory: #${s.ticket}: ${(e as Error).message}`); }
     if (!gone) continue;
     try {
       change(db, () => advance(db, { dir: p.dir, repo: repoDir, id: s.ticket, run }));

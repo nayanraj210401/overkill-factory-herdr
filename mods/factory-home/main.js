@@ -4,7 +4,7 @@ import { theme, run, setShared, props, exec, notify, home } from "herdr";
 import { needsYou, ago, compact, repoBadge, warnMark, holdText, localRunning } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status, state, act, sampleOn, showSample } from "./lib/store.js";
+import { status, state, act, sampleOn, showSample, peekAgent } from "./lib/store.js";
 import { cliCommand } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { SETUP_SAMPLE, setupProgress } from "./lib/setup.js";
@@ -16,6 +16,8 @@ const open = (id) => {
   setShared("factory.ticket", id);
   run("layout.select", { stack: STACK, child: "ticket" });
 };
+// A ticket whose agent waits on you opens straight into that agent's live terminal.
+const visit = (t) => (t.needs?.kind === "attention" && t.terminal ? peekAgent(t) : open(t.id));
 
 // Home: what needs you, then what runs, then today's four numbers (docs/layouts/01-home.png).
 export default class FactoryHome extends View {
@@ -30,7 +32,7 @@ export default class FactoryHome extends View {
     const a = keyAction(e);
     if (!a) return;
     if (a.kind === "move") this.at = clamp(this.at + a.delta, items.length);
-    else if (a.kind === "open" && items[this.at]) open(items[this.at].id);
+    else if (a.kind === "open" && items[this.at]) visit(items[this.at]);
     else act(a, items[this.at]);
     cx.stop_propagation();
     cx.notify();
@@ -39,10 +41,10 @@ export default class FactoryHome extends View {
   card(t, s, { ticket, kind }, now, on) {
     const badge = repoBadge(s, ticket);
     const color = kind === "merge" ? t.done : t.blocked;
-    const tag = kind === "question" ? "grooming · waiting on you" : kind === "parked" ? "parked"
+    const tag = kind === "attention" ? "waiting on you in its terminal · click to answer" : kind === "question" ? "grooming · waiting on you" : kind === "parked" ? "parked"
       : ticket.pr?.watched && ticket.pr.checked_at ? `watching · checked ${ago(ticket.pr.checked_at, now)}` : "ready to merge";
     return h_flex().id(`n-${ticket.id}`).rounded(8).bg(t.surface).border(1).border_color(on ? t.accent : t.border).cursor_pointer()
-      .hover((s) => s.bg(t.hover)).on_click(() => open(ticket.id))
+      .hover((s) => s.bg(t.hover)).on_click(() => visit(ticket))
       .child(div().w(3).h_full().rounded_l(8).bg(color))
       .child(v_flex().flex_1().px(14).py(10).gap(3)
         .child(h_flex().gap(8)
