@@ -5,7 +5,8 @@ import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { getMeta, leadRepo, listRepos, setMeta } from "./db.ts";
-import { argvFor, loadAgent, type Run } from "./runner.ts";
+import { argvFor, type Run } from "./runner.ts";
+import { loadAgent } from "./agents.ts";
 import { withFactory } from "./herdr.ts";
 import { loadPrompt, render } from "./prompts.ts";
 
@@ -27,7 +28,7 @@ export function overwatch(db: Database, o: { name: string; dir: string; run: Run
   const known = getMeta(db, "overwatch_terminal");
   if (known && alive(o.run, known)) return { terminal: known, started: false };
   const repo = leadRepo(db)?.path ?? null;
-  const agent = repo ? loadAgent(repo, "overwatch") : null;
+  const agent = loadAgent(repo, "overwatch");
   const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, overwatchBrief({ name: o.name, dir: o.dir, repo }));
   // Auto mode, like every factory agent: it still asks before acting (its brief), never at a permission prompt.
   // skipAutoPermissionPrompt: registering the repo was the consent to auto mode (handoff-hook.ts).

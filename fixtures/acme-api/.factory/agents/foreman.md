@@ -1,5 +1,6 @@
 ---
 role: orchestrator
+territory: "Which stage runs next, when a blueprint offers more than one"
 model: claude-sonnet-5-5
 ---
 You decide what runs after a stage finishes, when its blueprint offers more than

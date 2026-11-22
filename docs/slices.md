@@ -128,6 +128,8 @@ S3–S8 depend only on S0–S2 and touch separate mod folders, so they can run i
 - **M4, learning + benchmarks:** Metrics Learning and Benchmarks tabs.
 - **M5, auto gates + maintainer:** revert rate on Home.
 - **M6, reviews:** Reviews page.
+- **M7, agents with territories:** two tiers of agents, one Overwatch for every repo, a neighbour map in every brief, and agents asking each other.
+  - **Two tiers of agent files** (`daemon/agents.ts`): repo agents load from the repo's `.factory/agents/` as before. The factory agents (overwatch, babysitter, maintainer, learner) load from `~/.factory/agents/<name>.md`, else the defaults shipped in this repo's `agents/`; a repo's copy of one is never read, and `factory validate` warns about it (`!` and `ignored: …`) and checks the files in `~/.factory/agents/` with the account config. `factory init` and `factory setup` copy the shipped ones into `~/.factory/agents/` once each and never overwrite one. Every agent header may carry `territory:` (one line: what only it acts on); the shipped ones do. The factory agents' roles are `overwatch`, `babysit`, `maintain` and `learn`. An override of a factory agent's setting has no `.factory/` file to export to; `factory learn export` says so.
 
 ## Open technical questions for discussion
 
