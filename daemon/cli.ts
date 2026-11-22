@@ -90,6 +90,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   migrate flow-stack [--dry-run]     copy decisions, past tasks and lessons count from ~/.flow-stack and .flow/; prints proposals
   bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
   validate [dir] [--json]            check .factory/ files (default ./.factory)
+  refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
   status                             write status.json and print a summary
   run [--interval seconds] [--all]   the daemon: keep status.json fresh (--all: every factory)
   service install|uninstall|restart|status [--json]  keep \`factory run --all\` alive with launchd
@@ -485,6 +486,19 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const [who, what, why] = rest;
       if (!sub || !who || !what) throw new Error("usage: factory decide <ticket> <who> <what> [why]");
       db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), who, what, why ?? null, now());
+    } else if (cmd === "refresh") {
+      // The window's Refresh: what a daemon tick does, now, plus the PR check its throttle would skip.
+      recordUsage(db, log);
+      watchSessions(db, p);
+      const lead = leadRepo(db);
+      if (lead && lead.slug !== "unknown" && db.query("SELECT 1 FROM tickets t JOIN ticket_repos r ON r.ticket = t.id WHERE t.state = 'ready' AND r.pr_watched = 1").get()) {
+        try {
+          const me = login(db, sh, "me");
+          for (const e of watchPrs(db, { dir: p.dir, repo: lead.path, me, run: sh, now: now(), log })) log(`#${e.id}'s PR: ${e.event}`);
+        } catch (e) { log(`not checking PRs: ${(e as Error).message}`); }
+      }
+      writeAll(db, p);
+      return log(sub ? `#${sub} refreshed` : "refreshed");
     } else if (cmd === "status") {
       const s = writeStatus(db, p.status);
       log(`${s.factory.name}: ${s.tickets.length} tickets, daemon ${s.factory.daemon ? "on" : "off"} → ${p.status}`);
