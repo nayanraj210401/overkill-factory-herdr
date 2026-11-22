@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncate
 import { dirname, join } from "node:path";
 import { validateDir, validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
-import { openPr, prBody, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
+import { closesIssue, openPr, prBody, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
 import { closeSpace, openAgent, openTab, toolPath, withFactory, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
@@ -427,11 +427,11 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   const repos = ticketRepos(db, o.id);
   const prs = repos.map((r) => {
     const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number,
-      others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })) });
+      others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })), closes: closesIssue(db, o.id, r, repos.length > 1) });
     setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now }, r.repo);
     return { ...r, pr_number: number };
   });
-  if (prs.length > 1 && prs.some((p, i) => repos[i].pr_number == null)) linkPrs(o, prs, rules, run);
+  if (prs.length > 1 && prs.some((p, i) => repos[i].pr_number == null)) linkPrs(db, o, prs, rules, run);
   // A review round's fixes are pushed: its replies and summary go on the PRs.
   closeRound(db, { ticket: o.id, run, now });
   const others = prs.slice(1).map((p) => `${p.repo}#${p.pr_number}`).join(", ");
@@ -441,11 +441,11 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
 }
 
 // New PRs of a cross-repo change didn't know each other's numbers: every body gets them.
-function linkPrs(o: { dir: string; id: number }, prs: { repo: string; worktree: string | null; pr_number: number }[], rules: ReturnType<typeof checkReady>, run: Run) {
+function linkPrs(db: Database, o: { dir: string; id: number }, prs: { repo: string; lead: number; worktree: string | null; pr_number: number }[], rules: ReturnType<typeof checkReady>, run: Run) {
   const md = readFileSync(join(o.dir, "tickets", String(o.id), "PR.md"), "utf8");
   const bodyFile = join(o.dir, "tickets", String(o.id), ".pr-body.md");
   for (const p of prs) {
-    writeFileSync(bodyFile, prBody(md, rules, prs.filter((x) => x !== p).map((x) => ({ repo: x.repo, pr: x.pr_number }))));
+    writeFileSync(bodyFile, prBody(md, rules, prs.filter((x) => x !== p).map((x) => ({ repo: x.repo, pr: x.pr_number })), closesIssue(db, o.id, p, true)));
     const edit = run(["gh", "pr", "edit", String(p.pr_number), "--body-file", bodyFile], p.worktree!);
     if (edit.code !== 0) throw new Error(`gh pr edit failed in ${p.repo}: ${edit.out}`);
   }

@@ -58,7 +58,22 @@ test("the pr stage waits while a rule fails, then pushes the branch and opens a 
   expect(body).toStartWith("Rate-limits login per user");
   expect(body).toContain("- ✓ evidence: 1 checks pass after the last commit");
   expect(body).toContain("- – holdout: the blueprint has no checker stage");
+  expect(body).toContain("\n\nCloses #7\n\n**Ready rules**"); // merging it closes the ticket's issue
   expect((db.query("SELECT what FROM decisions").get() as any).what).toBe("opened PR #42");
+});
+
+test("a goal's PR closes no issue", () => {
+  const { db, dir, repo, run, gh } = setup();
+  db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (10000, 'Tidy the logs', 'chore', '2026-11-21T10:00:00Z')").run();
+  startTicket(db, { dir, repo, id: 10000, run });
+  advance(db, { dir, repo, id: 10000, run });
+  mkdirSync(join(dir, "tickets/10000"), { recursive: true });
+  writeFileSync(join(dir, "tickets/10000/PR.md"), GOOD_PR);
+  expect(tryPr(db, { dir, repo, id: 10000, run })).toMatchObject({ pr: 42 });
+  const create = gh.find((a) => a[2] === "create")!;
+  const body = readFileSync(create[create.indexOf("--body-file") + 1], "utf8");
+  expect(body).toContain("**Ready rules**");
+  expect(body).not.toContain("Closes");
 });
 
 test("evidence older than the last commit doesn't count, and an overrun budget blocks", () => {

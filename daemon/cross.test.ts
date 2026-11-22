@@ -163,6 +163,10 @@ test("the pr stage pushes every branch and opens a draft PR per repo, each namin
   expect(gh.map((g) => `${g.repo} ${g.argv[2]}${g.argv[2] === "edit" ? ` ${g.argv[3]}` : ""}`)).toEqual(["api list", "api create", "web list", "web create", "api edit 5", "web edit 6"]);
   expect(gh.find((g) => g.argv[2] === "edit" && g.argv[3] === "5")!.body).toContain("**Part of one change across repos:** acme/web#6");
   expect(gh.find((g) => g.argv[2] === "edit" && g.argv[3] === "6")!.body).toContain("**Part of one change across repos:** acme/api#5");
+  // Only the lead's PR closes the issue, which lives in the lead repo.
+  expect(gh.find((g) => g.argv[2] === "edit" && g.argv[3] === "5")!.body).toContain("Closes acme/api#7");
+  expect(gh.find((g) => g.argv[2] === "edit" && g.argv[3] === "6")!.body).not.toContain("Closes");
+  expect(gh.find((g) => g.repo === "web" && g.argv[2] === "create")!.body).not.toContain("Closes");
   expect(gh.find((g) => g.argv[2] === "edit")!.body).toContain("- ✓ cross_check: the cross check passes on every repo's branch");
   expect(db.query("SELECT what, why FROM decisions WHERE who = 'daemon'").get()).toEqual({ what: "opened PR #5", why: "evidence pass, template pass, cross_check pass; with acme/web#6" });
   expect(ticket().state).toBe("ready");
