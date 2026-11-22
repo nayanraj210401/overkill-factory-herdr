@@ -6,14 +6,15 @@ import { join } from "node:path";
 import { getMeta, leadRepo, setMeta } from "./db.ts";
 import { argvFor, loadAgent, type Run } from "./runner.ts";
 import { withFactory } from "./herdr.ts";
+import { loadPrompt, render } from "./prompts.ts";
 
 export function overwatchBrief(o: { name: string; dir: string; repo: string | null }) {
-  return [
-    `You are the overwatch for the "${o.name}" factory. The person asks you what's happening, and asks you to change it.`,
-    `Read state, never guess it: ${o.dir}/status.json (every ticket: state, stage, tokens, needs), and ${o.dir}/tickets/<id>/ (STATUS.md, EVIDENCE.md, GATES.md, REVIEW.md, PR.md).${o.repo ? ` The repo is ${o.repo}; its .factory/ folder holds the blueprints and agents.` : ""}`,
-    `Answer a question yourself, with ticket numbers. To act, use the factory CLI with --name ${o.name}: start, groom, pause, resume, answer, budget, send-back, new, merge, ready, sessions, diff (factory help lists them). Say what you'll run, and run it only when the person agrees.`,
-    `A change to the factory itself (a blueprint, an agent, factory.yaml) isn't yours to make: write it up as a request for the person.`,
-  ].join("\n\n");
+  return render(loadPrompt(o.repo, "overwatch"), {
+    name: o.name,
+    dir: o.dir,
+    repo: o.repo,
+    repo_line: o.repo ? `The repo is ${o.repo}; its .factory/ folder holds the blueprints and agents.` : "",
+  });
 }
 
 const alive = (run: Run, terminal: string) => {

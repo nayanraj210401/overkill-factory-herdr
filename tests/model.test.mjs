@@ -65,9 +65,10 @@ test("Tickets filters: chips cover every ticket, search narrows", async () => {
 
 test("Config lists .factory files in plan order", async () => {
   const { configFiles } = await import("../lib/model.js");
-  const got = configFiles(["agents/reviewer.md", "notes.txt", "blueprints/feature.yaml", "factory.yaml", "blueprints/chore.yaml", "triggers/x.yaml"]);
-  assert.deepEqual(got.map((f) => f.path), ["factory.yaml", "blueprints/chore.yaml", "blueprints/feature.yaml", "agents/reviewer.md", "triggers/x.yaml"]);
+  const got = configFiles(["agents/reviewer.md", "notes.txt", "blueprints/feature.yaml", "factory.yaml", "blueprints/chore.yaml", "triggers/x.yaml", "prompts/stage.md"]);
+  assert.deepEqual(got.map((f) => f.path), ["factory.yaml", "blueprints/chore.yaml", "blueprints/feature.yaml", "agents/reviewer.md", "prompts/stage.md", "triggers/x.yaml"]);
   assert.equal(got[3].language, "markdown");
+  assert.equal(got[4].language, "markdown"); // prompt templates render as Markdown
 });
 
 test("STATUS.md parses into a stage timeline", async () => {
