@@ -41,6 +41,7 @@ import { watchContext } from "./handoff.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
 import { writeRuns } from "./runs.ts";
 import { validateMetrics } from "../lib/metrics.js";
+import { learningMetrics, type LearningMetrics } from "./experiments.ts";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
@@ -1017,7 +1018,8 @@ function writeAll(db: Database, p: ReturnType<typeof paths>) {
 // a manifest naming a file not yet written; the files it stops naming go after.
 export function writeMetrics(db: Database, path: string, now = new Date()) {
   const lead = leadRepo(db);
-  const doc: ReturnType<typeof buildMetrics> & { charts?: unknown } = buildMetrics(db, now, lead ? dayCap(lead.path)?.input ?? null : null);
+  const doc: ReturnType<typeof buildMetrics> & { charts?: unknown; learning?: LearningMetrics | null } = buildMetrics(db, now, lead ? dayCap(lead.path)?.input ?? null : null);
+  doc.learning = lead ? learningMetrics(db, lead.path, now) : null; // the experiments, for the Learning tab
   const errors = validateMetrics(doc);
   if (errors.length) throw new Error(`metrics.json would break the contract:\n${errors.join("\n")}`);
   const charts = writeCharts(dirname(path), doc);

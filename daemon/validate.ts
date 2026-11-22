@@ -43,7 +43,7 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, floor: "any", learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num, review_every: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, artifacts: ARTIFACTS, maintainer: { object: { gate } },
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, floor: "any", learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, arms: open, warmup_tickets: num, pause_above: "any", promote_after: num, review_every: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, artifacts: ARTIFACTS, maintainer: { object: { gate } },
       verify: { object: { features: str } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
@@ -209,6 +209,12 @@ export function validateFile(path: string, text: string): string[] {
     if (Array.isArray(tunable)) for (const k of tunable) {
       const why = typeof k === "string" ? whyNotTunable(k) : null;
       if (why) errors.push(`learn.tunable: ${k} ${why}`);
+    }
+    // learn.arms: the values an experiment tries for a tunable setting (experiments.ts).
+    const arms = (doc as any)?.learn?.arms;
+    if (arms && typeof arms === "object") for (const [k, v] of Object.entries(arms)) {
+      if (!Array.isArray(tunable) || !tunable.includes(k)) errors.push(`learn.arms.${k}: not in learn.tunable`);
+      if (!Array.isArray(v) || v.length < 1) errors.push(`learn.arms.${k}: a list of values to try`);
     }
     const rb = (doc as any)?.review?.round_budget;
     if (rb !== undefined && !/^\s*(\d+(\.\d+)?\s*%|\d+(\.\d+)?\s*[kKmM]?(\s*\/\s*\d+(\.\d+)?\s*[kKmM]?)?)\s*$/.test(String(rb)))

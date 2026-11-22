@@ -224,6 +224,20 @@ export const MIGRATIONS = [
      about INTEGER, request INTEGER REFERENCES tickets(id), at TEXT NOT NULL, delivered_at TEXT, done_at TEXT
    );
    CREATE INDEX asks_open ON asks(to_agent) WHERE done_at IS NULL;`,
+  // Bandit tuning (experiments.ts): the value each ticket ran with for each tunable setting it
+  // was experimented on, chosen at its start, and its outcome once it finished; and each time a
+  // winner became an override.
+  `CREATE TABLE experiment_pulls (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id), key TEXT NOT NULL, context TEXT NOT NULL,
+     value TEXT NOT NULL, explored INTEGER NOT NULL, chosen_at TEXT NOT NULL,
+     outcome TEXT CHECK (outcome IN ('merged', 'closed')), target TEXT, metric REAL, first_try INTEGER, outcome_at TEXT,
+     UNIQUE (ticket, key)
+   );
+   CREATE INDEX experiment_pulls_arm ON experiment_pulls(key, context);
+   CREATE TABLE experiment_shifts (
+     id INTEGER PRIMARY KEY, key TEXT NOT NULL, context TEXT NOT NULL, from_value TEXT, to_value TEXT NOT NULL,
+     override INTEGER, why TEXT NOT NULL, at TEXT NOT NULL
+   );`,
 ];
 
 export function open(path: string): Database {
