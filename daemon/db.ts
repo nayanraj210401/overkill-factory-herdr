@@ -167,6 +167,15 @@ export const MIGRATIONS = [
      PRIMARY KEY (ticket, round)
    );
    CREATE TABLE review_posts (ticket INTEGER NOT NULL, round INTEGER NOT NULL, repo TEXT NOT NULL, posted_at TEXT NOT NULL, PRIMARY KEY (ticket, round, repo));`,
+  // Split: the parts an agent proposed for a ticket, in order, and what became of them; a
+  // part's ticket names its parent, and the one that keeps the work starts from its branch (base).
+  `CREATE TABLE splits (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id), n INTEGER NOT NULL,
+     title TEXT NOT NULL, scope TEXT, keeps_work INTEGER NOT NULL DEFAULT 0, proposed_by TEXT NOT NULL, proposed_at TEXT NOT NULL,
+     decided TEXT CHECK (decided IN ('created', 'rejected')), child INTEGER, UNIQUE (ticket, n)
+   );
+   ALTER TABLE tickets ADD COLUMN parent INTEGER;
+   ALTER TABLE tickets ADD COLUMN base TEXT;`,
   // per: slice: the slice of SLICES.md each session built (by its S<n>, or its place), and
   // the slices a stage finished.
   `ALTER TABLE sessions ADD COLUMN slice TEXT;
