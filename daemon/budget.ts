@@ -98,13 +98,19 @@ export function startHold(db: Database, repo: string, now: Date): string | null 
   if (at != null && planKnown(db)) {
     const w = planMeters(db, now).window_5h;
     if (w >= at) {
-      const first = (db.query("SELECT MIN(at) AS at FROM usage WHERE at >= ?").get(new Date(now.getTime() - 5 * HOUR).toISOString()) as { at: string | null }).at;
-      const reset = first ? new Date(Date.parse(first) + 5 * HOUR) : null;
+      const reset = estimatedReset(db, now);
       const hhmm = reset ? `${String(reset.getHours()).padStart(2, "0")}:${String(reset.getMinutes()).padStart(2, "0")}` : null;
       return `5-hour window at ${Math.round(w * 100)}%${hhmm ? `, resets ${hhmm}` : ""}`;
     }
   }
   return null;
+}
+
+// The estimate's 5-hour reset: five hours after the window's first message (this factory's
+// usage, as the estimated meters count it); null with nothing sent in the last five hours.
+export function estimatedReset(db: Database, now: Date): Date | null {
+  const first = (db.query("SELECT MIN(at) AS at FROM usage WHERE at >= ?").get(new Date(now.getTime() - 5 * HOUR).toISOString()) as { at: string | null }).at;
+  return first ? new Date(Date.parse(first) + 5 * HOUR) : null;
 }
 
 // How far a ticket is through its budget: the larger of input and output.

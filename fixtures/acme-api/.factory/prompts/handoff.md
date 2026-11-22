@@ -16,6 +16,10 @@ You are session {{session}} of #{{ticket.id}}. The one before it {{previous}}. Y
 
 {{snapshot}}
 
+## Where it stopped (the end of its transcript)
+
+{{tail}}
+
 ## The current slice (SLICES.md)
 
 {{slice}}
