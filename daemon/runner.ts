@@ -17,6 +17,7 @@ import { withHandoffHook } from "./handoff-hook.ts";
 import { budgetUse, roundUse, startHold } from "./budget.ts";
 import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
 import { closeRound, latestBrief } from "./round.ts";
+import { loadPrompt, render } from "./prompts.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -27,7 +28,7 @@ export const sh: Run = (argv, cwd) => {
   return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() };
 };
 
-type Stage = { agent?: string; check?: string; next?: string[]; output?: string };
+type Stage = { agent?: string; check?: string; next?: string[]; output?: string; prompt?: string };
 type Blueprint = { name: string; start: string; stages: Record<string, Stage> };
 
 function readYaml(repo: string, path: string) {
@@ -63,21 +64,23 @@ export const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = []) {
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage")) {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
-  const fix = latestBrief(folder);
-  return [
-    `Ticket #${t.id}: ${t.title}. You run its ${stage} stage.`,
-    repos.length > 1 ? `It spans ${repos.length} repos, each checked out on the same branch: ${repos.map((r, i) => `${r.repo} in ${r.worktree}${i ? "" : " (here)"}`).join(", ")}. Change each one the work needs, and commit in each.` : "",
-    prompt ?? "",
-    verdict === "holdout" ? `Write hidden checks the builder never sees: keep them in ${folder}/holdout/, never in the worktree. Run them against the worktree, then record the result: factory verdict ${t.id} holdout pass, or factory verdict ${t.id} holdout fail <what fails, without the check's code>.` : "",
-    verdict === "review" ? `Record your verdict before you finish: factory verdict ${t.id} review pass, or factory verdict ${t.id} review fail <each blocker>. Only a blocker fails; put suggestions in a pass's detail.` : "",
-    lessons.length ? `Lessons for the code this ticket touches (from earlier tickets and reviews):\n${lessons.map((l) => `- ${l}`).join("\n")}` : "",
-    `Read ${folder}/STATUS.md and any INTENT.md, SLICES.md and HANDOFF.md there before you start.`,
-    `If REVIEW.md or GATES.md is there, act on every note in it: a person or a reviewer sent this ticket back, or a person answered why it stopped.`,
-    fix ? `If review comments are being fixed, start from ${folder}/${fix}. It holds only the comments to fix, with the reviewer's words, the lines and the acceptance checks each touches. You are a fresh session; don't look for the one that wrote the PR.` : "",
-    `When the stage's work is done, run: factory stage-done ${t.id}`,
-  ].filter(Boolean).join("\n\n");
+  return render(template, {
+    "ticket.id": String(t.id),
+    "ticket.title": t.title,
+    stage,
+    folder,
+    "agent.prompt": prompt,
+    repos: repos.length > 1 ? repos.map((r, i) => `${r.repo} in ${r.worktree}${i ? "" : " (here)"}`).join(", ") : "",
+    repo_count: repos.length > 1 ? String(repos.length) : "",
+    verdict:
+      verdict === "holdout" ? `Write hidden checks the builder never sees: keep them in ${folder}/holdout/, never in the worktree. Run them against the worktree, then record the result: factory verdict ${t.id} holdout pass, or factory verdict ${t.id} holdout fail <what fails, without the check's code>.`
+      : verdict === "review" ? `Record your verdict before you finish: factory verdict ${t.id} review pass, or factory verdict ${t.id} review fail <each blocker>. Only a blocker fails; put suggestions in a pass's detail.`
+      : "",
+    lessons: lessons.map((l) => `- ${l}`).join("\n"),
+    fix_brief: latestBrief(folder),
+  });
 }
 
 // The agent's harness, model and effort for one ticket: its snapshot's override
@@ -145,7 +148,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const intent = existsSync(join(folder, "INTENT.md")) ? readFileSync(join(folder, "INTENT.md"), "utf8") : "";
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
-  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons)), o.dir, o.id, guard);
+  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"))), o.dir, o.id, guard);
   const cmd = withFactory(argv, o.dir); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];

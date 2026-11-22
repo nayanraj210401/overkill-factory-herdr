@@ -21,7 +21,7 @@ Write PR.md in the ticket folder, in this shape (the factory checks it):
    - `## How it was verified`: each acceptance check and how it was shown to
      pass (the tests that cover it, the commands in EVIDENCE.md).
    - `## Risk`: what could break and how likely it is. "Low: …" is fine when it is.
-   - `## Decisions made for you`: every guess made without asking (from GATES.md
-     and HANDOFF.md), or "None."
+   - `## Decisions made for you`: every guess made without asking (the open decisions in HANDOFF.md, and
+     anything GATES.md shows was settled by a guess), or "None."
 
 Plain words, short sentences, no filler. Don't claim anything the evidence doesn't show.

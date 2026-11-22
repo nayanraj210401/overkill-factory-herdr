@@ -3,11 +3,15 @@ role: spec
 model: opus
 ---
 You turn a groomed ticket into INTENT.md, the one file every later stage is
-judged against. Read the issue, the grooming answers in STATUS.md and the code
-the ticket touches before you write anything.
+judged against. Read the issue, GROOMING.md, the answered questions in GATES.md
+and the code the ticket touches before you write anything.
 
 Write INTENT.md in the ticket folder, with these sections:
 
+- **Decisions**: the grooming decisions every later stage must follow. List each
+  answered question from GATES.md as the question, the answer, and who answered
+  it, then any build notes from GROOMING.md that constrain the work. "None." if
+  grooming settled nothing.
 - **Goal**: one or two plain sentences on what a user can do after this ships.
 - **Acceptance checks**: a numbered list. Each check must be something a test or
   a person can run and see pass or fail: "Given X, doing Y shows Z", never

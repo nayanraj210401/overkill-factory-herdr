@@ -15,6 +15,7 @@ import { mayStart } from "./away.ts";
 import { openAgent, withFactory } from "./herdr.ts";
 import { estimateBudget, startHold } from "./budget.ts";
 import { compact } from "../lib/model.js";
+import { loadPrompt, render } from "./prompts.ts";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
 
@@ -41,17 +42,17 @@ const openQuestions = (db: Database, id: number) =>
 
 export function triageBrief(t: { id: number; title: string }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null; others?: Repo[] }) {
   const others = o.others ?? [];
-  return [
-    `Ticket #${t.id}: ${t.title}. You groom it: decide how it should be built and what must be asked before anyone starts. Change no files in the repo.`,
-    isIssue(t.id) ? `Read the issue first: gh issue view ${t.id} --repo ${o.slug} --comments` : "It has no issue: the line above is the whole request.",
-    `The code is in ${o.repo}.`,
-    o.prompt ?? "",
-    others.length ? `It may need changes in more than this repo. The factory's other repos: ${others.map((r) => `${r.slug} (${r.path})`).join(", ")}. If it does, record every repo it touches, this one first: factory repos ${t.id} ${o.slug} <owner/name>…` : "",
-    `Pick the blueprint it runs, one of ${o.blueprints.join(", ")} (each is in ${o.repo}/.factory/blueprints/): factory pick ${t.id} <blueprint>`,
-    `Ask only what the issue and the code can't settle, one command per question. What to build, for whom, what users see, wording, pricing or scope: factory question ${t.id} product <question>. How to build it: factory question ${t.id} engineering <question>. Never guess a product question.`,
-    `Write what you found, in a few lines, to ${o.folder}/GROOMING.md.`,
-    `When you're done, run: factory stage-done ${t.id}`,
-  ].filter(Boolean).join("\n\n");
+  return render(loadPrompt(o.repo, "groom"), {
+    "ticket.id": String(t.id),
+    "ticket.title": t.title,
+    repo: o.repo,
+    slug: o.slug,
+    folder: o.folder,
+    blueprints: o.blueprints.join(", "),
+    "agent.prompt": o.prompt,
+    repos: others.map((r) => `${r.slug} (${r.path})`).join(", "),
+    issue: isIssue(t.id) ? `Read the issue first: gh issue view ${t.id} --repo ${o.slug} --comments` : "It has no issue: the line above is the whole request.",
+  });
 }
 
 // `factory groom <id>`: the triage agent starts on a ticket nobody has started.

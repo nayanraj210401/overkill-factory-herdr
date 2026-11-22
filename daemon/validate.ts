@@ -3,6 +3,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { whyNotTunable } from "./learn.ts";
+import { PLACEHOLDERS, templateErrors } from "./prompts.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -18,7 +19,7 @@ const LEARN_TARGETS = ["cost_per_pr", "time_to_pr", "interactions_per_pr", "revi
 
 const STAGE: Rule = {
   object: {
-    agent: str, check: { enum: ["evidence", "tests", "lint"] }, output: str, next: strs, on_fail: str,
+    agent: str, prompt: str, check: { enum: ["evidence", "tests", "lint"] }, output: str, next: strs, on_fail: str,
     max_retries: num, per: { enum: ["ticket", "slice"] }, requires: str, template: str, gate, stages: "any",
   },
 };
@@ -78,6 +79,7 @@ const kindOf = (path: string) =>
   path === "factory.yaml" ? "factory"
   : path === "blueprint.yaml" || /^blueprints\/[^/]+\.ya?ml$/.test(path) ? "blueprint"
   : /^agents\/[^/]+\.md$/.test(path) ? "agent"
+  : /^prompts\/[^/]+\.md$/.test(path) ? "prompt"
   : /^triggers\/[^/]+\.ya?ml$/.test(path) ? "trigger"
   : /^benchmarks\/[^/]+\.ya?ml$/.test(path) ? "benchmark"
   : null;
@@ -135,7 +137,11 @@ export function duplicateKeys(text: string): string[] {
 
 export function validateFile(path: string, text: string): string[] {
   const kind = kindOf(path);
-  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, triggers/, benchmarks/)`];
+  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, prompts/, triggers/, benchmarks/)`];
+  if (kind === "prompt") {
+    const name = path.slice("prompts/".length, -".md".length);
+    return [...(text.trim() ? [] : ["prompt: the file is empty"]), ...templateErrors(name, text)];
+  }
   let doc: unknown;
   try {
     if (kind === "agent") {
@@ -196,13 +202,14 @@ function files(dir: string): string[] {
   });
 }
 
-// Names that point at other files: a stage's agent, a blueprint's orchestrator, the
+// Names that point at other files: a stage's agent and prompt, a blueprint's orchestrator, the
 // grooming agent and the blueprints it may pick, a trigger's blueprint. A name with
 // no file would break the first run, so it fails here for every user's factory.
 function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
   const base = (p: string, folder: string) => p.startsWith(`${folder}/`) ? p.slice(folder.length + 1).replace(/\.(md|ya?ml)$/, "") : null;
   const agents = new Set(paths.map((p) => base(p, "agents")).filter(Boolean));
   const blueprints = new Set(paths.map((p) => base(p, "blueprints")).filter(Boolean));
+  const prompts = new Set([...paths.map((p) => base(p, "prompts")).filter(Boolean), "stage"]); // stage.md is built in
   const parse = (p: string) => { try { return Bun.YAML.parse(readFileSync(join(dir, p), "utf8")) as any; } catch { return null; } };
   const out: Record<string, string[]> = {};
   const add = (p: string, e: string) => (out[p] ??= []).push(e);
@@ -212,6 +219,10 @@ function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
       if (typeof b?.orchestrator === "string" && !agents.has(b.orchestrator)) add(p, `orchestrator: no file agents/${b.orchestrator}.md`);
       for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
         if (typeof s?.agent === "string" && !agents.has(s.agent)) add(p, `stages.${id}.agent: no file agents/${s.agent}.md`);
+      for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
+        if (typeof s?.prompt !== "string") continue;
+        else if (s.prompt !== "stage" && s.prompt in PLACEHOLDERS) add(p, `stages.${id}.prompt: ${s.prompt} is not a stage template (it is for ${s.prompt === "groom" ? "grooming" : s.prompt === "handoff" ? "handoffs" : "overwatch"})`);
+        else if (!prompts.has(s.prompt)) add(p, `stages.${id}.prompt: no file prompts/${s.prompt}.md`);
     } else if (p === "factory.yaml") {
       const g = parse(p)?.grooming;
       if (typeof g?.agent === "string" && !agents.has(g.agent)) add(p, `grooming.agent: no file agents/${g.agent}.md`);
