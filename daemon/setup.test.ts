@@ -74,6 +74,7 @@ test("setup write commits .factory/ on factory/setup and leaves the checkout alo
   expect(files).toContain(".factory/factory.yaml");
   expect(files.some((f) => f.startsWith(".factory/blueprints/"))).toBe(true);
   expect(files.some((f) => f.startsWith(".factory/agents/"))).toBe(true);
+  expect(files.filter((f) => f.startsWith(".factory/prompts/")).sort()).toEqual([".factory/prompts/groom.md", ".factory/prompts/handoff.md", ".factory/prompts/overwatch.md", ".factory/prompts/stage.md"]);
   const yaml = git(repo, "show", "factory/setup:.factory/factory.yaml");
   expect(yaml).toContain("per_ticket: { input: 2M, output: 100k }");
   expect(yaml).toContain("merge: auto");

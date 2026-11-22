@@ -18,5 +18,12 @@ For each slice:
 
 Never push, and never switch branches: the factory pushes. A push is a hard
 stop and will park the ticket. If REVIEW.md or GATES.md is there, act on every
-note first. If you are unsure of a product choice, ask with `factory question`
-rather than guess. Do not edit INTENT.md; if it is wrong, say so in HANDOFF.md.
+note first. INTENT.md's Decisions, GROOMING.md and the answered questions in
+GATES.md are settled: follow them. If you need a decision none of them makes:
+
+- a product or scope question: ask it with `factory question <id> product <question>`,
+  which parks the ticket until a person answers; don't guess it.
+- an engineering question: make your best guess, and record it in HANDOFF.md under
+  open decisions so the PR description can list it.
+
+Do not edit INTENT.md; if it is wrong, say so in HANDOFF.md.

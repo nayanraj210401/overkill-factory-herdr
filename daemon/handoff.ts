@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { transcriptDir, parseTranscript, type Use } from "./usage.ts";
 import { flagFile, withHandoffHook } from "./handoff-hook.ts";
 import { openAgent, withFactory } from "./herdr.ts";
-import { agentSettings, argvFor, brief, loadAgent, readFactory, type Run } from "./runner.ts";
+import { agentSettings, argvFor, brief, loadAgent, loadBlueprint, readFactory, type Run } from "./runner.ts";
+import { loadPrompt, render } from "./prompts.ts";
 import { settingOf } from "./learn.ts";
 import { ticketRepos } from "./db.ts";
 
@@ -122,7 +123,7 @@ export function watchContext(db: Database, o: { dir: string; repo: string; run: 
 const out = (run: Run, cwd: string, ...argv: string[]) => run(["git", "-C", cwd, ...argv]).out;
 const section = (text: string, re: RegExp) => text.split(/^(?=#{1,6}[ \t])/m).find((p) => re.test(p.replace(/^#+[ \t]+/, "")));
 
-// The next session's brief: the usual one (stable parts first), then what this handoff adds.
+// The next session's brief: the stage's usual one (stable parts first), then what this handoff adds (prompts/handoff.md).
 function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s: Row; folder: string; ceiling: boolean; fill: number; missing: string[]; n: number }) {
   const t = db.query("SELECT id, title FROM tickets WHERE id = ?").get(o.s.ticket) as { id: number; title: string };
   const agent = o.s.agent ? loadAgent(o.repo, o.s.agent) : null;
@@ -143,16 +144,26 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
   });
   const handoff = read("HANDOFF.md").trim();
   const lastCommit = out(o.run, o.s.cwd ?? o.s.worktree!, "log", "-1", "--format=%h %s");
-  return [
-    brief(t, o.s.stage, agent?.prompt ?? null, o.folder, agent?.role, repos),
-    `You are session ${o.n} of #${t.id}. The one before it ${o.ceiling ? `ran out of room (${pct(o.fill)} of its context) before it could hand off, so there is no HANDOFF.md: start from its last commit, ${lastCommit || "none yet"}, and the diff below` : "handed off at a step boundary and its work in progress is committed"}. You start from what is true now, not from what it believed.`,
-    cmds.length ? `First, re-run the current check and read its result before you change anything: ${cmds.map((c) => `\`${c}\``).join(" and ")}.` : "First, re-run the current check before you change anything.",
-    !o.ceiling && handoff ? `## HANDOFF.md\n\n${handoff}${o.missing.length ? `\n\n(The last session left these sections out: ${o.missing.join(", ")}.)` : ""}` : "",
-    slice.trim() ? `## The current slice (SLICES.md)\n\n${slice.trim()}` : "",
-    intent ? `## Acceptance checks (INTENT.md)\n\n${intent.replace(/^#+[ \t]+.*\n/, "").trim()}` : `The acceptance checks are in ${o.folder}/INTENT.md.`,
-    `## git diff --stat\n\n${stats.join("\n\n")}`,
-    checks.length ? `## The last check output\n\n${checks.join("\n")}` : "",
-  ].filter(Boolean).join("\n\n");
+  const own = (db.query("SELECT blueprint FROM tickets WHERE id = ?").get(t.id) as { blueprint: string } | null)?.blueprint;
+  let stagePrompt: string | undefined;
+  try { stagePrompt = own ? loadBlueprint(o.repo, own).stages[o.s.stage]?.prompt : undefined; } catch {}
+  const stageBrief = brief(t, o.s.stage, agent?.prompt ?? null, o.folder, agent?.role, repos, [], loadPrompt(o.repo, stagePrompt ?? "stage"));
+  return render(loadPrompt(o.repo, "handoff"), {
+    "ticket.id": String(t.id),
+    "ticket.title": t.title,
+    stage: o.s.stage,
+    folder: o.folder,
+    session: String(o.n),
+    stage_brief: stageBrief,
+    previous: o.ceiling ? `ran out of room (${pct(o.fill)} of its context) before it could hand off, so there is no HANDOFF.md: start from its last commit, ${lastCommit || "none yet"}, and the diff below` : "handed off at a step boundary and its work in progress is committed",
+    rerun: cmds.length ? `First, re-run the current check and read its result before you change anything: ${cmds.map((c) => `\`${c}\``).join(" and ")}.` : "First, re-run the current check before you change anything.",
+    handoff: !o.ceiling && handoff ? `${handoff}${o.missing.length ? `\n\n(The last session left these sections out: ${o.missing.join(", ")}.)` : ""}` : "",
+    slice: slice.trim(),
+    acceptance: intent ? intent.replace(/^#+[ \t]+.*\n/, "").trim() : "",
+    acceptance_missing: intent ? "" : `The acceptance checks are in ${o.folder}/INTENT.md.`,
+    diff: stats.join("\n\n"),
+    last_check: checks.join("\n"),
+  });
 }
 
 // Commits the work in progress, ends the session and starts the next in the same stage.

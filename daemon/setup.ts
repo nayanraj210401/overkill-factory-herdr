@@ -158,7 +158,7 @@ const triggered = (dir: string) => existsSync(join(dir, "triggers"))
   ? readdirSync(join(dir, "triggers")).flatMap((f) => [...readFileSync(join(dir, "triggers", f), "utf8").matchAll(/^blueprint:\s*(\S+)/gm)].map((m) => m[1]))
   : [];
 
-// factory.yaml plus the default blueprints and agents, committed on factory/setup from a
+// factory.yaml plus the default blueprints, agents and prompt templates, committed on factory/setup from a
 // temporary worktree. Run again, it adds one more commit if anything changed.
 export function writeSetup(o: { repo: string; name: string; slug: string; basics: Basics }) {
   const git = (...a: string[]) => sh(["git", "-C", o.repo, ...a]);
@@ -175,7 +175,7 @@ export function writeSetup(o: { repo: string; name: string; slug: string; basics
   try {
     const dir = join(wt, ".factory");
     mkdirSync(dir, { recursive: true });
-    for (const sub of ["blueprints", "agents"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true });
+    for (const sub of ["blueprints", "agents", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true });
     const blueprints = readdirSync(join(dir, "blueprints")).filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""))
       .filter((b) => !triggered(DEFAULTS).includes(b));
     writeFileSync(join(dir, "factory.yaml"), factoryYaml({ name: o.name, slug: o.slug, blueprints, basics: o.basics, floor: detectFloor(wt) }));
