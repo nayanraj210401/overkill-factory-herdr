@@ -7,10 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import type { Run } from "./runner.ts";
-import { askJudge, babysitter, judgeModel, prejudge } from "./prejudge.ts";
+import { askJudge, babysitter, judgeModel, parseProposal, prejudge } from "./prejudge.ts";
 import { pushbackGate, runAgreement } from "./agreement.ts";
 import { storeComments } from "./comments.ts";
 import { openRound, writeBrief } from "./round.ts";
+import { ask, doneAsk, doneAsks, openAsks } from "./ask.ts";
 import { validateFile } from "./validate.ts";
 
 // Each test gets its own FACTORY_HOME; put the preload's back so other files never see one with agents in it.
@@ -153,4 +154,60 @@ test("the fix brief carries babysitter.md's fix-round guidance, and the daemon's
   expect(brief).not.toContain("## Fix rounds");
   expect(brief).toContain("factory comment 7 C<n> fix|pushback|escalate <reason>");
   expect(brief).toContain("> Rename this.");
+});
+
+const note = (s: ReturnType<typeof setup>, text: string, about: number | null = null) =>
+  ask(s.db, { to: "babysitter", text, from: "learner", about, slug: "acme/api", dir: s.dir, run: s.run, now: NOW });
+
+test("a note about a ticket goes into its next fix brief, and is done once the round used it", () => {
+  const s = setup("", OWN);
+  mkdirSync(join(s.dir, "tickets/7"), { recursive: true });
+  s.add("Rename this.", "fix");
+  const n = note(s, "Check the API naming in this one", 7);
+  note(s, "Unrelated ticket", 8);
+  expect((n as any).ask.about).toBe(7);
+  const round = openRound(s.db, 7, NOW);
+  writeBrief(s.db, { dir: s.dir, ticket: 7, round, repo: s.repo, now: NOW });
+  const brief = readFileSync(join(s.dir, "tickets/7/REVIEW-ROUND-1.md"), "utf8");
+  expect(brief).toContain("## Notes from other agents\n\n- learner: Check the API naming in this one");
+  expect(brief).not.toContain("Unrelated ticket");
+  expect(openAsks(s.db, "babysitter").map((a) => a.text)).toEqual(["Unrelated ticket"]);
+  // A rewrite of the same round's brief keeps the note; the next round doesn't have it.
+  writeBrief(s.db, { dir: s.dir, ticket: 7, round, repo: s.repo, now: NOW });
+  expect(readFileSync(join(s.dir, "tickets/7/REVIEW-ROUND-1.md"), "utf8")).toContain("Check the API naming");
+  writeBrief(s.db, { dir: s.dir, ticket: 7, round: 2, repo: s.repo, now: NOW });
+  expect(readFileSync(join(s.dir, "tickets/7/REVIEW-ROUND-2.md"), "utf8")).not.toContain("Notes from other agents");
+  expect(doneAsks(s.db, "babysitter").map((a) => a.text)).toEqual(["Check the API naming in this one"]);
+});
+
+test("a general note goes into the judge's prompt for its next judgements, and the format stays strict", () => {
+  const s = setup("", OWN);
+  note(s, "Be stricter on naming in api");
+  const rows = Array.from({ length: 3 }, (_, i) => s.add(`Comment ${i}.`));
+  prejudge(s.db, { repo: s.repo, ticket: 7, rows, run: s.run, now: NOW });
+  expect(s.calls).toHaveLength(3);
+  for (const [, , , , prompt] of s.calls) {
+    expect(prompt).toContain("Guidance from other agents:\n- learner: Be stricter on naming in api");
+    expect(prompt).toContain("Not yours to judge?");
+    expect(prompt).toContain("Answer with exactly these three lines and nothing else:\nVERDICT: fix | pushback | escalate\nCLEAR: yes | no\nWHY: one short sentence");
+    expect(parseProposal("VERDICT: fix\nCLEAR: no\nWHY: x")?.verdict).toBe("fix");
+  }
+  expect(openAsks(s.db, "babysitter")).toHaveLength(1); // 3 of 5 judgements used
+  prejudge(s.db, { repo: s.repo, ticket: 7, rows: [s.add("Four."), s.add("Five.")], run: s.run, now: NOW });
+  expect(openAsks(s.db, "babysitter")).toHaveLength(0);
+  expect(doneAsks(s.db, "babysitter")).toHaveLength(1);
+  s.calls.length = 0;
+  prejudge(s.db, { repo: s.repo, ticket: 7, rows: [s.add("Six.")], run: s.run, now: NOW });
+  expect(s.calls[0][4]).not.toContain("Guidance from other agents");
+});
+
+test("a closed general note is not in the prompt; with no notes there is no guidance or notes section", () => {
+  const s = setup("", OWN);
+  mkdirSync(join(s.dir, "tickets/7"), { recursive: true });
+  const r = note(s, "Stay calm") as any;
+  doneAsk(s.db, r.ask.id, NOW);
+  prejudge(s.db, { repo: s.repo, ticket: 7, rows: [s.add("A.", "fix")], run: s.run, now: NOW });
+  expect(s.calls[0][4]).not.toContain("Guidance from other agents");
+  writeBrief(s.db, { dir: s.dir, ticket: 7, round: openRound(s.db, 7, NOW), repo: s.repo, now: NOW });
+  expect(readFileSync(join(s.dir, "tickets/7/REVIEW-ROUND-1.md"), "utf8")).not.toContain("Notes from other agents");
 });

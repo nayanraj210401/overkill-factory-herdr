@@ -12,6 +12,7 @@ import { readFactory, type Run } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
 import { isAway } from "./away.ts";
 import { judge, VERDICTS, type Row } from "./comments.ts";
+import { judgeNotes, usedJudgeNotes, type Ask } from "./ask.ts";
 
 export type Proposal = { verdict: (typeof VERDICTS)[number]; why: string; clear: boolean };
 
@@ -62,10 +63,15 @@ type Comment = { author: string; place: string | null; body: string; hunk?: stri
 
 // The role's own text, the fixed format, then the comment and (when babysitter.md's
 // context lists `lines`) the lines it points at. Nothing about the ticket.
-export const judgePrompt = (c: Comment, b: Babysitter) => [
+// `notes`: general guidance other agents left the babysitter (ask.ts judgeNotes), a few short
+// lines between the role and the format, so the format stays last and strict.
+const WHO = "Not yours to judge? Say which agent owns it in WHY (overwatch: the person and routing; maintainer: .factory/ and the factory itself; learner: lessons).";
+export const judgePrompt = (c: Comment, b: Babysitter, notes: Pick<Ask, "from" | "text">[] = []) => [
   ...(b.intro ? [b.intro, ""] : []),
   b.judging,
   "",
+  ...(notes.length ? ["Guidance from other agents:", ...notes.map((n) => `- ${n.from === "you" ? "the person" : n.from}: ${n.text.slice(0, 200)}`), ""] : []),
+  WHO,
   `You see only the comment${b.context.includes("lines") ? " and the lines it points at" : ""}.`,
   ...FORMAT,
   "",
@@ -84,9 +90,9 @@ export function judgeId(repo: string, b: Babysitter = babysitter(repo)) {
 
 // One judgement: the claude -p call and its parsed answer; null when the call fails or
 // the answer can't be read. Pre-judging and the agreement benchmark both call this.
-export function askJudge(run: Run, model: string, c: Comment, b: Babysitter): { p: Proposal | null; why: string | null } {
+export function askJudge(run: Run, model: string, c: Comment, b: Babysitter, notes: Pick<Ask, "from" | "text">[] = []): { p: Proposal | null; why: string | null } {
   try {
-    const r = run(["claude", "-p", "--model", model, judgePrompt(c, b)]);
+    const r = run(["claude", "-p", "--model", model, judgePrompt(c, b, notes)]);
     if (r.code !== 0) return { p: null, why: `exit ${r.code}: ${r.out.split("\n")[0].slice(0, 120)}` };
     const p = parseProposal(r.out);
     return p ? { p, why: null } : { p: null, why: "unreadable answer" };
@@ -111,9 +117,13 @@ export function prejudge(db: Database, o: { repo: string; ticket: number; rows: 
   const b = babysitter(o.repo);
   const model = judgeModel(o.repo, b);
   const away = isAway(db);
+  const notes = judgeNotes(db);
+  let judged = 0;
+  try {
   for (const c of o.rows) {
     if (c.insisted) continue; // fix it or escalate; nothing to guess
-    const { p } = askJudge(o.run, model, c, b);
+    judged++;
+    const { p } = askJudge(o.run, model, c, b, notes);
     if (!p) continue;
     db.query("UPDATE comments SET suggested = ?, suggested_why = ? WHERE ticket = ? AND n = ?").run(p.verdict, p.why || null, o.ticket, c.n);
     c.suggested = p.verdict;
@@ -123,5 +133,6 @@ export function prejudge(db: Database, o: { repo: string; ticket: number; rows: 
       c.verdict = "fix";
     }
   }
+  } finally { usedJudgeNotes(db, notes, judged, o.now); }
   return o.rows;
 }
