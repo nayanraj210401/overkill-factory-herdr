@@ -1,5 +1,6 @@
 ---
 role: verify
+territory: "Hidden checks for its ticket, and the holdout verdict"
 model: claude-sonnet-5-5
 context: [INTENT.md, EVIDENCE.md]
 ---

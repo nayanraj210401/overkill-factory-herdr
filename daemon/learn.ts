@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Run } from "./runner.ts";
+import { isFactoryAgent } from "./agents.ts";
 
 // ---- overrides ---------------------------------------------------------------------
 
@@ -98,14 +99,17 @@ function hunk(text: string, path: string[], value: unknown, headerOnly: boolean)
 }
 
 export function exportPatch(repo: string, overrides: Override[]) {
+  const factoryNotes: string[] = [];
   const byFile = new Map<string, { path: string[]; value: unknown }[]>();
   for (const o of overrides) {
     const [root, name, ...rest] = o.key.split(".");
     const agent = root === "agents" && rest.length > 0;
+    // A factory agent's file isn't in the repo: the maintainer changes ~/.factory/agents/ itself.
+    if (agent && isFactoryAgent(name)) { factoryNotes.push(`${o.key}: ${name} is a factory agent; ~/.factory/agents/${name}.md holds it, not .factory/`); continue; }
     const file = agent ? `agents/${name}.md` : "factory.yaml";
     byFile.set(file, [...(byFile.get(file) ?? []), { path: agent ? rest : o.key.split("."), value: o.value }]);
   }
-  const patch: string[] = [], notes: string[] = [];
+  const patch: string[] = [], notes: string[] = [...factoryNotes];
   for (const [file, edits] of byFile) {
     const p = join(repo, ".factory", file);
     if (!existsSync(p)) { notes.push(`.factory/${file} doesn't exist: ${edits.map((e) => e.path.join(".")).join(", ")} can't be exported`); continue; }

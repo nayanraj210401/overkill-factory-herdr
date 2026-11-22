@@ -8,7 +8,8 @@
 import { createHash } from "node:crypto";
 import { pinModel } from "./models.ts";
 import type { Database } from "bun:sqlite";
-import { loadAgent, readFactory, type Run } from "./runner.ts";
+import { readFactory, type Run } from "./runner.ts";
+import { loadAgent } from "./agents.ts";
 import { isAway } from "./away.ts";
 import { judge, VERDICTS, type Row } from "./comments.ts";
 
@@ -29,7 +30,7 @@ export function sections(prompt: string) {
 
 export function babysitter(repo: string): Babysitter {
   const a = loadAgent(repo, "babysitter");
-  if (!a) throw new Error("no babysitter agent: agents/babysitter.md is missing from the factory and the shipped defaults");
+  if (!a) throw new Error("no babysitter agent: neither ~/.factory/agents/babysitter.md nor the shipped agents/babysitter.md is there");
   const { intro, parts } = sections(a.prompt as string);
   const part = (start: string) => parts.find((p) => p.head.startsWith(start))?.text ?? "";
   const judging = part("judg");

@@ -1,7 +1,7 @@
 // The babysitter agent (babysitter.md): the judge's words, model and context come from it,
 // the answer format and its parsing stay the daemon's, and the agreement benchmark
 // measures the same judge. claude is stubbed.
-import { test, expect } from "bun:test";
+import { afterEach, test, expect } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,9 @@ import { storeComments } from "./comments.ts";
 import { openRound, writeBrief } from "./round.ts";
 import { validateFile } from "./validate.ts";
 
+// Each test gets its own FACTORY_HOME; put the preload's back so other files never see one with agents in it.
+const HOME0 = process.env.FACTORY_HOME;
+afterEach(() => { process.env.FACTORY_HOME = HOME0; });
 const NOW = "2026-11-22T12:00:00Z";
 const OWN = `---
 role: babysit
@@ -34,11 +37,17 @@ ZQ-JUDGE weigh it carefully.
 ZQ-ROUND fix the smallest thing.
 `;
 
+// The babysitter is a factory agent: ~/.factory/agents/babysitter.md (here a FACTORY_HOME
+// per test), else the shipped one.
+const ownFile = () => join(process.env.FACTORY_HOME!, "agents/babysitter.md");
+
 function setup(yaml = "", own: string | null = null) {
+  process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "home-"));
+  mkdirSync(join(process.env.FACTORY_HOME, "agents"));
+  if (own) writeFileSync(ownFile(), own);
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
-  mkdirSync(join(repo, ".factory/agents"), { recursive: true });
+  mkdirSync(join(repo, ".factory"), { recursive: true });
   writeFileSync(join(repo, ".factory/factory.yaml"), `name: t\n${yaml}`);
-  if (own) writeFileSync(join(repo, ".factory/agents/babysitter.md"), own);
   const dir = mkdtempSync(join(tmpdir(), "factory-"));
   const db = open(join(dir, "factory.db"));
   setRepo(db, { slug: "acme/api", path: repo, lead: true });
@@ -59,7 +68,7 @@ function setup(yaml = "", own: string | null = null) {
   return { db, dir, repo, calls, say, run, add };
 }
 
-test("the judge takes its words, model and context from babysitter.md; the format stays the daemon's", () => {
+test("the judge takes its words, model and context from ~/.factory/agents/babysitter.md; the format stays the daemon's", () => {
   const s = setup("", OWN);
   const row = s.add("Rename this variable.");
   prejudge(s.db, { repo: s.repo, ticket: 7, rows: [row], run: s.run, now: NOW });
@@ -75,6 +84,10 @@ test("the judge takes its words, model and context from babysitter.md; the forma
   expect(prompt).not.toContain("ZQ-HUNK"); // context: [comment], no lines
   expect(prompt).not.toContain("ZQ-TICKET");
   expect(s.db.query("SELECT suggested FROM comments WHERE n = ?").get(row.n)).toEqual({ suggested: "fix" });
+  // A repo's own copy is never read: the babysitter is one for every repo.
+  mkdirSync(join(s.repo, ".factory/agents"));
+  writeFileSync(join(s.repo, ".factory/agents/babysitter.md"), OWN.replace("ZQ-JUDGE", "ZQ-REPO-COPY"));
+  expect(babysitter(s.repo).judging).toContain("ZQ-JUDGE");
   // review.judge_model in factory.yaml still wins over the agent's model.
   writeFileSync(join(s.repo, ".factory/factory.yaml"), "name: t\nreview: { judge_model: sonnet }\n");
   expect(judgeModel(s.repo)).toBe("claude-sonnet-5-5");
@@ -119,14 +132,14 @@ test("the agreement benchmark measures the judge in use: a changed babysitter.md
   // The benchmark sent the same prompt pre-judging does.
   expect(s.calls[0][4]).toContain("ZQ-JUDGE weigh it carefully.");
   expect(pushbackGate(s.db, s.repo).ok).toBe(true);
-  writeFileSync(join(s.repo, ".factory/agents/babysitter.md"), OWN.replace("weigh it carefully", "be lenient"));
+  writeFileSync(ownFile(), OWN.replace("weigh it carefully", "be lenient"));
   const gate = pushbackGate(s.db, s.repo);
   expect(gate.ok).toBe(false);
   expect(gate.why).toContain("with babysitter.md as it is now");
   runAgreement(s.db, { repo: s.repo, run: s.run, now: () => NOW });
   expect(pushbackGate(s.db, s.repo).ok).toBe(true);
   // A change outside the judge's part (its territory, its fix rounds) is the same judge.
-  writeFileSync(join(s.repo, ".factory/agents/babysitter.md"), OWN.replace("weigh it carefully", "be lenient").replace("ZQ-ROUND fix", "ZQ-ROUND mend"));
+  writeFileSync(ownFile(), OWN.replace("weigh it carefully", "be lenient").replace("ZQ-ROUND fix", "ZQ-ROUND mend"));
   expect(pushbackGate(s.db, s.repo).ok).toBe(true);
 });
 

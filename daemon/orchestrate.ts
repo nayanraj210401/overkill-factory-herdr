@@ -8,7 +8,8 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_MODEL, pinModel } from "./models.ts";
-import { agentSettings, loadAgent, type Run } from "./runner.ts";
+import { agentSettings, type Run } from "./runner.ts";
+import { loadAgent } from "./agents.ts";
 
 type Stage = { agent?: string; check?: string; output?: string; gate?: string };
 type Blueprint = { name: string; orchestrator?: string; stages: Record<string, Stage> };

@@ -14,7 +14,8 @@ import { dirname, join } from "node:path";
 import { benchmarkMarkdown, validateBenchmarks } from "../lib/benchmarks.js";
 import { worktreePath, sessionState } from "./herdr.ts";
 import { STOPS, guardSettings } from "./guard.ts";
-import { argvFor, loadAgent, loadBlueprint, plannedPath, readFactory, type Run } from "./runner.ts";
+import { argvFor, loadBlueprint, plannedPath, readFactory, type Run } from "./runner.ts";
+import { loadAgent } from "./agents.ts";
 import { jsonl, parseTranscript, transcriptDir, usd } from "./usage.ts";
 import { parseSchedule, validateFile } from "./validate.ts";
 

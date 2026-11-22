@@ -13,7 +13,8 @@ import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
 import { request } from "./maintainer.ts";
 import { interactionsBefore, planKnown, planMeters } from "./metrics.ts";
-import { loadAgent, readFactory, type Run } from "./runner.ts";
+import { readFactory, type Run } from "./runner.ts";
+import { loadAgent } from "./agents.ts";
 import { accountDayCap, dayCap, tokensToday } from "./budget.ts";
 import { pinModel } from "./models.ts";
 import { parseTokens } from "../lib/model.js";
@@ -319,7 +320,7 @@ export function runLearner(db: Database, o: { dir: string; repo: string; slug: s
   const held = learnerHold(db, o.repo, now);
   if (held) return { ran: false, why: held, filed: [], skipped: [] };
   const agent = loadAgent(o.repo, "learner");
-  if (!agent) throw new Error("no learner agent: agents/learner.md is missing from the factory and the shipped defaults");
+  if (!agent) throw new Error("no learner agent: neither ~/.factory/agents/learner.md nor the shipped agents/learner.md is there");
   const digest = learnerDigest(db, o.repo);
   const prompt = learnerPrompt(agent.prompt as string, digest);
   const hold = learnerHold(db, o.repo, now, Math.ceil(prompt.length / 4));

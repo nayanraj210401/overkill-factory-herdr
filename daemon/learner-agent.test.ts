@@ -1,6 +1,6 @@
 // The learner agent (learner.ts, learner.md): its digest, its schedule and holds, its
 // budget, and its proposals becoming maintainer requests. claude, gh and hc are stubbed.
-import { test, expect } from "bun:test";
+import { afterEach, test, expect } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,9 @@ import { tokensToday } from "./budget.ts";
 import { learnerDigest, learnerDue, learnerHold, learningCap, learningSpent, parseProposals, runLearner } from "./learner.ts";
 import { validateFile } from "./validate.ts";
 
+// Each test gets its own FACTORY_HOME; put the preload's back so other files never see one with agents in it.
+const HOME0 = process.env.FACTORY_HOME;
+afterEach(() => { process.env.FACTORY_HOME = HOME0; });
 const NOW = "2026-11-22T12:00:00.000Z";
 const HOUR = 3_600_000;
 const at = (ms: number) => new Date(Date.parse(NOW) + ms).toISOString();
@@ -91,7 +94,7 @@ test("a run sends learner.md's prompt and model with the digest; each proposal b
   const call = s.calls.find((c) => c[0] === "claude")!;
   expect(call.slice(0, 6)).toEqual(["claude", "-p", "--model", "claude-sonnet-5-5", "--output-format", "json"]);
   expect(call[6]).toContain("You are the learner");
-  expect(call[6]).toContain("Write any file");
+  expect(call[6]).toContain("Write a file");
   expect(call[6]).toContain("PROPOSAL: <the change, in one sentence>");
   expect(call[6]).toContain('"target":"cost_per_pr"');
   // One request filed; the open one isn't asked again; a proposal without WHY is dropped.
@@ -112,16 +115,16 @@ test("a run sends learner.md's prompt and model with the digest; each proposal b
     .toEqual({ status: "done", tokens_in: 1200, tokens_out: 50, usd: 0.01, proposals: 2, filed: String(r.filed[0].id) });
 });
 
-test("a factory's own learner.md replaces the shipped one", () => {
+test("~/.factory/agents/learner.md replaces the shipped one", () => {
   const s = setup("learn: { warmup_tickets: 0 }\n");
-  mkdirSync(join(s.repo, ".factory/agents"));
-  writeFileSync(join(s.repo, ".factory/agents/learner.md"), "---\nrole: learn\nmodel: haiku\n---\nZQ-OWN-LEARNER words.\n");
+  mkdirSync(join(process.env.FACTORY_HOME!, "agents"));
+  writeFileSync(join(process.env.FACTORY_HOME!, "agents/learner.md"), "---\nrole: learn\nmodel: haiku\n---\nZQ-OWN-LEARNER words.\n");
   s.go();
   const call = s.calls.find((c) => c[0] === "claude")!;
   expect(call[3]).toBe("claude-haiku-5-5");
   expect(call[6]).toContain("ZQ-OWN-LEARNER words.");
   expect(call[6]).not.toContain("You are the learner");
-  expect(validateFile("agents/learner.md", readFileSync(join(s.repo, ".factory/agents/learner.md"), "utf8"))).toEqual([]);
+  expect(validateFile("agents/learner.md", readFileSync(join(process.env.FACTORY_HOME!, "agents/learner.md"), "utf8"))).toEqual([]);
 });
 
 test("an answer outside the format is unreadable: no request, and the run is recorded as such", () => {
