@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { getMeta } from "./db.ts";
 import { compact, parseTokens } from "../lib/model.js";
 import { readFactory } from "./runner.ts";
-import { planMeters } from "./metrics.ts";
+import { planKnown, planMeters } from "./metrics.ts";
 
 type Tokens = { input: number; output: number };
 const HOUR = 3_600_000;
@@ -49,8 +49,8 @@ export function startHold(db: Database, repo: string, now: Date): string | null 
     if (used.output >= cap.output) return `daily budget reached (${compact(used.output)}/${compact(cap.output)} out)`;
   }
   const at = pauseAt(repo);
-  // No plan limits set means no window data: the guard is off.
-  if (at != null && Number(getMeta(db, "plan_5h") ?? 0) > 0) {
+  // No reading and no limits set means no window data: the guard is off.
+  if (at != null && planKnown(db)) {
     const w = planMeters(db, now).window_5h;
     if (w >= at) {
       const first = (db.query("SELECT MIN(at) AS at FROM usage WHERE at >= ?").get(new Date(now.getTime() - 5 * HOUR).toISOString()) as { at: string | null }).at;

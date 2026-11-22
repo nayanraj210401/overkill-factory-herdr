@@ -10,6 +10,8 @@ process.env.HERDR_APP_HOME = mkdtempSync(join(tmpdir(), "no-herdr-"));
 process.env.FACTORY_WORKTREES = mkdtempSync(join(tmpdir(), "worktrees-"));
 process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "claude-"));
 process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), "codex-"));
+// Not your ~/.factory: the account-wide plan.json and every factory live in a temp folder.
+process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "factory-home-"));
 
 // Tests of the PR mechanics (ready rules, the watcher, review rounds) start at a pr stage
 // with no agent, as a blueprint may have; the pr-writer agent has its own test.
