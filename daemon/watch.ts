@@ -2,11 +2,11 @@
 // read on GitHub: merged or closed there, the ticket follows; new review comments
 // from other people go into REVIEW.md and send the ticket back to its fix stage,
 // whose agent fixes each one or replies with its reasoning. The factory acts as your
-// gh account, so your own comments (and the agent's replies) never trigger it; send
-// your own notes with `x`.
+// gh account, so what it posts carries a hidden marker (comments.ts FACTORY_MARK) and only
+// that is skipped: your own review comments on your own PRs count like anyone's.
 import type { Database } from "bun:sqlite";
 import { finishPr, readFactory, reviewBack, type Run } from "./runner.ts";
-import { commentsNote, pushbackLimit, storeComments, type GhComment, type Row } from "./comments.ts";
+import { commentsNote, fromFactory, pushbackLimit, storeComments, type GhComment, type Row } from "./comments.ts";
 import { reviewRoundsLeft } from "./away.ts";
 import { closeRound, openRound, writeBrief } from "./round.ts";
 import { prejudge } from "./prejudge.ts";
@@ -61,7 +61,7 @@ export function watchPrs(db: Database, o: { dir: string; repo: string; me: strin
         const stored: { pr: number; rows: Row[] }[] = [];
         let count = 0;
         for (const { r, pr } of open) {
-          const fresh = pr!.comments.filter((c) => c.body.trim() && c.author.toLowerCase() !== (o.me ?? "").toLowerCase());
+          const fresh = pr!.comments.filter((c) => c.body.trim() && !fromFactory(c.body));
           setWork(db, id, { pr_checked_at: o.now }, r.repo);
           const rows = storeComments(db, { ticket: id, pr: r.pr_number!, comments: fresh, limit, repo: r.repo, round: () => openRound(db, id, o.now) });
           if (rows.length) stored.push({ pr: r.pr_number!, rows });

@@ -46,25 +46,28 @@ function setup() {
   return { db, dir, repo, gh, watch, ticket, set: (p: any, i: any[] = []) => { pr = p; inline = i; }, down: (v: boolean) => { fail = v; } };
 }
 
-test("new comments from reviewers go to REVIEW.md and send the PR back; yours and ones already seen don't", () => {
+test("new review comments go to REVIEW.md and send the PR back, yours included; the factory's own posts and ones already seen don't", () => {
   // "Old note" was stored on an earlier round: it has a row already.
   const { db, dir, gh, watch, ticket, set } = setup();
   expect(ticket()).toMatchObject({ state: "ready", pr_number: 42, pr_checked_at: "2026-11-21T10:10:00Z" });
   set({ state: "OPEN", comments: [
     { id: 1, author: { login: "sam" }, body: "Old note", createdAt: "2026-11-21T10:00:00Z" },
-    { id: 2, author: { login: "pat" }, body: "I agree, done.", createdAt: "2026-11-21T10:20:00Z" },
+    { id: 2, author: { login: "pat" }, body: "I agree, done.\n\n<!-- factory -->", createdAt: "2026-11-21T10:20:00Z" },
     { id: 3, author: { login: "sam" }, body: "Why 5 tries and not 10?", createdAt: "2026-11-21T10:21:00Z" },
   ], reviews: [{ id: 4, author: { login: "sam" }, body: "", state: "COMMENTED", submittedAt: "2026-11-21T10:22:00Z" }] },
-  [{ id: 50, user: { login: "sam" }, body: "Key on user id,\nnot email.", path: "src/limit.ts", line: 12, created_at: "2026-11-21T10:23:00Z" }]);
+  [{ id: 50, user: { login: "sam" }, body: "Key on user id,\nnot email.", path: "src/limit.ts", line: 12, created_at: "2026-11-21T10:23:00Z" },
+   // you, as the factory's own gh account, reviewing your own PR: counts like anyone's
+   { id: 51, user: { login: "pat" }, body: "Add a comment saying what this does", path: "src/limit.ts", line: 3, created_at: "2026-11-21T10:24:00Z" }]);
   db.query("INSERT INTO comments (ticket, n, pr, gh_id, thread, author, body, at, verdict) VALUES (7, 1, 42, 'c1', 'c1', 'sam', 'Old note', '2026-11-21T10:00:00Z', 'fix')").run();
-  expect(watch("2026-11-21T10:30:00Z")).toEqual([{ id: 7, event: "2 comments" }]);
+  expect(watch("2026-11-21T10:30:00Z")).toEqual([{ id: 7, event: "3 comments" }]);
   expect(gh.at(-1)).toEqual(["gh", "api", "repos/acme/api/pulls/42/comments", "--paginate"]);
   expect(ticket()).toMatchObject({ state: "running", stage: "implement", pr_number: 42, pr_checked_at: "2026-11-21T10:30:00Z" });
   const review = readFileSync(join(dir, "tickets/7/REVIEW.md"), "utf8");
-  expect(review).toContain("## 2 review comments on PR #42 · 2026-11-21 10:30");
+  expect(review).toContain("## 3 review comments on PR #42 · 2026-11-21 10:30");
   expect(review).toContain("- **C2 · @sam**: Why 5 tries and not 10?");
   expect(review).toContain("- **C3 · @sam** (src/limit.ts:12): Key on user id,\n  not email.");
   expect(review).not.toContain("Old note");
+  expect(review).toContain("- **C4 · @pat** (src/limit.ts:3): Add a comment saying what this does");
   expect(review).not.toContain("I agree");
 });
 
