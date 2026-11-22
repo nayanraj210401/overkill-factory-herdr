@@ -3,13 +3,15 @@
 // budget.handoff_at_context (60%) it flags the session: handoff-hook.ts then refuses
 // the next edit until HANDOFF.md is written. A written HANDOFF.md ends the session and
 // the next one starts in the same stage, worktree and space. At 80% the session is
-// stopped without waiting, and the next one starts from the last commit.
+// stopped without waiting, and the next one starts from the last commit. The PreCompact
+// hook is the backstop: a session Claude Code starts compacting (it filled up between two
+// ticks) is stopped the same way, and its snapshot (PRECOMPACT.md) joins the brief.
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { transcriptDir, parseTranscript, type Use } from "./usage.ts";
-import { flagFile, withHandoffHook } from "./handoff-hook.ts";
+import { flagFile, snapshotFile, withHandoffHook } from "./handoff-hook.ts";
 import { openAgent, withFactory } from "./herdr.ts";
 import { agentSettings, argvFor, brief, loadAgent, loadBlueprint, readFactory, type Run } from "./runner.ts";
 import { loadPrompt, render } from "./prompts.ts";
@@ -87,6 +89,11 @@ export function watchContext(db: Database, o: { dir: string; repo: string; run: 
     try {
       const at = handoffAt({ handoff_at_context: settingOf(s, "budget.handoff_at_context", budget?.handoff_at_context) }); // the ticket's own, fixed at its start
       const fill = sessionFill(s);
+      // The backstop: Claude Code began compacting it, whatever the transcript says now.
+      if (existsSync(snapshotFile(o.dir, s.ticket))) {
+        nextSession(db, { ...o, s, fill: fill ?? CEILING, ceiling: true, compacted: true, missing: [], folder: join(o.dir, "tickets", String(s.ticket)) });
+        continue;
+      }
       if (fill == null) continue;
       const flag = readFlag(o.dir, s.ticket);
       const flagged = flag?.session === s.id;
@@ -125,7 +132,7 @@ const out = (run: Run, cwd: string, ...argv: string[]) => run(["git", "-C", cwd,
 const section = (text: string, re: RegExp) => text.split(/^(?=#{1,6}[ \t])/m).find((p) => re.test(p.replace(/^#+[ \t]+/, "")));
 
 // The next session's brief: the stage's usual one (stable parts first), then what this handoff adds (prompts/handoff.md).
-function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s: Row; folder: string; ceiling: boolean; fill: number; missing: string[]; n: number }) {
+function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s: Row; folder: string; ceiling: boolean; compacted?: boolean; fill: number; missing: string[]; n: number }) {
   const t = db.query("SELECT id, title FROM tickets WHERE id = ?").get(o.s.ticket) as { id: number; title: string };
   const agent = o.s.agent ? loadAgent(o.repo, o.s.agent) : null;
   const repos = ticketRepos(db, o.s.ticket);
@@ -156,7 +163,8 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
     folder: o.folder,
     session: String(o.n),
     stage_brief: stageBrief,
-    previous: o.ceiling ? `ran out of room (${pct(o.fill)} of its context) before it could hand off, so there is no HANDOFF.md: start from its last commit, ${lastCommit || "none yet"}, and the diff below` : "handed off at a step boundary and its work in progress is committed",
+    previous: o.compacted ? `ran out of room (Claude Code began compacting its context) before it could hand off, so there is no HANDOFF.md: start from its last commit, ${lastCommit || "none yet"}, the diff below and its PreCompact snapshot`
+      : o.ceiling ? `ran out of room (${pct(o.fill)} of its context) before it could hand off, so there is no HANDOFF.md: start from its last commit, ${lastCommit || "none yet"}, and the diff below` : "handed off at a step boundary and its work in progress is committed",
     rerun: cmds.length ? `First, re-run the current check and read its result before you change anything: ${cmds.map((c) => `\`${c}\``).join(" and ")}.` : "First, re-run the current check before you change anything.",
     handoff: !o.ceiling && handoff ? `${handoff}${o.missing.length ? `\n\n(The last session left these sections out: ${o.missing.join(", ")}.)` : ""}` : "",
     slice: slice.trim(),
@@ -164,11 +172,12 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
     acceptance_missing: intent ? "" : `The acceptance checks are in ${o.folder}/INTENT.md.`,
     diff: stats.join("\n\n"),
     last_check: checks.join("\n"),
+    snapshot: o.ceiling ? read("PRECOMPACT.md").replace(/^# PreCompact snapshot\s*/, "").trim() : "",
   });
 }
 
 // Commits the work in progress, ends the session and starts the next in the same stage.
-function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now: string; s: Row; fill: number; ceiling: boolean; missing: string[]; folder: string; log?: (s: string) => void }) {
+function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now: string; s: Row; fill: number; ceiling: boolean; compacted?: boolean; missing: string[]; folder: string; log?: (s: string) => void }) {
   const { s, run } = o;
   const n = (db.query("SELECT COUNT(*) AS n FROM sessions WHERE ticket = ?").get(s.ticket) as { n: number }).n + 1;
   if (!o.ceiling)
@@ -178,6 +187,9 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
       out(run, r.worktree, "commit", "-q", "--no-verify", "-m", `factory: #${s.ticket} work in progress at the handoff to session ${n}`);
     }
   const text = handoffBrief(db, { ...o, n });
+  // The snapshot is read; kept beside the session's handoffs (the next session's hook would remove it).
+  const snap = snapshotFile(o.dir, s.ticket);
+  if (existsSync(snap)) renameSync(snap, join(o.folder, `PRECOMPACT.session-${n - 1}.md`));
   const agent = s.agent ? loadAgent(o.repo, s.agent) : null;
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
   const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? []);
@@ -206,6 +218,6 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
   db.query("UPDATE stages SET detail = ? WHERE ticket = ? AND ended_at IS NULL").run(detail, s.ticket);
   db.query("UPDATE tickets SET detail = ?, updated_at = ? WHERE id = ?").run(detail, o.now, s.ticket);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)").run(s.ticket,
-    `started session ${n}`, o.ceiling ? `the last one reached ${pct(o.fill)} of its context; its last commit is the brief` : `handoff at ${pct(o.fill)} of context${o.missing.length ? `; missing ${o.missing.join(", ")}` : ""}`, o.now);
+    `started session ${n}`, o.compacted ? "Claude Code began compacting the last one; its last commit and the PreCompact snapshot are the brief" : o.ceiling ? `the last one reached ${pct(o.fill)} of its context; its last commit is the brief` : `handoff at ${pct(o.fill)} of context${o.missing.length ? `; missing ${o.missing.join(", ")}` : ""}`, o.now);
   o.log?.(`factory: #${s.ticket}: session ${n} started in ${s.stage}`);
 }
