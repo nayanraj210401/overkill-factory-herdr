@@ -41,6 +41,8 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
       merged_at: x.merged_at ?? null, merge: mergeOrder(repos as any).indexOf(x) + 1 })) } : {}),
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,
+    // Stopped by the plan limit (planlimit.ts): when its fresh session starts.
+    ...(r.resume_at ? { resume_at: r.resume_at } : {}),
     terminal: r.terminal ?? null,
     session: r.sessions || null, // "session 3 of #412": the live agent's session in its stage; null with no live agent
     // A request for the maintainer: who asked (you in Overwatch, the learner, another agent), for Config's Pending changes.

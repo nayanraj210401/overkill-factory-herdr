@@ -22,8 +22,10 @@ function setup() {
   const p = { dir, db: join(dir, "factory.db"), status: join(dir, "status.json") };
   // The agent's terminal as `hc get` reports it: alive, Claude in front, Herdr's agent status.
   // No agent status (null): Claude Code hasn't reported one yet.
-  const tick = (agent: string | null) => {
+  const calls: string[][] = [];
+  const tick = (agent: string | null, screen = "") => {
     const hc: Run = (argv) => argv[0] === "hc" && argv[1] === "get" ? { code: 0, out: JSON.stringify({ exit_code: null, pid: 1, foreground: { pid: 2 }, ...(agent ? { status: { app: "claude-code", state: agent } } : {}) }) }
+      : argv[0] === "hc" ? (calls.push(argv), { code: 0, out: argv[1] === "read" ? screen : "" })
       : argv[0] === "gh" ? { code: 0, out: '{"state":"OPEN","body":"","assignees":[]}' } : sh(argv);
     const logs: string[] = [];
     watchSessions(db, p, hc, (s) => logs.push(s));
@@ -32,7 +34,7 @@ function setup() {
   const ticket = () => db.query("SELECT state, stage, needs_kind, needs_text FROM ticket_lead WHERE id = 7").get() as any;
   // The session started this long ago.
   const startedAgo = (ms: number) => db.query("UPDATE sessions SET started_at = ? WHERE ticket = 7").run(new Date(Date.now() - ms).toISOString());
-  return { db, tick, ticket, startedAgo };
+  return { db, tick, ticket, startedAgo, calls };
 }
 
 test("an agent blocked on you in its terminal puts the ticket in Needs you until it moves on", () => {
@@ -72,4 +74,19 @@ test("a silent terminal never overwrites another need", () => {
   s.startedAgo(120_000);
   s.tick(null);
   expect(s.ticket()).toMatchObject({ needs_kind: "parked", needs_text: "over budget" });
+});
+
+test("the plan limit's menu isn't a question for you: the daemon stops the session and it waits for the reset", () => {
+  const s = setup();
+  const logs = s.tick("blocked", "● Wiring it\n\nYou've hit your session limit · resets 3pm\n❯ 1. Stop and wait for limit to reset\n  2. Upgrade your plan");
+  expect(logs.some((l) => l.includes("#7 hit the 5-hour plan limit"))).toBe(true);
+  expect(logs.some((l) => l.includes("waiting on you"))).toBe(false);
+  expect(s.calls.some((c) => c[1] === "kill" && c[2] === "t1")).toBe(true);
+  const t = s.db.query("SELECT state, needs_kind, resume_at, detail FROM tickets WHERE id = 7").get() as any;
+  expect(t).toMatchObject({ state: "running", needs_kind: null });
+  expect(t.resume_at).toBeTruthy();
+  expect(t.detail).toMatch(/^waiting for plan reset · resumes /);
+  expect(s.db.query("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL").get()).toEqual({ n: 0 });
+  s.tick("blocked"); // no live session: nothing more until the reset
+  expect(s.ticket()).toMatchObject({ state: "running", needs_kind: null });
 });
