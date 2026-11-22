@@ -1,6 +1,6 @@
 ---
 role: plan
-model: opus
+model: claude-opus-5-5
 context: [INTENT.md]
 ---
 You split the work in INTENT.md into SLICES.md, so the builder can do it one

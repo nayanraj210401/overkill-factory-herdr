@@ -96,7 +96,7 @@ const launchctl: Run = (args) => {
 
 export function service(cmd: string, o: {
   factoryHome: string; label?: string; agentsDir?: string; run?: Run; uid?: number; log?: (s: string) => void; json?: boolean; arg?: string;
-  sign?: (app: string) => void;
+  sign?: (app: string) => void; login?: string;
 }) {
   const label = o.label ?? LABEL;
   const run = o.run ?? launchctl;
@@ -118,7 +118,9 @@ export function service(cmd: string, o: {
     if (!atLogin) run(["kickstart", `${domain}/${label}`]); // not started by loading: start it now
   };
   if (cmd === "install") {
-    install(atLoginOf(file) ?? true);
+    // --login on|off (the window's "Start at login" box) decides; without it a reinstall keeps the choice.
+    if (o.login !== undefined && o.login !== "on" && o.login !== "off") throw new Error("usage: factory service install [--login on|off]");
+    install(o.login ? o.login === "on" : atLoginOf(file) ?? true);
     log(`installed ${label} as "${APP_NAME}": ${atLoginOf(file) ? "starts at login" : "runs now, not at login"}, logs in ${join(o.factoryHome, "logs")}`);
   } else if (cmd === "login") {
     if (o.arg !== "on" && o.arg !== "off") throw new Error("usage: factory service login on|off");
@@ -144,7 +146,7 @@ export function service(cmd: string, o: {
     if (o.json) log(JSON.stringify({ installed: state !== "absent", state, pid, logs, at_login }));
     else log(state === "absent" ? `${label}: not installed` : `${label}: ${state}${pid ? ` (pid ${pid})` : ""}${at_login ? ", starts at login" : ", not at login"}`);
     return state;
-  } else throw new Error("usage: factory service install|uninstall|start|restart|status [--json] | login on|off");
+  } else throw new Error("usage: factory service install [--login on|off]|uninstall|start|restart|status [--json] | login on|off");
 }
 
 // An ad-hoc signature, so macOS takes the bundle as one program; a failure changes nothing.

@@ -16,6 +16,7 @@ import { STOPS, guardSettings, hardStopLog, takeHardStop } from "./guard.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
 import { budgetUse, roundUse, startHold } from "./budget.ts";
 import { profileText } from "./account.ts";
+import { DEFAULT_MODEL, pinModel } from "./models.ts";
 import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
 import { closeRound, latestBrief } from "./round.ts";
 import { loadPrompt, render } from "./prompts.ts";
@@ -96,7 +97,7 @@ export function agentSettings(t: { settings?: string | null }, name: string, age
 export function argvFor(agent: { harness?: string; model?: string } | null, defaults: { harness: string; model?: string }, text: string, settings?: string | null) {
   const harness = agent?.harness ?? defaults.harness;
   const model = agent?.model ?? defaults.model;
-  if (harness === "claude") return ["claude", ...(model ? ["--model", model] : []), ...(settings ? ["--settings", settings] : []), text];
+  if (harness === "claude") return ["claude", ...(model ? ["--model", pinModel(model)!] : []), ...(settings ? ["--settings", settings] : []), text];
   if (harness === "codex") return ["codex", ...(model ? ["--model", model] : []), text];
   return [harness, text]; // any other program gets the brief as its last argument
 }
@@ -141,7 +142,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   enterStage(db, o.id, title(o.stage), s.agent ? `${s.agent} agent` : s.check ? `check: ${s.check}` : null, plannedPath(o.blueprint, o.stage).map(title), o.now);
   if (!s.agent) return null; // check and gate stages are the daemon's own (D4b)
   const agent = loadAgent(o.repo, s.agent);
-  const defaults = { harness: "claude", model: "sonnet" };
+  const defaults = { harness: "claude", model: DEFAULT_MODEL };
   const repos = ticketRepos(db, o.id);
   // Hard stops factory.yaml lists (all four when it lists none) are enforced by a hook on the worker's tool calls;
   // the handoff hook joins it in the same settings file (Claude Code takes one --settings).

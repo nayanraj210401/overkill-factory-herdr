@@ -1,6 +1,6 @@
 ---
 role: review
-model: opus
+model: claude-opus-5-5
 context: [INTENT.md, EVIDENCE.md, lessons/auth.md]
 ---
 Grade the diff against INTENT.md, including its Decisions section: block on a diff

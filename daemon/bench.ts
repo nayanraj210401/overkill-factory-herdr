@@ -6,6 +6,7 @@
 // tests come back and run. The result is a report; nothing here changes the factory.
 import { benchAllow } from "./allow.ts";
 export { benchAllow };
+import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync, rmSync } from "node:fs";
@@ -119,7 +120,7 @@ export function resolveVariant(repo: string, suite: Suite, set: Record<string, u
   applySet(doc, set);
   const b = doc.blueprints[bpName] as typeof bp;
   const stages = suite.target.stage ? [suite.target.stage] : [b.start, ...plannedPath(b, b.start)];
-  const defaults = { harness: doc.factory.defaults?.harness ?? "claude", model: doc.factory.defaults?.model ?? "sonnet" };
+  const defaults = { harness: doc.factory.defaults?.harness ?? "claude", model: doc.factory.defaults?.model ?? DEFAULT_MODEL };
   const steps: Step[] = [];
   for (const stage of stages) {
     const s = b.stages[stage];

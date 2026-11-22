@@ -1,6 +1,6 @@
 ---
 role: orchestrator
-model: sonnet
+model: claude-sonnet-5-5
 ---
 You decide what runs after a stage finishes, when its blueprint offers more than
 one `next` stage. The factory today always takes the first `next` listed, so

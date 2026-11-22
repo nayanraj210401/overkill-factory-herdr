@@ -4,6 +4,7 @@
 // the next edit until HANDOFF.md is written. A written HANDOFF.md ends the session and
 // the next one starts in the same stage, worktree and space. At 80% the session is
 // stopped without waiting, and the next one starts from the last commit.
+import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -178,7 +179,7 @@ function nextSession(db: Database, o: { dir: string; repo: string; run: Run; now
     }
   const text = handoffBrief(db, { ...o, n });
   const agent = s.agent ? loadAgent(o.repo, s.agent) : null;
-  const defaults = { harness: "claude", model: "sonnet" };
+  const defaults = { harness: "claude", model: DEFAULT_MODEL };
   const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? []);
   const cmd = withFactory(argv, o.dir);
   run(["hc", "kill", s.terminal]);

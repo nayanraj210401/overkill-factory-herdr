@@ -3,6 +3,7 @@
 // owner on the issue; engineering ones come to you. An answer in Herdr (`u`) or as an
 // `A1:` comment on the issue counts. With every question answered the ticket is
 // groomed, and groomed tickets start on their own, up to max_running at once.
+import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -65,7 +66,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const folder = join(o.dir, "tickets", String(o.id));
   mkdirSync(folder, { recursive: true });
   const agent = loadAgent(o.repo, g.agent);
-  const argv = argvFor(agent, { harness: "claude", model: "sonnet" },
+  const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
     triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead) }));
   // Unattended like every agent: acceptEdits and the allowlist, so `factory pick` never waits (allow.ts).
   const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? []), o.dir);

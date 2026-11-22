@@ -94,7 +94,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
   status                             write status.json and print a summary
   run [--interval seconds] [--all] [--force]  the daemon: keep status.json fresh (--all: every factory); refuses while the service runs it
-  service install|uninstall|start|restart|status [--json]  keep \`factory run --all\` alive with launchd
+  service install [--login on|off]|uninstall|start|restart|status [--json]  keep \`factory run --all\` alive with launchd (--login: start at login, default on)
   service login on|off               whether the daemon starts at login (off: it runs until you log out; factory service start)
 data: $FACTORY_HOME (default ~/.factory)/<name>/`;
 
@@ -148,6 +148,7 @@ function flag(args: string[], name: string) {
 export function main(argv: string[], log = console.log): void | Promise<void> {
   const args = [...argv];
   const name = flag(args, "name") ?? process.env.FACTORY_NAME ?? basename(process.cwd());
+  const loginFlag = flag(args, "login");
   const repo = flag(args, "repo") ?? "unknown";
   const blueprint = flag(args, "blueprint") ?? "feature";
   const interval = Number(flag(args, "interval") ?? 5);
@@ -170,7 +171,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const [cmd, sub, ...rest] = args.filter((a) => a !== "--all" && a !== "--json" && a !== "--start" && a !== "--dry-run");
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
-  if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0] });
+  if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0], login: loginFlag ?? undefined });
   if (cmd === "validate") {
     const results = validateDir(sub ?? ".factory");
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });

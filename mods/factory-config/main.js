@@ -23,6 +23,7 @@ export default class FactoryConfig extends View {
     this.checks = {};
     this.daemon = undefined; // undefined: not asked yet; null: the CLI didn't answer
     this.busy = null;
+    this.loginWanted = true; // the box before install: Install passes it as --login
     this.at = 0; // the selected override
     this.handle = cx.focus_handle();
     if (!checking()) {
@@ -32,7 +33,7 @@ export default class FactoryConfig extends View {
     const wait = (ms) => new Promise((done) => cx.timer.after(ms, done));
     cx.spawn(async (cx) => {
       await this.list();
-      if (this.files.length) await this.select(this.files[0], cx);
+      if (this.files.length) await this.select(this.files[0]);
       cx.notify();
       if (checking()) return;
       for (;;) {
@@ -43,7 +44,7 @@ export default class FactoryConfig extends View {
         else await Promise.race([watchFolder(this.dir), wait(30000)]);
         await wait(300); // one reload for a burst of saves
         await this.list();
-        if (this.selected) await this.select(this.selected, cx);
+        if (this.selected) await this.select(this.selected);
         cx.notify();
       }
     });
@@ -79,7 +80,8 @@ export default class FactoryConfig extends View {
     this.busy = action;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await this.factory(["service", ...action.split(" ")]).catch((e) => ({ code: 1, stderr: String(e) }));
+      const args = action === "install" ? ["install", "--login", this.loginWanted ? "on" : "off"] : action.split(" ");
+      const r = await this.factory(["service", ...args]).catch((e) => ({ code: 1, stderr: String(e) }));
       if (r.code !== 0) notify({ title: `Daemon ${action} failed`, body: (r.stderr || r.stdout).trim(), level: "error" });
       this.busy = null;
       this.refreshDaemon(cx);
@@ -93,11 +95,21 @@ export default class FactoryConfig extends View {
       .child(div().size(8).rounded_full().bg(t[v.tone]))
       .child(div().font_semibold().text_color(t.foreground).child("Daemon"))
       .child(div().flex_1().truncate().text_color(t.muted).child(this.busy ? `${LABEL[this.busy]}…` : v.text))
-      .when(v.atLogin != null, (el) => el.child(h_flex().id("d-login").gap(6).items_center().cursor_pointer().text_size(12).text_color(t.muted)
-        .hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => this.busy || this.act(v.atLogin ? "login off" : "login on", cx))
-        .child(div().size(14).rounded(3).border(1).border_color(v.atLogin ? t.accent : t.border).bg(v.atLogin ? t.accent : t.surface)
-          .flex().items_center().justify_center().text_size(10).text_color(t.background).child(v.atLogin ? "✓" : ""))
-        .child("Start at login")))
+      .when(v.atLogin != null || v.actions.includes("install"), (el) => {
+        // Installed: the box is the service's setting, and a click changes it. Not yet: it's
+        // what Install will do.
+        const on = v.atLogin ?? this.loginWanted;
+        const click = (_e, cx) => {
+          if (this.busy) return;
+          if (v.atLogin == null) { this.loginWanted = !this.loginWanted; cx.notify(); }
+          else this.act(on ? "login off" : "login on", cx);
+        };
+        return el.child(h_flex().id("d-login").gap(6).items_center().cursor_pointer().text_size(12).text_color(t.muted)
+          .hover((s) => s.text_color(t.foreground)).on_click(click)
+          .child(div().size(14).rounded(3).border(1).border_color(on ? t.accent : t.border).bg(on ? t.accent : t.surface)
+            .flex().items_center().justify_center().text_size(10).text_color(t.background).child(on ? "✓" : ""))
+          .child("Start at login"));
+      })
       .children(v.actions.map((a) => div().id(`d-${a}`).px(10).py(3).rounded(6).border(1).cursor_pointer().text_size(12)
         .border_color(a === "install" ? t.accent : t.border).text_color(a === "install" ? t.accent : t.muted)
         .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.busy || this.act(a, cx)).child(LABEL[a])));
@@ -161,7 +173,8 @@ export default class FactoryConfig extends View {
     });
   }
 
-  async select(file, cx) {
+  // Shows a file. The caller repaints, with a cx of its own (see tests/mods.test.mjs).
+  async select(file) {
     const t = theme();
     const text = (await readTextFile(`${this.dir}/${file.path}`)) ?? "";
     // A file's language is fixed when its editor is made: one editor per file, kept, so
@@ -174,7 +187,6 @@ export default class FactoryConfig extends View {
     } else if (editor.value() !== text) editor.set_value(text);
     this.editor = editor;
     this.selected = file;
-    cx.notify();
   }
 
   render() {
@@ -183,7 +195,8 @@ export default class FactoryConfig extends View {
       const on = f.path === this.selected?.path;
       return h_flex().id(`f-${f.path}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
         .bg(on ? t.selected : t.surface).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => this.select(f, cx))
+        // select awaits the file; this click's cx is gone by then, so a spawned task repaints.
+        .on_click((_e, cx) => cx.spawn(async (cx) => { await this.select(f); cx.notify(); }))
         .child(svg(`mods/workspace-chrome/${f.language === "markdown" ? "file-text" : "settings"}.svg`).size(13))
         .child(div().flex_1().truncate().child(f.path))
         .when(Boolean(this.checks[f.path]), (el) => el.child(div().text_size(11)
