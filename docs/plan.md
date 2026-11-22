@@ -176,7 +176,7 @@ Every agent is a `.md` file: a YAML header and a prompt. Agents come in two tier
 
 | Tier | Agents | Where the file lives | How many run |
 | --- | --- | --- | --- |
-| **Repo agents** | triage (grooming), spec (intent), planner, builder, reviewer, checker, and any the maintainer adds | the repo's `.factory/agents/` | one per stage run, per ticket |
+| **Repo agents** | triage (grooming), spec (intent), planner, builder, reviewer, checker, and any the maintainer adds | the `.factory/agents/` of the repo the ticket works in, else the lead repo's, else the shipped default | one per stage run, per ticket |
 | **Factory agents** | Overwatch, babysitter, maintainer, learner | `~/.factory/agents/`, with the shipped defaults as a fallback | one each for the whole factory, across every repo |
 
 Repo agents can differ per repo: a stricter reviewer for the payments repo, a builder that knows the mobile toolchain. Factory agents are global only; a repo never has its own copy.
@@ -657,6 +657,8 @@ Other blueprints sit in `blueprints/<name>.yaml`, such as a short one for lint f
 The same format as Claude Code agents: a YAML header, then the prompt in Markdown. The default agents are ported from flow-stack v1 (reviewer, checker, advocate, builder) and live in the new repo.
 
 Repo agents live here, in `.factory/agents/`. The factory agents (Overwatch, babysitter, maintainer, learner) use the same format but live in `~/.factory/agents/`, one set for every repo; the shipped defaults fill in any that's missing. Every agent's brief carries the map of its neighbours: each agent's name, territory and how to ask it.
+
+A stage's agent loads from the repo the stage works in. Each stage of a ticket runs in one session, opened in the worktree of the ticket's lead repo, so that repo is the one it works in: a ticket the maintainer files for another repo works there, and that repo's `.factory/agents/<name>.md` is read first. Next comes the factory's lead repo's file, then the default shipped with the factory (`fixtures/acme-api/.factory/agents/`, what setup copies into a repo). A cross-repo ticket is led by the factory's lead repo (grooming makes it so), so its stages run the lead's agents; the other repos' worktrees are worked in from that same session, and their own agent files don't apply to it. Blueprints, prompts and `factory.yaml` stay the lead repo's for every ticket, and so does the neighbour map, which every brief shares. `factory validate` checks every repo's `.factory/agents/`.
 
 | Field | What it sets |
 | --- | --- |

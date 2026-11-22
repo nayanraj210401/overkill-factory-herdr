@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_MODEL, pinModel } from "./models.ts";
 import { agentSettings, type Run } from "./runner.ts";
-import { loadAgent } from "./agents.ts";
+import { agentRepos, loadAgent } from "./agents.ts";
 
 type Stage = { agent?: string; check?: string; output?: string; gate?: string };
 type Blueprint = { name: string; orchestrator?: string; stages: Record<string, Stage> };
@@ -49,7 +49,7 @@ export function chooseNext(db: Database, o: { dir: string; repo: string; id: num
   };
   const name = o.b.orchestrator;
   if (!name) return log("daemon", first, "the blueprint names no orchestrator; the first next");
-  const agent = loadAgent(o.repo, name);
+  const agent = loadAgent(agentRepos(db, o.id, o.repo), name);
   const t = db.query("SELECT id, title, settings FROM tickets WHERE id = ?").get(o.id) as { id: number; title: string; settings: string | null };
   const use = agentSettings(t, name, agent, { harness: "claude", model: DEFAULT_MODEL });
   if (use.harness !== "claude") return log(name, first, `${use.harness} can't be asked in one call; the first next`);

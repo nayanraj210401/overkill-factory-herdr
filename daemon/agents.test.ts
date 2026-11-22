@@ -1,10 +1,16 @@
-import { test, expect } from "bun:test";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, test, expect } from "bun:test";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FACTORY_AGENTS, SHIPPED_AGENTS, agentFile, installFactoryAgents, loadAgent } from "./agents.ts";
+import { FACTORY_AGENTS, SHIPPED_AGENTS, SHIPPED_REPO_AGENTS, agentFile, agentRepos, installFactoryAgents, loadAgent } from "./agents.ts";
 import { validateDir, validateFile } from "./validate.ts";
-import { main } from "./cli.ts";
+import { main, paths } from "./cli.ts";
+import { open, setRepo } from "./db.ts";
+import { sh, startTicket, type Run } from "./runner.ts";
+
+// Each test sets its own FACTORY_HOME; put it back, so no other file runs on this one's agents.
+const before = process.env.FACTORY_HOME;
+afterEach(() => { if (before === undefined) delete process.env.FACTORY_HOME; else process.env.FACTORY_HOME = before; });
 
 const FIXTURE = join(import.meta.dir, "../fixtures/acme-api/.factory");
 
@@ -38,7 +44,8 @@ test("a repo agent loads from the repo's .factory/agents, and differs per repo",
   expect(loadAgent(a, "reviewer")?.prompt).toContain("Grade the diff against INTENT.md");
   expect(loadAgent(b, "reviewer")).toMatchObject({ role: "review", territory: "Payments diffs", prompt: "Be strict about payments." });
   expect(loadAgent(a, "ghost")).toBeNull();
-  expect(loadAgent(null, "reviewer")).toBeNull();
+  // No repo has it: the default shipped with the factory (what setup copies into a repo).
+  expect(loadAgent(null, "reviewer")?.prompt).toBe(loadAgent(SHIPPED_REPO_AGENTS.replace(/\/\.factory\/agents$/, ""), "reviewer")?.prompt);
   // ~/.factory/agents holds factory agents only: a reviewer there is not read.
   const h = process.env.FACTORY_HOME!;
   mkdirSync(join(h, "agents"));
@@ -96,5 +103,102 @@ test("factory init writes the factory agents; factory validate checks them and w
     out.length = 0;
     expect(() => main(["validate", "--name", "acme-api"], (s) => out.push(s))).toThrow("files have problems");
     expect(out.join("\n")).toContain("learner.md\n    nope: unknown key");
+  } finally { process.chdir(cwd); }
+});
+
+// A factory with a lead repo (acme/api) and acme/web, each with its own .factory/agents/.
+function twoRepos() {
+  home();
+  const api = repo(), web = mkdtempSync(join(tmpdir(), "agents-web-"));
+  mkdirSync(join(web, ".factory/agents"), { recursive: true });
+  const db = open(join(mkdtempSync(join(tmpdir(), "agents-db-")), "factory.db"));
+  setRepo(db, { slug: "acme/api", path: api, lead: true });
+  setRepo(db, { slug: "acme/web", path: web, lead: false });
+  // #1 works in acme/web alone (as the maintainer files one); #2 in both, led by acme/api (as grooming does).
+  db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (1, 'Web only', 'feature', 'x'), (2, 'Both', 'feature', 'x')").run();
+  db.query("INSERT INTO ticket_repos (ticket, repo, lead) VALUES (1, 'acme/web', 1), (2, 'acme/api', 1), (2, 'acme/web', 0)").run();
+  return { db, api, web };
+}
+
+test("a stage's agent loads from the repo its ticket works in, then the lead repo, then the shipped default", () => {
+  const { db, api, web } = twoRepos();
+  writeFileSync(join(web, ".factory/agents/reviewer.md"), agentText("review", "Review the web way."));
+  writeFileSync(join(api, ".factory/agents/reviewer.md"), agentText("review", "Review the api way."));
+  expect(agentRepos(db, 1, api)).toEqual([web, api]);
+  expect(loadAgent(agentRepos(db, 1, api), "reviewer")?.prompt).toBe("Review the web way.");
+  // A ticket with no repo rows yet works in the lead.
+  db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (3, 'New', 'feature', 'x')").run();
+  expect(loadAgent(agentRepos(db, 3, api), "reviewer")?.prompt).toBe("Review the api way.");
+  // acme/web has no file of its own: the lead's.
+  rmSync(join(web, ".factory/agents/reviewer.md"));
+  expect(loadAgent(agentRepos(db, 1, api), "reviewer")?.prompt).toBe("Review the api way.");
+  expect(agentFile(agentRepos(db, 1, api), "reviewer")?.label).toBe(`${join(api, ".factory/agents/reviewer.md")} (the lead repo's)`);
+  // Neither has one: the shipped default.
+  rmSync(join(api, ".factory/agents/reviewer.md"));
+  expect(agentFile(agentRepos(db, 1, api), "reviewer")).toEqual({ file: join(SHIPPED_REPO_AGENTS, "reviewer.md"), label: ".factory/agents/reviewer.md (shipped)" });
+  expect(loadAgent(agentRepos(db, 1, api), "reviewer")?.prompt).toContain("Grade the diff against INTENT.md");
+  // A bad file in the repo the stage works in fails loudly; it doesn't fall back.
+  writeFileSync(join(web, ".factory/agents/reviewer.md"), agentText("review", "x", "colour: blue\n"));
+  expect(() => loadAgent(agentRepos(db, 1, api), "reviewer")).toThrow(".factory/agents/reviewer.md: colour: unknown key");
+});
+
+test("a cross-repo ticket's stages run its lead repo's agents; another repo's copy doesn't apply", () => {
+  const { db, api, web } = twoRepos();
+  writeFileSync(join(web, ".factory/agents/builder.md"), agentText("build", "Build the web way."));
+  expect(agentRepos(db, 2, api)).toEqual([api, api]);
+  expect(loadAgent(agentRepos(db, 2, api), "builder")?.prompt).toBe(loadAgent(api, "builder")?.prompt);
+  expect(loadAgent(agentRepos(db, 2, api), "builder")?.prompt).not.toBe("Build the web way.");
+});
+
+test("factory agents are the same for every ticket, whatever repo it works in", () => {
+  const { db, api, web } = twoRepos();
+  writeFileSync(join(web, ".factory/agents/maintainer.md"), agentText("maintain", "WEB COPY"));
+  writeFileSync(join(api, ".factory/agents/maintainer.md"), agentText("maintain", "API COPY"));
+  const shipped = loadAgent(null, "maintainer")?.prompt;
+  expect(loadAgent(agentRepos(db, 1, api), "maintainer")?.prompt).toBe(shipped!);
+  mkdirSync(join(process.env.FACTORY_HOME!, "agents"));
+  writeFileSync(join(process.env.FACTORY_HOME!, "agents/maintainer.md"), agentText("maintain", "MINE"));
+  expect(loadAgent(agentRepos(db, 1, api), "maintainer")?.prompt).toBe("MINE");
+  expect(loadAgent(agentRepos(db, 2, api), "maintainer")?.prompt).toBe("MINE");
+});
+
+test("a ticket started in a non-lead repo briefs its first stage with that repo's agent", () => {
+  const git = (dir: string) => {
+    for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"], ["commit", "-q", "--allow-empty", "-m", "init"]]) sh(["git", "-C", dir, ...c]);
+  };
+  const { db, api, web } = twoRepos();
+  writeFileSync(join(api, ".factory/factory.yaml"), readFileSync(join(api, ".factory/factory.yaml"), "utf8").replace("repos: [acme/api]", "repos: [acme/api, acme/web]"));
+  writeFileSync(join(api, ".factory/agents/spec-writer.md"), agentText("spec", "Write the api spec.", "harness: echo\n"));
+  writeFileSync(join(web, ".factory/agents/spec-writer.md"), agentText("spec", "Write the web spec.", "harness: echo\n"));
+  git(api); git(web);
+  const dir = mkdtempSync(join(tmpdir(), "agents-factory-"));
+  const calls: string[][] = [];
+  const run: Run = (argv, cwd) => (argv[0] === "hc" ? (calls.push(argv), { code: 0, out: '{"address":"t1"}' }) : sh(argv, cwd));
+  db.query("UPDATE tickets SET state = 'queued' WHERE id = 1").run();
+  startTicket(db, { dir, repo: api, id: 1, run, now: "2026-11-23T10:00:00Z" });
+  expect(calls[0].at(-1)).toContain("Write the web spec.");
+  expect(calls[0].at(-1)).not.toContain("Write the api spec.");
+});
+
+test("factory validate checks every repo's .factory/agents/", () => {
+  const { api, web } = twoRepos();
+  const out: string[] = [];
+  const cwd = process.cwd();
+  main(["init", "--repo", "acme/api", "--path", api, "--name", "two"], (s) => out.push(s));
+  const db = open(paths("two").db);
+  setRepo(db, { slug: "acme/web", path: web, lead: false });
+  db.close();
+  writeFileSync(join(web, ".factory/agents/reviewer.md"), agentText("review", "x", "nope: 1\n"));
+  try {
+    process.chdir(api);
+    out.length = 0;
+    expect(() => main(["validate", "--name", "two"], (s) => out.push(s))).toThrow("1 of");
+    const text = out.join("\n");
+    expect(text).toContain("✗ acme/web .factory/agents/reviewer.md\n    nope: unknown key");
+    expect(text.match(/agents\/builder\.md/g)).toHaveLength(1); // the lead's own, once
+    writeFileSync(join(web, ".factory/agents/reviewer.md"), agentText("review", "fine", 'territory: "Web diffs"\n'));
+    out.length = 0;
+    main(["validate", "--name", "two"], (s) => out.push(s));
+    expect(out.join("\n")).toContain("✓ acme/web .factory/agents/reviewer.md");
   } finally { process.chdir(cwd); }
 });
