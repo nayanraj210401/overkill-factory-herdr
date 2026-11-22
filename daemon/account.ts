@@ -4,6 +4,7 @@
 //   plan:    { limits: { five_hour: 20M, week: 400M }, pause_at: 85% }
 //   budget:  { per_day: { input: 40M, output: 2M } }      # across every factory, today
 //   away:    { blueprints: [chore], budget: 1M/100k, review_rounds: 2, never: ["src/auth/**"] }
+//   cloud:   { on_sleep: move | off }                     # move running tickets to the cloud at sleep, back at wake
 //   profile: { taste: ["…"], rules: ["…"] }                # in every agent's brief
 //
 // A repo's factory.yaml wins key by key where it sets the same thing (plan.pause_at, away.*);
@@ -17,6 +18,7 @@ export type Account = {
   plan?: { limits?: { five_hour?: string | number; week?: string | number }; pause_at?: string | number };
   budget?: { per_day?: { input?: string | number; output?: string | number } };
   away?: Record<string, unknown>;
+  cloud?: { on_sleep?: "move" | "off" };
   profile?: { taste?: string[]; rules?: string[] };
 };
 

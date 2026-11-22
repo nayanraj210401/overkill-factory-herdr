@@ -3,6 +3,7 @@
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { buildHelper } from "./power.ts";
 
 export const LABEL = "dev.overkill.factory";
 
@@ -96,7 +97,7 @@ const launchctl: Run = (args) => {
 
 export function service(cmd: string, o: {
   factoryHome: string; label?: string; agentsDir?: string; run?: Run; uid?: number; log?: (s: string) => void; json?: boolean; arg?: string;
-  sign?: (app: string) => void; login?: string;
+  sign?: (app: string) => void; login?: string; helper?: (factoryHome: string) => string | null;
 }) {
   const label = o.label ?? LABEL;
   const run = o.run ?? launchctl;
@@ -111,6 +112,9 @@ export function service(cmd: string, o: {
     const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: homedir(), FACTORY_HOME: o.factoryHome };
     const { app, exe } = writeApp(o.factoryHome, label, selfArgs());
     (o.sign ?? adhocSign)(app);
+    // The sleep/wake helper for cloud.on_sleep; a failed build leaves the rest of the install alone.
+    const why = (o.helper ?? ((h) => buildHelper(h)))(o.factoryHome);
+    if (why) log(`sleep helper not built (cloud.on_sleep won't work until it is): ${why}`);
     writeFileSync(file, plist({ label, args: [exe, "run", "--all"], env, logDir, atLogin, bundleId: label }));
     run(["bootout", `${domain}/${label}`]); // a no-op the first time
     const r = run(["bootstrap", domain, file]);

@@ -89,7 +89,7 @@ const git = (run: Run, wt: string, args: string[], what: string) => {
 };
 
 // `factory cloud <id>`
-export function toCloud(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
+export function toCloud(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; reason?: string }) {
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.location === "cloud") throw new Error(`#${o.id} is in the cloud already`);
@@ -127,7 +127,8 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
     .run(o.id, l.terminal, JSON.stringify(argv), o.now, l.inSpace, t.worktree);
   db.query("UPDATE tickets SET location = 'cloud', space = ?, detail = 'in a cloud session', updated_at = ? WHERE id = ?").run(l.space, o.now, o.id);
   db.query("UPDATE stages SET detail = 'in a cloud session' WHERE ticket = ? AND ended_at IS NULL").run(o.id);
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, ?, ?)").run(o.id, `moved to the cloud at ${stage}`, t.branch, o.now);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)")
+    .run(o.id, o.reason ? "daemon" : "you", `moved to the cloud at ${stage}`, o.reason ?? t.branch, o.now);
   return { terminal: l.terminal, stage };
 }
 
@@ -140,7 +141,7 @@ export function parseResult(md: string) {
 }
 
 // `factory local <id>`
-export function toLocal(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
+export function toLocal(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; reason?: string }) {
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.location !== "cloud") throw new Error(`#${o.id} isn't in the cloud`);
@@ -169,8 +170,8 @@ export function toLocal(db: Database, o: { dir: string; repo: string; id: number
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
   for (const s of cloud) o.run(["hc", "kill", s.terminal]);
   db.query("UPDATE tickets SET location = 'local', detail = NULL, updated_at = ? WHERE id = ?").run(o.now, o.id);
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'you', ?, ?, ?)")
-    .run(o.id, "brought back from the cloud", `${r.evidence.length} checks; reached ${r.stage ?? "unknown"}`, o.now);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)")
+    .run(o.id, o.reason ? "daemon" : "you", "brought back from the cloud", `${o.reason ? `${o.reason}: ` : ""}${r.evidence.length} checks; reached ${r.stage ?? "unknown"}`, o.now);
   const b = loadBlueprint(o.repo, t.blueprint);
   if (r.questions) {
     db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ? WHERE id = ?").run(`From the cloud: ${r.questions.split("\n")[0].slice(0, 160)}`, o.id);

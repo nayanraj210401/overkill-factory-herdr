@@ -25,7 +25,7 @@ test("install writes the plist and bootstraps it; uninstall removes it", () => {
   const dir = mkdtempSync(join(tmpdir(), "agents-"));
   const calls: string[][] = [];
   const run = (a: string[]) => (calls.push(a), { code: 0, out: "state = running\npid = 42\n" });
-  const o = { factoryHome: mkdtempSync(join(tmpdir(), "fh-")), label: "x.test", agentsDir: dir, run, uid: 501, log: () => {} };
+  const o = { factoryHome: mkdtempSync(join(tmpdir(), "fh-")), label: "x.test", agentsDir: dir, run, uid: 501, log: () => {}, helper: () => null };
   service("install", o);
   const file = join(dir, "x.test.plist");
   expect(readFileSync(file, "utf8")).toContain("<string>--all</string>");
@@ -37,7 +37,7 @@ test("install writes the plist and bootstraps it; uninstall removes it", () => {
 });
 
 test("a failed bootstrap is reported, and status says absent when not loaded", () => {
-  const o = { factoryHome: mkdtempSync(join(tmpdir(), "fh-")), label: "x.test", agentsDir: mkdtempSync(join(tmpdir(), "a-")), uid: 501, log: () => {} };
+  const o = { factoryHome: mkdtempSync(join(tmpdir(), "fh-")), label: "x.test", agentsDir: mkdtempSync(join(tmpdir(), "a-")), uid: 501, log: () => {}, helper: () => null };
   expect(() => service("install", { ...o, run: (a) => ({ code: a[0] === "bootstrap" ? 5 : 0, out: "Input/output error" }) })).toThrow(/bootstrap failed: Input\/output error/);
   expect(service("status", { ...o, run: () => ({ code: 113, out: "" }) })).toBe("absent");
 });
@@ -69,7 +69,7 @@ test("servicePid: the running service's pid when it serves this FACTORY_HOME, el
   const home = mkdtempSync(join(tmpdir(), "fh-"));
   let out = "state = running\npid = 42\n";
   const run = () => ({ code: 0, out });
-  const o = { factoryHome: home, label: "x.test", agentsDir: dir, run, uid: 501 };
+  const o = { factoryHome: home, label: "x.test", agentsDir: dir, run, uid: 501, helper: () => null };
   expect(servicePid(o)).toBe(null); // not installed
   service("install", { ...o, log: () => {} });
   expect(servicePid(o)).toBe(42);
@@ -137,4 +137,16 @@ test("install --login off installs it not starting at login, and running now; --
   service("install", o);
   expect(atLoginOf(file)).toBe(true);
   expect(() => service("install", { ...o, login: "maybe" })).toThrow("--login on|off");
+});
+
+test("install builds the sleep helper; a failed build is said, and the install carries on", () => {
+  const home = mkdtempSync(join(tmpdir(), "fh-"));
+  const logs: string[] = [];
+  const base = { factoryHome: home, label: "x.test", agentsDir: mkdtempSync(join(tmpdir(), "agents-")), run: () => ({ code: 0, out: "" }), uid: 501, log: (s: string) => logs.push(s) };
+  let built: string | null = null;
+  service("install", { ...base, helper: (h) => ((built = h), null) });
+  expect(built).toBe(home);
+  service("install", { ...base, helper: () => "xcrun: error: invalid active developer path" });
+  expect(logs.some((l) => l.includes("sleep helper not built") && l.includes("invalid active developer path"))).toBe(true);
+  expect(logs.at(-1)).toContain("installed x.test");
 });
