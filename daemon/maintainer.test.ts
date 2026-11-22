@@ -6,7 +6,8 @@ import { open, setRepo } from "./db.ts";
 import { advance, loadAgent, loadBlueprint, sh, startTicket, type Run } from "./runner.ts";
 import { request } from "./maintainer.ts";
 
-const now = "2026-11-22T10:00:00Z";
+// After the worktree commits the tests make: the ready rules reject evidence older than the last commit.
+const now = new Date(Date.now() + 60_000).toISOString();
 
 // A factory whose .factory/ has no maintainer files of its own: the shipped ones apply.
 function setup(factoryYaml = "name: t\nquality_floor: [\"true\"]\n") {
