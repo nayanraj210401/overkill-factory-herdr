@@ -196,6 +196,15 @@ export const MIGRATIONS = [
      yours TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('you', 'kept')), got TEXT, why TEXT,
      PRIMARY KEY (run, ticket, n)
    );`,
+  // Factory agents (M7): an agreement run names the judge's words too (a hash of its prompt
+  // from babysitter.md), and each learner run is kept with what it spent from budget.learning.
+  `ALTER TABLE agreement_runs ADD COLUMN prompt TEXT;
+   CREATE TABLE learner_runs (
+     id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT, model TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('done', 'failed', 'unreadable')), why TEXT,
+     merged INTEGER NOT NULL, tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, usd REAL,
+     proposals INTEGER NOT NULL DEFAULT 0, filed TEXT
+   );`,
 ];
 
 export function open(path: string): Database {

@@ -20,7 +20,7 @@ import { validateAccount, validateDir } from "./validate.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { applyMergedAccounts, proposeAccount, request } from "./maintainer.ts";
-import { learnerSuggest, promoteOverrides } from "./learner.ts";
+import { learnerDigest, learnerDue, learnerHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
 import { noteAttention, waiting } from "./attention.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
@@ -86,6 +86,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   learn undo <key> | learn list      drop an override / show the active ones beside the file's value
   learn export                       print the edits that make the overrides permanent, as a patch (never writes .factory/)
   learn suggest <the change…> --why <evidence>  the learner files a change outside learn.tunable as a maintainer request, with its evidence
+  learn digest [--json]              what the learner agent reads: outcomes by setting, the target's trend, lessons, repeated comments
+  learn run                          run the learner agent now (budget.learning, warmup and learn.pause_above still apply)
   lesson add <area> <text…> [--source s]  a lesson for code matching the area glob (src/auth/**); loaded when a ticket touches it
   lesson list [words…] | lesson retire <id>  the store (--json), searched by words / take one out of briefs
   overwatch [--json]                 start the overwatch agent, or print the live one's terminal
@@ -599,7 +601,21 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         change(db, () => { r = learnerSuggest(db, { dir: p.dir, repo: lead.path, slug: lead.slug, text: rest.join(" "), evidence: why ?? "", run: sh, now: now() }); });
         log(r ? `#${r.id}: a request for the maintainer, from the learner` : "an open request already asks for this");
         if (r) writeTicketFiles(db, p.dir, r.id);
-      } else throw new Error("usage: factory learn set|undo|list|export|suggest");
+      } else if (sub === "digest") {
+        const d = learnerDigest(db, lead.path);
+        if (json) return log(JSON.stringify(d));
+        log(`learn.target: ${d.target} · ${d.tickets.merged} merged of ${d.tickets.finished} finished · revert rate ${Math.round(d.tickets.revert_rate * 100)}%`);
+        for (const t of d.trend) log(`  ${t.tickets}: ${t.value ?? "–"} (${t.n})`);
+        for (const x of d.settings) log(`  ${x.key} = ${x.value}: ${x.merged}/${x.tickets} merged, ${x.reverted} reverted, target ${x.target ?? "–"}`);
+        const due = learnerDue(db, lead.path, new Date());
+        log(`next run: ${due.due ? (learnerHold(db, lead.path, new Date()) ?? `due (${due.why})`) : due.why}`);
+      } else if (sub === "run") {
+        const r = runLearner(db, { dir: p.dir, repo: lead.path, slug: lead.slug, run: sh, now: now(), force: true, commit: (fn) => change(db, fn) });
+        if (!r.ran) throw new Error(`the learner didn't run: ${r.why}`);
+        log(`learner run: ${r.status}${r.status === "done" ? "" : ` (${r.why})`}`);
+        for (const f of r.filed) { log(`#${f.id}: ${f.title}`); writeTicketFiles(db, p.dir, f.id); }
+        for (const x of r.skipped) log(`already asked: ${x}`);
+      } else throw new Error("usage: factory learn set|undo|list|export|suggest|digest|run");
     } else if (cmd === "lesson") {
       if (sub === "add") {
         const [area, ...text] = rest;
@@ -828,6 +844,12 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     try { change(db, () => { for (const r of promoteOverrides(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso })) log(`factory: #${r.id}: the learner asks the maintainer to ${r.title}`); }); }
     catch (e) { log(`factory: the learner: ${(e as Error).message}`); }
   }
+  // The learner agent, on its schedule (after learn.review_every merged tickets, or daily).
+  try {
+    const r = runLearner(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso, commit: (fn) => change(db, fn) });
+    if (r.ran) log(`factory: learner run ${r.status}${r.status === "done" ? `: ${r.filed.length} request${r.filed.length === 1 ? "" : "s"} for the maintainer` : ` (${r.why})`}`);
+    for (const f of r.filed) log(`factory: #${f.id}: the learner asks the maintainer to ${f.title}`);
+  } catch (e) { log(`factory: the learner agent: ${(e as Error).message}`); }
   // Merged PRs someone reverted, every 10 minutes, for the revert rate.
   const lastReverts = getMeta(db, "reverts_checked_at");
   if (!lastReverts || Date.now() - Date.parse(lastReverts) >= 600_000) {

@@ -39,7 +39,7 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, maintainer: { object: { gate } },
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num, review_every: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, maintainer: { object: { gate } },
       verify: { object: { features: str } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
@@ -47,7 +47,7 @@ export const KINDS: Record<string, Rule> = {
   blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },
   agent: {
     object: {
-      role: { enum: ["orchestrator", "triage", "spec", "plan", "build", "review", "verify", "scorer", "maintain"] },
+      role: { enum: ["orchestrator", "triage", "spec", "plan", "build", "review", "verify", "scorer", "maintain", "babysit", "learn"] },
       harness: str, model: str, effort: str, from: str, tools: strs, mcp: strs, skills: strs, context: strs,
     },
   },

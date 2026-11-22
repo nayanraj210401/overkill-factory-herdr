@@ -44,10 +44,14 @@ type Blueprint = { name: string; orchestrator?: string; start: string; stages: R
 // factory without its own uses these, so every factory can take requests (maintainer.ts).
 const BUILT_IN = join(import.meta.dir, "../fixtures/acme-api/.factory");
 const SHIPPED = ["blueprints/factory.yaml", "agents/maintainer.md"];
+// Factory agents (one each for every repo) ship in agents/ at the app's root.
+// TODO(M7): ~/.factory/agents/ comes first once the factory-agent loader lands.
+const FACTORY_AGENTS = join(import.meta.dir, "../agents");
+const SHIPPED_FACTORY = ["agents/babysitter.md", "agents/learner.md"];
 
 function readYaml(repo: string, path: string) {
   const own = join(repo, ".factory", path);
-  const file = existsSync(own) ? own : SHIPPED.includes(path) ? join(BUILT_IN, path) : null;
+  const file = existsSync(own) ? own : SHIPPED.includes(path) ? join(BUILT_IN, path) : SHIPPED_FACTORY.includes(path) ? join(FACTORY_AGENTS, path.slice("agents/".length)) : null;
   if (!file) return null;
   const text = readFileSync(file, "utf8");
   const errors = validateFile(path, text);
@@ -200,7 +204,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
