@@ -79,9 +79,9 @@ test("the hook script, as Claude Code runs it from the settings file: exit 2 onl
   const dir = mkdtempSync(join(tmpdir(), "hook-"));
   mkdirSync(join(dir, "tickets/412"), { recursive: true });
   const argv = withHandoffHook(["claude", "--model", "sonnet", "go"], dir, 412);
-  expect(argv.slice(0, 2)).toEqual(["claude", "--settings"]);
-  expect(argv.slice(3)).toEqual(["--model", "sonnet", "go"]);
-  const hook = JSON.parse(readFileSync(argv[2], "utf8")).hooks.PreToolUse[0];
+  expect(argv.slice(0, 4)).toEqual(["claude", "--permission-mode", "acceptEdits", "--settings"]);
+  expect(argv.slice(5)).toEqual(["--model", "sonnet", "go"]);
+  const hook = JSON.parse(readFileSync(argv[4], "utf8")).hooks.PreToolUse[0];
   expect(hook.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit");
   const command = hook.hooks[0].command;
   const call = (tool: string) => Bun.spawnSync(["sh", "-c", command], { stdin: new TextEncoder().encode(JSON.stringify({ tool_name: tool, tool_input: { file_path: "/w/a.ts" } })) });
@@ -217,4 +217,13 @@ test("the handoff threshold is the one the ticket started with: 80% in its snaps
   fill(125_000); // 62.5%: over the file's 60%, under the ticket's 80%
   tick("2026-11-21T10:32:00Z");
   expect(existsSync(flagFile(dir, 412))).toBe(false);
+});
+
+test("an agent runs unattended: acceptEdits, and an allowlist with the factory CLI and the repo's tests, never git push", () => {
+  const dir = mkdtempSync(join(tmpdir(), "allow-"));
+  const argv = withHandoffHook(["claude", "go"], dir, 9, null, ["bun test"]);
+  expect(argv.slice(0, 3)).toEqual(["claude", "--permission-mode", "acceptEdits"]);
+  const allow: string[] = JSON.parse(readFileSync(argv[argv.indexOf("--settings") + 1], "utf8")).permissions.allow;
+  for (const a of ["Bash(factory:*)", "Bash(bun test)", "Bash(git commit:*)", "Bash(gh issue view:*)", "Read", "Edit"]) expect(allow).toContain(a);
+  expect(allow.some((a) => /push|bypass/.test(a))).toBe(false);
 });

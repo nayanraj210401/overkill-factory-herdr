@@ -37,7 +37,7 @@ test("a Claude worker's settings carry the plan status line beside the hooks", (
   home();
   const dir = mkdtempSync(join(tmpdir(), "f-"));
   const argv = withHandoffHook(["claude", "do it"], dir, 7);
-  const settings = JSON.parse(readFileSync(argv[2], "utf8"));
+  const settings = JSON.parse(readFileSync(argv[argv.indexOf("--settings") + 1], "utf8"));
   expect(settings.statusLine.command).toContain("planline.ts");
   expect(settings.statusLine.command).toContain(planFile());
   expect(settings.hooks.PreToolUse.length).toBe(1);
