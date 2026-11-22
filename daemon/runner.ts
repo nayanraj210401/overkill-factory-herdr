@@ -20,6 +20,7 @@ import { DEFAULT_MODEL, pinModel } from "./models.ts";
 import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
 import { closeRound, latestBrief } from "./round.ts";
 import { loadPrompt, render } from "./prompts.ts";
+import { finishSlice, readSlices, sliceInHand } from "./slices.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -30,7 +31,7 @@ export const sh: Run = (argv, cwd) => {
   return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() };
 };
 
-type Stage = { agent?: string; check?: string; next?: string[]; output?: string; prompt?: string };
+type Stage = { agent?: string; check?: string; next?: string[]; output?: string; prompt?: string; per?: "ticket" | "slice" };
 type Blueprint = { name: string; start: string; stages: Record<string, Stage> };
 
 function readYaml(repo: string, path: string) {
@@ -66,7 +67,7 @@ export const title = (id: string) => (id.length <= 2 ? id.toUpperCase() : id[0].
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage")) {
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "") {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return render(template, {
     "ticket.id": String(t.id),
@@ -83,6 +84,7 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
     profile: profileText(),
     lessons: lessons.map((l) => `- ${l}`).join("\n"),
     fix_brief: latestBrief(folder),
+    slice,
   });
 }
 
@@ -139,7 +141,11 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
   const s = o.blueprint.stages[o.stage];
   if (!s) throw new Error(`blueprint ${o.blueprint.name} has no stage "${o.stage}"`);
-  enterStage(db, o.id, title(o.stage), s.agent ? `${s.agent} agent` : s.check ? `check: ${s.check}` : null, plannedPath(o.blueprint, o.stage).map(title), o.now);
+  // per: slice: this session builds the first slice not done yet (slices.ts).
+  const all = s.per === "slice" ? readSlices(o.dir, o.id) : [];
+  const slice = s.per === "slice" ? sliceInHand(db, { dir: o.dir, id: o.id, stage: o.stage }) : null;
+  const of = slice ? ` · slice ${all.findIndex((x) => x.key === slice.key) + 1} of ${all.length}` : "";
+  enterStage(db, o.id, title(o.stage), s.agent ? `${s.agent} agent${of}` : s.check ? `check: ${s.check}` : null, plannedPath(o.blueprint, o.stage).map(title), o.now);
   if (!s.agent) return null; // check and gate stages are the daemon's own (D4b)
   const agent = loadAgent(o.repo, s.agent);
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
@@ -151,7 +157,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const intent = existsSync(join(folder, "INTENT.md")) ? readFileSync(join(folder, "INTENT.md"), "utf8") : "";
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
-  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"))), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? []);
+  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text)), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? []);
   const cmd = withFactory(argv, o.dir); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
@@ -171,8 +177,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
     if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
     terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
   }
-  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, t.worktree);
+  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd, slice) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, t.worktree, slice?.key ?? null);
   return terminal;
 }
 
@@ -280,6 +286,9 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
     return { parked: true, stage: at };
   }
   const verdict = o.failed || gate ? null : stageVerdict(db, { dir: o.dir, repo: o.repo, id: o.id, stage: at, s: b.stages[at], now });
+  // per: slice: a slice is built; the next one gets a fresh session in the same stage.
+  if (!o.failed && !gate?.failed && !verdict?.failed && b.stages[at]?.per === "slice" && finishSlice(db, { dir: o.dir, id: o.id, stage: at, now }))
+    return { terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, blueprint: b, stage: at }), stage: at };
   return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? gate?.failed ?? verdict?.failed ?? null }));
 }
 
