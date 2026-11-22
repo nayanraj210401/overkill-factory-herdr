@@ -530,7 +530,7 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
     db.query("UPDATE tickets SET detail = ? WHERE id = ?").run(detail, o.id);
     return { waiting: true, stage: t.stage, failing: failing.length };
   }
-  // One draft PR per repo. A cross-repo change's bodies then name each other's PRs.
+  // One PR per repo. A cross-repo change's bodies then name each other's PRs.
   const repos = ticketRepos(db, o.id);
   // A request that changes only what no repo holds (the account config, the factory agents,
   // a cleanup) has no commits to open a PR from: it waits for you at the merge gate, and `m` applies it.
@@ -567,8 +567,8 @@ function linkPrs(db: Database, o: { dir: string; id: number }, prs: { repo: stri
   }
 }
 
-// `m` on a ready ticket: the human merge gate. The PR was opened as a draft, so it's
-// marked ready first (gh refuses to merge a draft), then merged on GitHub the way
+// `m` on a ready ticket: the human merge gate. A PR left as a draft (opened before PRs
+// opened ready for review) is marked ready first, as gh refuses to merge a draft, then merged on GitHub the way
 // factory.yaml's merge_method says (squash unless it names merge or rebase).
 export function mergeTicket(db: Database, o: { repo: string; id: number; run?: Run; now?: string; dir?: string }) {
   const run = o.run ?? sh;

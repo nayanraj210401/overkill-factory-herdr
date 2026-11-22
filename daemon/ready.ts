@@ -126,8 +126,8 @@ export function closesIssue(db: Database, id: number, repo: { lead: number }, cr
   return cross ? `Closes ${needLead(db).slug}#${id}` : `Closes #${id}`;
 }
 
-// All rules pass: push the ticket's branch and open the PR from PR.md, as a draft
-// with the rule results appended. Agents can't push; only the daemon does (plan: Hard stops).
+// All rules pass: push the ticket's branch and open the PR from PR.md, ready for review
+// (every ready rule has passed, so it isn't a draft), with the rule results appended. Agents can't push; only the daemon does (plan: Hard stops).
 export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null; others?: { repo: string; pr: number | null }[]; closes?: string | null; base?: string }) {
   const t = db.query("SELECT title FROM ticket_lead WHERE id = ?").get(o.id) as { title: string };
   const md = prText(o.dir, o.id);
@@ -144,7 +144,7 @@ export function openPr(db: Database, o: { id: number; dir: string; worktree: str
     if (edit.code !== 0) throw new Error(`gh pr edit failed: ${edit.out}`);
     return found;
   }
-  const pr = o.run(["gh", "pr", "create", "--draft", "--head", o.branch, ...(o.base ? ["--base", o.base] : []), "--title", t.title, "--body-file", bodyFile], o.worktree);
+  const pr = o.run(["gh", "pr", "create", "--head", o.branch, ...(o.base ? ["--base", o.base] : []), "--title", t.title, "--body-file", bodyFile], o.worktree);
   if (pr.code !== 0) throw new Error(`gh pr create failed: ${pr.out}`);
   const number = Number(pr.out.match(/\/pull\/(\d+)/)?.[1]);
   if (!number) throw new Error(`gh pr create printed no PR link: ${pr.out}`);
