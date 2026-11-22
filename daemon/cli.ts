@@ -48,7 +48,8 @@ import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retir
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
-import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, answer, checkReady, readFactory, mergeTicket, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { publishFailed, recordArtifact } from "./artifacts.ts";
 import { migrateFlowStack } from "./migrate.ts";
 import { claudeConfig, MIGRATION_META, MIGRATION_REQUEST, migrationRequest, realProbe, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
 import { decideSplit, followSplits, pendingParts, proposePart } from "./split.ts";
@@ -109,6 +110,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   label <id> C<n> fix|pushback|escalate  your own verdict on a review comment, for the agreement benchmark
   agreement [--dry-run] [--json]     re-judge your past review comments with review.judge_model and record how often it matches you (--dry-run counts them)
   verdict <id> holdout|review pass|fail [detail…] [--by voter]  a checker's or reviewer's verdict
+  artifact <id> <file> <url>         record where an agent shared a ticket file on claude.ai (artifacts: in factory.yaml); --fail <why> logs a publish that failed
   decide <ticket> <who> <what> [why] log a decision
   setup [--json]                     the first-run checklist: each step ok, missing or skipped, with its fix command
   setup skip|unskip <step>           set a step aside (it stays on the list; rerun setup any time)
@@ -382,6 +384,19 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let voter = "";
       change(db, () => { voter = recordVerdict(db, { id: Number(sub), kind, result: r, detail: detail.join(" ") || null, by, now: now() }); });
       log(`#${sub}: ${kind} ${r} from ${voter}`);
+    } else if (cmd === "artifact") {
+      // Best-effort sharing (artifacts.ts): the agent says where it published, or that it couldn't.
+      const [file, url] = rest;
+      if (!Number.isInteger(Number(sub)) || !file || (!url && failReason == null))
+        throw new Error("usage: factory artifact <id> <file> <url>, or factory artifact <id> <file> --fail <why>");
+      if (failReason != null) {
+        change(db, () => publishFailed(db, { id: Number(sub), file, why: failReason, now: now() }));
+        return log(`#${sub}: ${file} stays local only; go on with the stage`);
+      }
+      let r: any = null;
+      change(db, () => { r = recordArtifact(db, { id: Number(sub), file, url, now: now() }); });
+      log(`#${sub}: ${file} is shared at ${r.url}${r.moved ? " (a new link; republish to this one from now on)" : ""}`);
+      writeStatus(db, p.status);
     } else if (cmd === "request") {
       // A change to the factory itself, for the maintainer (maintainer.ts): it comes back as a PR.
       const lead = needLead(db);
@@ -475,7 +490,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const repoDir = needLead(db).path;
       let r: any = null;
       const open = db.query("SELECT id, terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(Number(sub)) as { id: number; terminal: string }[];
-      change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
+      change(db, () => {
+        if (failReason == null) notePublishGap(db, { repo: repoDir, id: Number(sub), now: now() });
+        r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined });
+      });
       log(`#${sub}: ${r.split === "asked" ? "a split is proposed; it waits for you (factory split approve|reject)" : r.split ? `split into ${r.children.map((c: number) => `#${c}`).join(", ")}` : r.questions ? `groomed, waiting on ${r.questions} answer${r.questions > 1 ? "s" : ""}` : r.groomed ? `groomed${r.started ? " and started" : ", queued"}` : r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
       // The agent that said it's done is closed a few seconds later (it's usually the one
       // running this command, so it sees the result first). Its transcript stays in Runs.

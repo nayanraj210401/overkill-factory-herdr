@@ -4,6 +4,8 @@ You are session {{session}} of #{{ticket.id}}. The one before it {{previous}}. Y
 
 {{rerun}}
 
+{{publish_handoff}}
+
 ## HANDOFF.md
 
 {{handoff}}
