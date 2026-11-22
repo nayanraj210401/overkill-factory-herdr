@@ -24,6 +24,7 @@ import { finishSlice, readSlices, sliceInHand } from "./slices.ts";
 import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
 import { chooseNext } from "./orchestrate.ts";
 import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
+import { accountPending, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount } from "./maintainer.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -260,7 +261,10 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     const outside = changedFiles(o.run, o.repo, o.worktree).filter((f) => !f.startsWith(".factory/"));
     record("only .factory/", !outside.length, outside.length ? `changed outside .factory/: ${outside.slice(0, 5).join(", ")}` : "every change is in .factory/");
     const dry = bad.length || !o.dir ? true : dryRunChanged(db, { ...o, dir: o.dir, record });
-    return !bad.length && !outside.length && dry;
+    // The account config isn't in the repo: its proposal sits in the ticket's folder (maintainer.ts).
+    const account = o.dir ? checkAccount(o.dir, o.id) : null;
+    if (account) record("account config", account.ok, account.detail);
+    return !bad.length && !outside.length && dry && (account?.ok ?? true);
   }
   throw new Error(`unknown check "${o.check}"`);
 }
@@ -448,6 +452,13 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   }
   // One draft PR per repo. A cross-repo change's bodies then name each other's PRs.
   const repos = ticketRepos(db, o.id);
+  // A request that changes only the account config has no commits to open a PR from: it
+  // waits for you at the merge gate, and `m` applies it.
+  if (t.blueprint === FACTORY_BLUEPRINT && t.pr_number == null && accountPending(o.dir, o.id) && !changedFiles(run, o.repo, t.worktree).length) {
+    db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'no PR: only the account config changes', ?, ?)")
+      .run(o.id, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}; ACCOUNT-CONFIG.md in the ticket's folder shows the diff`, now);
+    return advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, opened: true });
+  }
   const prs = repos.map((r) => {
     const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number,
       others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })), closes: closesIssue(db, o.id, r, repos.length > 1) });
@@ -477,11 +488,16 @@ function linkPrs(db: Database, o: { dir: string; id: number }, prs: { repo: stri
 // `m` on a ready ticket: the human merge gate. The PR was opened as a draft, so it's
 // marked ready first (gh refuses to merge a draft), then merged on GitHub the way
 // factory.yaml's merge_method says (squash unless it names merge or rebase).
-export function mergeTicket(db: Database, o: { repo: string; id: number; run?: Run; now?: string }) {
+export function mergeTicket(db: Database, o: { repo: string; id: number; run?: Run; now?: string; dir?: string }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
-  const t = db.query("SELECT state, pr_number FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; pr_number: number | null } | null;
+  const t = db.query("SELECT state, pr_number, blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; pr_number: number | null; blueprint: string } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
+  // An account-only request: your `m` is the gate; the caller applies the change (applyMergedAccounts).
+  if (t.state === "ready" && t.pr_number == null && t.blueprint === FACTORY_BLUEPRINT && o.dir && accountPending(o.dir, o.id)) {
+    finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: "the account config change" });
+    return { pr: null, merged: [] as string[] };
+  }
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready ticket's PR merges`);
   const method = readFactory(o.repo).merge_method ?? "squash";
   // Every repo's PR, in merge order; it stops at the first that fails. The ones merged
@@ -529,7 +545,7 @@ export function finishPr(db: Database, o: { repo: string; id: number; run: Run; 
   db.query("DELETE FROM planned WHERE ticket = ?").run(o.id);
   db.query("UPDATE tickets SET state = ?, detail = NULL, needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(o.state, o.now, o.id);
   setWork(db, o.id, { pr_watched: 0, merged_at: o.state === "merged" ? o.now : null });
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.who ?? "you", `${o.state} PR #${pr}`, o.why, o.now);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.who ?? "you", pr == null ? `${o.state} with no PR` : `${o.state} PR #${pr}`, o.why, o.now);
   // Every repo's worktree goes; one with uncommitted work stays (and so does the space's id).
   const repos = ticketRepos(db, o.id).filter((r) => r.worktree);
   if (repos.length) closeSpace(o.run, (db.query("SELECT space FROM tickets WHERE id = ?").get(o.id) as { space: string | null }).space);

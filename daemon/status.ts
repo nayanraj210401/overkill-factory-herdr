@@ -11,6 +11,7 @@ import { budgetUse, dayCap, startHold } from "./budget.ts";
 import { setupField } from "./setup.ts";
 import { activeOverrides, fileValue } from "./learn.ts";
 import { loadAgent, readFactory } from "./runner.ts";
+import { BLUEPRINT, requestedBy } from "./maintainer.ts";
 
 type Row = Record<string, any>;
 
@@ -33,6 +34,8 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
     blocked_by: r.blocked_by,
     terminal: r.terminal ?? null,
     session: r.sessions || null, // "session 3 of #412": the live agent's session in its stage; null with no live agent
+    // A request for the maintainer: who asked (you in Overwatch, or the learner), for Config's Pending changes.
+    ...(r.blueprint === BLUEPRINT ? { requested_by: requestedBy(r.trigger_name) } : {}),
   };
 }
 

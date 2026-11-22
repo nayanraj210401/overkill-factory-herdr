@@ -103,11 +103,11 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktrees
 
 export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fail");
 
-// PR.md, then the blueprint dry run when the maintainer's check wrote one.
+// PR.md, then what the maintainer's check wrote: the blueprint dry run and the account config's diff.
 export function prText(dir: string, id: number) {
   const folder = join(dir, "tickets", String(id));
-  const dry = join(folder, "DRYRUN.md");
-  return readFileSync(join(folder, "PR.md"), "utf8").trim() + (existsSync(dry) ? `\n\n${readFileSync(dry, "utf8").trim()}` : "");
+  const extra = ["DRYRUN.md", "ACCOUNT-CONFIG.md"].map((f) => join(folder, f)).filter((f) => existsSync(f));
+  return [readFileSync(join(folder, "PR.md"), "utf8"), ...extra.map((f) => readFileSync(f, "utf8"))].map((s) => s.trim()).join("\n\n");
 }
 
 // The PR body: PR.md, the other repos' PRs of a cross-repo change, the issue it closes,

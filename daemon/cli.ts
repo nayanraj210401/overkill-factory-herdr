@@ -4,7 +4,7 @@
 // contract inside its transaction, so a bad write never lands.
 import { homedir } from "node:os";
 import { writeIfChanged } from "./files.ts";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { recordVerdict } from "./ready.ts";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -18,7 +18,8 @@ import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateAccount, validateDir } from "./validate.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
-import { request } from "./maintainer.ts";
+import { applyMergedAccounts, proposeAccount, request } from "./maintainer.ts";
+import { learnerSuggest, promoteOverrides } from "./learner.ts";
 import { noteAttention, waiting } from "./attention.ts";
 import { watchPrs } from "./watch.ts";
 import { dropTicket, followIssues, reportBlocked } from "./lifecycle.ts";
@@ -54,7 +55,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
-  request <the change…>              a change to the factory itself (.factory/): the maintainer makes it and it comes back as a PR
+  request <the change…>              a change to the factory itself (.factory/ or the account config): the maintainer makes it and it comes back as a PR
+  account propose <id>               the maintainer's copy of ~/.factory/config.yaml to edit, in the request's folder (applied when the request merges)
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
   repos <id> owner/name…             the repos a ticket that hasn't started works in (the lead is always one)
@@ -82,6 +84,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   learn set <key> <value> [--why reason]  tune a setting learn.tunable lists, for tickets that start from now on
   learn undo <key> | learn list      drop an override / show the active ones beside the file's value
   learn export                       print the edits that make the overrides permanent, as a patch (never writes .factory/)
+  learn suggest <the change…> --why <evidence>  the learner files a change outside learn.tunable as a maintainer request, with its evidence
   lesson add <area> <text…> [--source s]  a lesson for code matching the area glob (src/auth/**); loaded when a ticket touches it
   lesson list [words…] | lesson retire <id>  the store (--json), searched by words / take one out of briefs
   overwatch [--json]                 start the overwatch agent, or print the live one's terminal
@@ -192,7 +195,9 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0], login: loginFlag ?? undefined });
   if (cmd === "validate") {
-    const results = validateDir(sub ?? ".factory");
+    // An account config (the maintainer's ACCOUNT-CONFIG.yaml proposal) is checked as one.
+    const accountLike = sub && /(^|\/)(ACCOUNT-CONFIG|config)\.yaml$/.test(sub) && existsSync(sub) && statSync(sub).isFile();
+    const results = accountLike ? [{ path: sub, errors: validateAccount(readFileSync(sub, "utf8")) }] : validateDir(sub ?? ".factory");
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
     if (json) return log(JSON.stringify(results));
     for (const r of results) log(r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `✓ ${r.path}`);
@@ -329,10 +334,17 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       // A change to the factory itself, for the maintainer (maintainer.ts): it comes back as a PR.
       const lead = needLead(db);
       let r: any = null;
-      change(db, () => { r = request(db, { text: [sub, ...rest].filter(Boolean).join(" "), repo: lead.slug, run: sh, now: now() }); });
+      change(db, () => { r = request(db, { text: [sub, ...rest].filter(Boolean).join(" "), repo: lead.slug, run: sh, now: now(), dir: p.dir }); });
       log(`#${r.id} ${r.title}: a request for the maintainer; it starts when a slot is free, and the change comes back as a PR for you`);
       writeStatus(db, p.status);
       writeTicketFiles(db, p.dir, r.id);
+    } else if (cmd === "account") {
+      // The account config isn't in any repo: the maintainer edits a copy in the request's folder.
+      if (sub !== "propose" || !Number.isInteger(Number(rest[0]))) throw new Error("usage: factory account propose <request id>");
+      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
+      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
+      log(`${proposeAccount(p.dir, Number(rest[0]))}: edit this copy; the factory check validates it and the PR shows the diff. It applies when the request merges.`);
+      return;
     } else if (cmd === "new") {
       const text = [sub, ...rest].filter(Boolean).join(" ");
       const lead = needLead(db);
@@ -454,14 +466,15 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     } else if (cmd === "merge") {
       const repoDir = needLead(db).path;
       let r: any = null;
-      change(db, () => { r = mergeTicket(db, { repo: repoDir, id: Number(sub) }); });
+      change(db, () => { r = mergeTicket(db, { repo: repoDir, id: Number(sub), dir: p.dir }); });
+      change(db, () => applyMergedAccounts(db, { dir: p.dir, now: now(), log }));
       if (r.failed) {
         // The merges that went through are recorded; the ticket stays ready for `m` again.
         writeStatus(db, p.status);
         writeTicketFiles(db, p.dir, Number(sub));
         throw new Error(`#${sub}: merged ${r.merged.join(", ")}, then stopped: ${r.failed}`);
       }
-      log(`#${sub}: merged ${r.merged.length > 1 ? r.merged.join(", ") : `PR #${r.pr}`}`);
+      log(`#${sub}: merged ${r.merged.length > 1 ? r.merged.join(", ") : r.pr == null ? "its account config change" : `PR #${r.pr}`}`);
     } else if (cmd === "merge-order") {
       const id = Number(sub);
       if (!Number.isInteger(id) || !rest.length) throw new Error("usage: factory merge-order <id> owner/name…");
@@ -551,7 +564,12 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (patch) log(patch);
         for (const n of notes) log(`# ${n}`);
         if (!patch && !notes.length) log("# no overrides to export");
-      } else throw new Error("usage: factory learn set|undo|list|export");
+      } else if (sub === "suggest") {
+        let r: any = null;
+        change(db, () => { r = learnerSuggest(db, { dir: p.dir, repo: lead.path, slug: lead.slug, text: rest.join(" "), evidence: why ?? "", run: sh, now: now() }); });
+        log(r ? `#${r.id}: a request for the maintainer, from the learner` : "an open request already asks for this");
+        if (r) writeTicketFiles(db, p.dir, r.id);
+      } else throw new Error("usage: factory learn set|undo|list|export|suggest");
     } else if (cmd === "lesson") {
       if (sub === "add") {
         const [area, ...text] = rest;
@@ -770,6 +788,15 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     for (const id of groomed) log(`factory: #${id}: triage started`);
   } catch (e) {
     log(`factory: starting triage: ${(e as Error).message}`);
+  }
+  // A merged request's account config change applies; an override that held files its request.
+  try { change(db, () => applyMergedAccounts(db, { dir: p.dir, now: nowIso, log })); }
+  catch (e) { log(`factory: applying the account config: ${(e as Error).message}`); }
+  const lastLearn = getMeta(db, "learner_checked_at");
+  if (!lastLearn || Date.now() - Date.parse(lastLearn) >= 600_000) {
+    setMeta(db, "learner_checked_at", nowIso);
+    try { change(db, () => { for (const r of promoteOverrides(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso })) log(`factory: #${r.id}: the learner asks the maintainer to ${r.title}`); }); }
+    catch (e) { log(`factory: the learner: ${(e as Error).message}`); }
   }
   // Merged PRs someone reverted, every 10 minutes, for the revert rate.
   const lastReverts = getMeta(db, "reverts_checked_at");
