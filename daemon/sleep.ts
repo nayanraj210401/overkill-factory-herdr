@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
 import { awayPolicy, forbiddenTouched } from "./away.ts";
 import { readAccount } from "./account.ts";
-import { toCloud, toLocal } from "./cloud.ts";
+import { noteCloudFailure, toCloud, toLocal } from "./cloud.ts";
 import { readFactory, type Run } from "./runner.ts";
 
 type Change = (db: Database, fn: () => void) => void;
@@ -62,7 +62,7 @@ export function moveAll(db: Database, o: Ctx & { reason?: string; stop?: () => b
       (o.change ?? inTxn)(db, () => { (o.mover ?? toCloud)(db, { dir: o.dir, repo: o.repo, id, run: o.run, now: o.now, reason: o.reason }); });
       out.done.push(id);
       o.onMoved?.(id);
-    } catch (e) { out.failed.push({ id, why: (e as Error).message }); }
+    } catch (e) { out.failed.push({ id, why: (e as Error).message }); noteCloudFailure(db, id, (e as Error).message, o.now, o.reason); }
   }
   return out;
 }
@@ -103,7 +103,7 @@ export function onSleep(db: Database, o: Ctx & { deadline?: number; clock?: () =
     // Written as each ticket lands, so a notice cut short still lets the wake bring those back.
     onMoved: (id) => { const s = readState(db); if (!s.moved.some((m) => m.id === id)) s.moved.push({ id, tries: 0 }); writeState(db, s); },
   });
-  for (const f of r.failed) { note(db, f.id, "couldn't move to the cloud for sleep", f.why.slice(0, 300), o.now); o.log?.(`factory: #${f.id}: not moved for sleep: ${f.why}`); }
+  for (const f of r.failed) { o.log?.(`factory: #${f.id}: not moved for sleep: ${f.why}`); }
   for (const s of r.skipped) if (s.why !== "already in the cloud") o.log?.(`factory: #${s.id}: stays local for sleep: ${s.why}`);
   return r;
 }
