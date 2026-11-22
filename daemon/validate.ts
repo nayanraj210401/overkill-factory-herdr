@@ -40,7 +40,7 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, maintainer: { object: { gate } },
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, floor: "any", learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, warmup_tickets: num, pause_above: "any", promote_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, maintainer: { object: { gate } },
       verify: { object: { features: str } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
     },
@@ -209,6 +209,9 @@ export function validateFile(path: string, text: string): string[] {
     const rb = (doc as any)?.review?.round_budget;
     if (rb !== undefined && !/^\s*(\d+(\.\d+)?\s*%|\d+(\.\d+)?\s*[kKmM]?(\s*\/\s*\d+(\.\d+)?\s*[kKmM]?)?)\s*$/.test(String(rb)))
       errors.push("review.round_budget: a share of the ticket's budget (25%) or tokens (200k, or 200k/20k for input/output)");
+    const fl = (doc as any)?.budget?.floor;
+    if (fl !== undefined && !/^\s*\d+(\.\d+)?\s*%?\s*$/.test(String(fl)))
+      errors.push("budget.floor: a share of budget.per_ticket, like 50% or 0.5");
     awayRange(doc, errors);
   }
   if (kind === "trigger") {
