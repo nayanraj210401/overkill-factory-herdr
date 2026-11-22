@@ -35,7 +35,7 @@ test("migration 11 moves a one-repo factory's repo and each ticket's work to the
     { id: 1, worktree: null, pr_number: 41, pr_watched: 0 }, { id: 2, worktree: "/wt/2", pr_number: 42, pr_watched: 1 }, { id: 3, worktree: null, pr_number: null, pr_watched: 0 },
   ]);
   expect(buildStatus(db).factory.repo).toBe("acme/api");
-  expect(buildStatus(db).tickets.find((t: any) => t.id === 2)!.pr).toEqual({ number: 42, watched: true, checked_at: "2026-11-21T09:00:00Z" });
+  expect(buildStatus(db).tickets.find((t: any) => t.id === 2)!.pr).toEqual({ number: 42, watched: true, checked_at: "2026-11-21T09:00:00Z", url: "https://github.com/acme/api/pull/42", state: "open" });
 });
 
 test("a ticket's first work row is made in the lead repo; the lead can't move once tickets worked in it", () => {

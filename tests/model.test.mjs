@@ -183,8 +183,8 @@ test("a cross-repo ticket's cards: lead first, each with its branch, PR and plac
   const { crossRepoCards } = await import("../lib/model.js");
   const tx = status.tickets.find((t) => t.id === 412);
   assert.deepEqual(crossRepoCards(tx).map((c) => [c.slug, c.role, c.pr, c.order]), [
-    ["acme/api", "lead", "no PR yet", "merges 2nd, after acme/web"],
-    ["acme/web", "linked", "no PR yet", "merges 1st"],
+    ["acme/api", "lead", "PR #520", "merges 2nd, after #131"],
+    ["acme/web", "linked", "PR #131", "merges 1st"],
   ]);
   const opened = { ...tx, repos: [{ ...tx.repos[0], pr: { number: 212, watched: true } }, { ...tx.repos[1], pr: { number: 88, watched: true }, merged_at: "2026-11-21T10:00:00Z" }] };
   assert.deepEqual(crossRepoCards(opened).map((c) => c.order), ["merges 2nd, after #88", "merged"]);

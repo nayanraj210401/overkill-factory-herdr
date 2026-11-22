@@ -93,12 +93,6 @@ export default class FactoryList extends View {
         .child(`${label} · ${n}`);
     };
     const cell = (w, text, color) => div().w(w).flex_none().truncate().text_color(color).child(text);
-    // The ticket's PR(s): "#6 open", one per repo for a cross-repo ticket; a click opens it on GitHub.
-    const prCell = (x) => h_flex().w(150).flex_none().gap(6)
-      .children(prLinks(x, s.factory.repo).map((l) => div().id(`pr-${x.id}-${l.slug}`).flex_none().text_size(12).text_color(prColor(t, l.state))
-        .when(!!l.url, (el) => el.cursor_pointer().hover((st) => st.text_color(t.foreground))
-          .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); exec("open", [l.url]); }))
-        .child(`${l.text} ${l.word}`)));
     const focused = this.handle.is_focused();
     return v_flex().size_full().p(16).gap(10).bg(t.background).rounded(10).text_size(13)
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus()).on_key_down((e, cx) => this.key(e, rows, cx))
@@ -154,6 +148,12 @@ export default class FactoryList extends View {
         .child(slug ?? "All repos");
     };
     const cell = (w, text, color) => div().w(w).flex_none().truncate().text_color(color).child(text);
+    // The ticket's PR(s): "#6 open", one per repo for a cross-repo ticket; a click opens it on GitHub.
+    const prCell = (x) => h_flex().w(150).flex_none().gap(6)
+      .children(prLinks(x, s.factory.repo).map((l) => div().id(`pr-${x.id}-${l.slug}`).flex_none().text_size(12).text_color(prColor(t, l.state))
+        .when(!!l.url, (el) => el.cursor_pointer().hover((st) => st.text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { cx.stop_propagation(); exec("open", [l.url]); }))
+        .child(`${l.text} ${l.word}`)));
     const focused = this.handle.is_focused();
     return v_flex().size_full().p(16).gap(10).bg(t.background).rounded(10).text_size(13)
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus()).on_key_down((e, cx) => this.key(e, rows, cx))
