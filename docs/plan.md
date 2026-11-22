@@ -32,13 +32,17 @@ Earlier drafts and the research pulled in different directions. Each clash is se
 | Labels to start and route work vs. no labels | Your GitHub Project is the queue: an issue assigned to you in its Ready column joins it, or you add one by hand. The triage agent picks the blueprint |
 | Benchmarks that propose factory changes vs. monitoring | Benchmarks are monitoring: they run apart from ticket runs and only report. Separately, the factory tunes the settings you mark tunable, between tickets, as overrides you can undo |
 | Copy Warp's layout and page names vs. our own | Our own. The sidebar lists live tickets with the factory menu at the bottom, one factory per window, and the pages use our words (Tickets, Reviews, Overwatch, Metrics, Config). Warp was a reference for ideas only |
+| Every agent per repo vs. some shared | Two tiers. Repo agents (triage, spec, planner, builder, reviewer) live in each repo's `.factory/agents/`. Factory agents (Overwatch, babysitter, maintainer, learner) are global, one each, in `~/.factory/agents/` |
+| Agents that each change what they need vs. one owner | Each agent has a territory. The maintainer alone changes the factory (config, blueprints, agents, housekeeping, the UI); others ask it |
+| One Overwatch per factory vs. one for everything | One Overwatch, the lead, across every repo. It is the only agent that talks to you |
 
 ## Principles
 
 1. **Markdown in front, code behind.** You manage work, not files. Every view shows a ticket's Markdown. The diff opens in Herdr's shipped `changes` panel with `d`, and the agent terminals with `e`.
 2. **Rules, not approvals.** The factory never stops to ask permission for reversible work. It checks the result at the end of each stage, and a failure goes back to the agent. You see work only when it is ready, or when the factory is truly stuck.
-3. **The factory is code.** `.factory/` defines everything the daemon does. You change it like any other code. Only the maintainer edits it, when you ask, through a PR; otherwise the factory only tunes settings you mark tunable, as overrides kept outside it.
-4. **Measure everything.** Every session is recorded against its ticket. Four numbers are always on screen: time to PR, cost per PR, human interactions per PR and revert rate.
+3. **The factory is code.** `.factory/` defines everything the daemon does. You change it like any other code. Only the maintainer edits it, when you or another agent asks, through a PR; otherwise the factory only tunes settings you mark tunable, as overrides kept outside it.
+4. **Every agent has a territory.** Agents know each other and ask each other directly; none acts outside its own territory. Overwatch leads and is the one you talk to.
+5. **Measure everything.** Every session is recorded against its ticket. Four numbers are always on screen: time to PR, cost per PR, human interactions per PR and revert rate.
 
 ## Layout design
 
@@ -165,6 +169,46 @@ Only two pieces are new: the layout with its mods, and the daemon. herdr-core ru
 ![architecture · 2 new pieces on Herdr](layouts/architecture.png)
 
 The mods never talk to agents. They read the ticket folders and a `status.json` the daemon keeps up to date, wake on changes with `watchFolder`, and send every action to the daemon. The daemon is the one place that knows a ticket's state, so the window stays replaceable.
+
+## The agents: two tiers, each with its own territory
+
+Every agent is a `.md` file: a YAML header and a prompt. Agents come in two tiers.
+
+| Tier | Agents | Where the file lives | How many run |
+| --- | --- | --- | --- |
+| **Repo agents** | triage (grooming), spec (intent), planner, builder, reviewer, checker, and any the maintainer adds | the repo's `.factory/agents/` | one per stage run, per ticket |
+| **Factory agents** | Overwatch, babysitter, maintainer, learner | `~/.factory/agents/`, with the shipped defaults as a fallback | one each for the whole factory, across every repo |
+
+Repo agents can differ per repo: a stricter reviewer for the payments repo, a builder that knows the mobile toolchain. Factory agents are global only; a repo never has its own copy.
+
+**Each agent has a territory, and only it acts there.**
+
+| Agent | Territory | Never does |
+| --- | --- | --- |
+| **Overwatch** (the lead) | Talking with you; knowing the state of every repo and ticket; answering questions; ticket actions (start, pause, reorder); routing work to the agent that owns it | Changes the factory itself |
+| **Babysitter** | Every PR the factory opened: review comments, verdicts, fix rounds, pushbacks | Changes config, or works on a ticket before its PR |
+| **Maintainer** | The factory itself, all of it (below) | Decides on its own what to tune: it acts on a request |
+| **Learner** | The decision log, outcomes, experiments, lessons; deciding what would move `learn.target` | Writes any file: it asks the maintainer |
+| **Repo agents** | Their own stage of their own ticket, in its worktree and ticket folder | Touch another ticket, another stage's output, or the factory |
+
+**The maintainer's territory is maintaining the factory:**
+
+- **Configuration:** `.factory/` in any repo and the account config `~/.factory/config.yaml`.
+- **Blueprints:** creating new blueprints from what you describe, and editing existing ones (stages, `next`, gates, retries), each with a dry run.
+- **Agents:** creating or changing repo agents for any repo, and the factory agents' own prompts.
+- **Housekeeping:** clearing closed tickets and their folders, removing stale worktrees and Herdr workspaces, pruning branches the factory made, compacting the database.
+- **The look of the factory:** layout, pages and colours, when you ask ("this page is hard to read", "use a warmer accent"). You are the author, so this is a change to the factory app's own repo (mods, themes), made as a PR there.
+- **Migrations:** flow-stack, old sessions, and the factory's own schema versions.
+
+**Agents are neighbours: each knows the others and asks them directly.** Every agent's brief carries a short map of the factory's agents: who they are, what each owns, and how to ask each one. Asking is a request with an origin, routed by the daemon and recorded in SQLite, so every hand-off is visible on Config's Pending changes and in the decision log.
+
+- You → Overwatch: "make the reviewer stricter in api" → Overwatch → maintainer.
+- Learner → maintainer: "set the plan stage to Haiku for chores; 30 tickets, cost per PR down 22%, revert rate unchanged".
+- Overwatch → maintainer on its own: "three worktrees have outlived their merged tickets".
+- Babysitter → maintainer: "the same comment keeps coming back on factory PRs; turn it into a lint rule".
+- Babysitter or a repo agent → Overwatch: "#412 needs a product answer", which Overwatch brings to you.
+
+**Overwatch is the only agent that talks to you.** The rest reach you through it, or by flagging a ticket in Needs you when its agent waits in its terminal (a grooming question, a permission). Every change still lands as a reviewable result behind `maintainer.gate`, whoever asked for it.
 
 ## Technical design
 
@@ -428,14 +472,17 @@ You change the factory by asking for it. Overwatch is where you ask; the **maint
 
 **Overwatch sorts every request.** A question ("what's blocking #425?") it answers itself. A ticket action (start, pause, reorder) it sends to the daemon. A change to the factory it turns into a maintainer request, listed on Tickets with a factory tag and on Config under Pending changes.
 
-**The maintainer owns every configuration change.** You ask Overwatch, and Overwatch hands config work to the maintainer with `factory request`. Other agents send their config needs the same way: the learner files its promotions and suggestions as requests. Nothing else edits `.factory/` or the account config.
+**The maintainer owns every change to the factory** (its territory is in "The agents" above). You ask Overwatch, and Overwatch hands the work to the maintainer with `factory request`. Other agents ask it the same way: the learner with its promotions and suggestions, the babysitter with a comment that keeps coming back, Overwatch itself when it spots housekeeping. Nothing else edits `.factory/`, the account config, the factory's agents or its UI.
 
 **What the maintainer handles:**
 
 - **Configuration:** budgets, gates, `max_running`, tunables, the queue.
 - **The account config** (`~/.factory/config.yaml`: `plan`, the account's `budget.per_day`, `away`, `cloud`, `profile`). No repo holds that file, so the maintainer never edits it in place. `factory account propose <id>` copies it into the request's ticket folder as `ACCOUNT-CONFIG.yaml`, and the maintainer edits that copy. The factory check validates it against the account schema, keeps the copy it checked, and puts the diff on the PR (`ACCOUNT-CONFIG.md`). The daemon applies the checked copy only after the request merges, through the same gate (`maintainer.gate`, human by default), and keeps the old file as `config.yaml.bak-<time>-<id>`. If the file changed after the check, nothing is applied and the ticket's log says so. A request that changes only the account config opens no PR: it waits at the merge gate, and `m` applies it.
 - **Rules:** a new ready rule, hard stop, lint rule or never-unattended area.
-- **Blueprints and agents:** a new blueprint, a new stage, a new agent or a change to one's prompt.
+- **Blueprints:** a new blueprint drafted from what you describe ("a lane for database migrations, with a human gate before the migration runs"), or any edit to an existing one: stages, `next`, gates, retries. Each comes with a dry run.
+- **Agents:** a new repo agent for any repo, a change to one's prompt or model, or a change to a factory agent (`~/.factory/agents/`).
+- **Housekeeping:** clearing closed tickets and their folders, removing stale worktrees and Herdr workspaces, pruning branches the factory made. A cleanup lists what it will remove and waits at the gate like any change.
+- **The factory's look:** pages, layout and colours, as a PR against the factory app's own repo (its mods and themes), since you are the author.
 - **Migrations:** importing old Claude Code sessions into Runs and the decision log, migrating flow-stack's lessons, profile and playbooks (each built-in or repo playbook becomes a blueprint draft), and later, moving between versions of the factory's own schema.
 
 **Every change is a PR against `.factory/`.** The maintainer works in its own worktree, writes the files, runs the schema check, and for a blueprint does a dry run: it replays a few past tickets through the new graph and reports which path each took. The Blueprint page shows the draft graph beside the current one. Merging is a gate: `maintainer.gate: human` by default; small changes such as a budget can be set to `auto`.
@@ -567,6 +614,8 @@ Other blueprints sit in `blueprints/<name>.yaml`, such as a short one for lint f
 ### agents/\<name>.md: one role
 
 The same format as Claude Code agents: a YAML header, then the prompt in Markdown. The default agents are ported from flow-stack v1 (reviewer, checker, advocate, builder) and live in the new repo.
+
+Repo agents live here, in `.factory/agents/`. The factory agents (Overwatch, babysitter, maintainer, learner) use the same format but live in `~/.factory/agents/`, one set for every repo; the shipped defaults fill in any that's missing. Every agent's brief carries the map of its neighbours: each agent's name, territory and how to ask it.
 
 | Field | What it sets |
 | --- | --- |
@@ -727,6 +776,9 @@ Each milestone ends when its "done when" passes on a real ticket.
    - Done when: a chore blueprint with an auto merge gate runs for a week, with its revert rate on Home.
 6. **M6, Reviewing teammates' PRs.** Team discovery through `gh`, the review queue with risk order and fast lane, pending reviews on GitHub with independent checks, the low-risk gate, and learning from what you submit.
    - Done when: a teammate's PR arrives, its draft is ready before you open it, and its findings are waiting as your pending review on github.com.
+
+7. **M7, Agents with territories.** The factory agents move to `~/.factory/agents/`: one Overwatch for every repo, and the babysitter and learner become agents rather than daemon heuristics. Every brief carries the neighbour map, and any agent can ask another through a recorded request. The maintainer's territory grows to blueprints from a description, agents for any repo, housekeeping, and the factory's UI and theme.
+   - Done when: you ask Overwatch for a new blueprint, a stricter reviewer in one repo, a cleanup of merged tickets and a different accent colour, and each comes back from the maintainer as a reviewable change; and a learner finding reaches the maintainer as a request with no one relaying it.
 
 ## Risks and open questions
 
