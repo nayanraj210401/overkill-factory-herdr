@@ -1,11 +1,11 @@
 import { test, expect, afterEach } from "bun:test";
 import { cpSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { open, setMeta, setRepo, setWork } from "./db.ts";
 import { sh, startTicket, mergeTicket, type Run } from "./runner.ts";
 import { watchSessions } from "./cli.ts";
-import { branchSlug, openAgent, sessionState, worktreePath, worktreeRoot } from "./herdr.ts";
+import { branchSlug, openAgent, sessionState, withFactory, worktreePath, worktreeRoot } from "./herdr.ts";
 
 const realHome = process.env.HERDR_APP_HOME!;
 const realTrees = process.env.FACTORY_WORKTREES!;
@@ -43,7 +43,7 @@ test("an agent opens as a tab in the ticket's space, else a new space, else noth
   expect(openAgent(run(true), { ...o, space: null })).toBeNull(); // the preload's home has no app
   fakeApp();
   expect(openAgent(run(true), o)).toEqual(made);
-  expect(calls.at(-1)).toEqual(["herdr-app", "do", "tab.new", '{"space":"sp0","name":"plan","argv":["claude","go"],"focus":false}']);
+  expect(calls.at(-1)).toEqual(["herdr-app", "do", "tab.new", '{"space":"sp0","folder":"/wt","name":"plan","argv":["claude","go"],"focus":false}']);
   expect(openAgent(run(false), o)).toEqual(made); // the person closed sp0
   expect(calls.at(-1)).toEqual(["herdr-app", "do", "space.new", '{"folder":"/wt","argv":["claude","go"],"focus":false}']);
 });
@@ -124,4 +124,12 @@ test("a start that failed after making the worktree can simply be run again", ()
   db.query("UPDATE tickets SET state = 'queued'").run();
   setWork(db, 7, { worktree: null });
   expect(startTicket(db, { dir, repo, id: 7, run: ok })).toBe("t3"); // the branch alone is left: checked out again
+});
+
+test("an agent's command finds `factory` on its PATH, pointed at its own factory", () => {
+  const dir = join(mkdtempSync(join(tmpdir(), "fh-")), "acme-api");
+  const argv = withFactory(["sh", "-c", 'echo "$FACTORY_NAME"; factory help | head -1'], dir);
+  expect(argv.slice(0, 3)).toEqual(["env", `FACTORY_HOME=${dirname(dir)}`, "FACTORY_NAME=acme-api"]);
+  const r = Bun.spawnSync(argv, { cwd: tmpdir(), env: process.env });
+  expect(r.stdout.toString().split("\n").slice(0, 2)).toEqual(["acme-api", expect.stringContaining("factory <command>")]);
 });

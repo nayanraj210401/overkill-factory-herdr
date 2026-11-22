@@ -172,7 +172,9 @@ export const MIGRATIONS = [
 export function open(path: string): Database {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true, strict: true });
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+  // busy_timeout: the daemon and the CLI an agent runs share this file; a writer waits
+  // for the other's transaction (a PR push can take seconds) instead of failing.
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 30000;");
   const { user_version } = db.query("PRAGMA user_version").get() as { user_version: number };
   for (let v = user_version; v < MIGRATIONS.length; v++) {
     db.transaction(() => {

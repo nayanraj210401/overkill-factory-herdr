@@ -5,5 +5,5 @@ start: implement
 stages:
   implement: { agent: builder, next: [verify] }
   verify:    { check: tests, next: [pr], on_fail: implement, max_retries: 2 }
-  pr:        { requires: ready, output: PR.md, template: pr-readable, next: [merge] }
+  pr:        { agent: pr-writer, requires: ready, output: PR.md, template: pr-readable, next: [merge] }
   merge:     { gate: human, next: [end] }

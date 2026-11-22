@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { openPr, prBody, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
-import { closeSpace, openAgent, openTab, worktreePath } from "./herdr.ts";
+import { closeSpace, openAgent, openTab, toolPath, withFactory, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
 import { mergeOrder, repoOf, setWork, ticketRepos } from "./db.ts";
@@ -146,19 +146,22 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
   const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons)), o.dir, o.id, guard);
+  const cmd = withFactory(argv, o.dir); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
-  const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv });
+  // The ticket's first worktree stage: the other repos' shell tabs join its space with it.
+  const first = !db.query("SELECT 1 FROM sessions WHERE ticket = ? AND stage != 'groom' AND in_space = 1").get(o.id);
+  const made = openAgent(o.run, { folder: t.worktree, space: t.space, name: o.stage, argv: cmd });
   let terminal: string;
   if (made) {
     terminal = made.terminal;
     o.run(["hc", "label", terminal, ...labels]);
     db.query("UPDATE tickets SET space = ? WHERE id = ?").run(made.space, o.id);
-    // A new space: each other repo's worktree gets a shell tab in it.
-    if (made.space !== t.space) for (const r of repos.slice(1)) if (r.worktree) openTab(o.run, { space: made.space, folder: r.worktree, name: r.repo.slice(r.repo.indexOf("/") + 1) });
+    // A new space, or the first stage in grooming's: each other repo's worktree gets a shell tab in it.
+    if (made.space !== t.space || first) for (const r of repos.slice(1)) if (r.worktree) openTab(o.run, { space: made.space, folder: r.worktree, name: r.repo.slice(r.repo.indexOf("/") + 1) });
   } else {
     const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", name, "--cwd", t.worktree,
-      ...labels.flatMap((l) => ["--label", l]), ...argv]);
+      ...labels.flatMap((l) => ["--label", l]), ...cmd]);
     if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
     terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
   }
@@ -204,7 +207,7 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     if (!commands.length) { record(o.check, false, "factory.yaml has no quality_floor commands"); return false; }
     let ok = true;
     for (const c of commands) {
-      const r = o.run(["sh", "-c", c], o.worktree);
+      const r = o.run(["env", `PATH=${toolPath()}`, "sh", "-c", c], o.worktree);
       // Agents see the first failing lines; full logs stay out of the prompt (PRD 6.10).
       const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
       record(c, r.code === 0, r.code === 0 ? "passed" : `exit ${r.code}: ${tail}`);
@@ -213,8 +216,11 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     return crossCheck(db, { ...o, record }) && ok;
   }
   if (o.check === "evidence") {
-    // Every check's latest result must be a PASS, and there must be at least one.
-    const latest = db.query(`SELECT check_name, result FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { result: string }[];
+    // The quality floor runs now, on the work as it stands, so a PASS is always newer than
+    // the last edit (flow-stack's evidence.sh). Then every check's latest result must be a
+    // PASS, and there must be at least one. The evidence check's own rows don't count.
+    runCheck(db, { ...o, check: "tests" });
+    const latest = db.query(`SELECT check_name, result FROM evidence e WHERE ticket = ? AND check_name != 'evidence' AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { result: string }[];
     const ok = latest.length > 0 && latest.every((r) => r.result === "PASS");
     record("evidence", ok, ok ? `${latest.length} checks pass` : latest.length ? `${latest.filter((r) => r.result !== "PASS").length} failing` : "no checks recorded");
     return ok;
@@ -240,7 +246,7 @@ type BlueprintStage = Stage & { on_fail?: string; max_retries?: number; gate?: s
 
 // The current stage's work is over (an agent said so, its terminal exited, or a
 // check ran): close its session, then follow the blueprint until something waits.
-export function advance(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string; failed?: string }) {
+export function advance(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string; failed?: string; opened?: boolean }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
@@ -271,7 +277,7 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   return withNote(verdict?.undo ?? (() => {}), () => follow(db, { ...o, run, now, b, t, at, failed: o.failed ?? gate?.failed ?? verdict?.failed ?? null }));
 }
 
-function follow(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; b: Blueprint; t: Record<string, any>; at: string; failed: string | null }) {
+function follow(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; b: Blueprint; t: Record<string, any>; at: string; failed: string | null; opened?: boolean }) {
   const { run, now, b, t } = o;
   let at = o.at;
   let failed = o.failed;
@@ -291,6 +297,10 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
       }
       db.query("UPDATE tickets SET retries = ? WHERE id = ?").run(retries, o.id);
       to = stage.on_fail;
+    } else if (stage.requires === "ready" && stage.agent && at === o.at && !o.opened) {
+      // The pr stage's agent wrote PR.md: the ready rules decide whether the PR opens now
+      // (tryPr moves on once it has), or the stage waits and the daemon retries each tick.
+      return tryPr(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
     } else {
       // Retries count failures of one check; only that check passing clears them.
       if (stage.check) db.query("UPDATE tickets SET retries = 0 WHERE id = ?").run(o.id);
@@ -375,7 +385,7 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   const others = prs.slice(1).map((p) => `${p.repo}#${p.pr_number}`).join(", ");
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
     .run(o.id, `${t.pr_number == null ? "opened" : "updated"} PR #${prs[0].pr_number}`, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}${others ? `; with ${others}` : ""}`, now);
-  return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now }), pr: prs[0].pr_number };
+  return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, opened: true }), pr: prs[0].pr_number };
 }
 
 // New PRs of a cross-repo change didn't know each other's numbers: every body gets them.
@@ -573,7 +583,8 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
   const b = loadBlueprint(o.repo, t.blueprint);
   db.query("UPDATE tickets SET state = 'running', needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', 'resumed', ?)").run(o.id, now);
-  if ((b.stages[t.stage] as BlueprintStage | undefined)?.requires === "ready") {
+  // A pr stage with no agent only waits for its rules; one with an agent (it writes PR.md) reruns.
+  if ((b.stages[t.stage] as BlueprintStage | undefined)?.requires === "ready" && !b.stages[t.stage]?.agent) {
     enterStage(db, o.id, title(t.stage), null, plannedPath(b, t.stage).map(title), now);
     return { stage: t.stage, terminal: null };
   }

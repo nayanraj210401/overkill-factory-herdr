@@ -37,7 +37,7 @@ import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
 import { advance, answer, checkReady, readFactory, mergeTicket, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { migrateFlowStack } from "./migrate.ts";
-import { skipStep, setupSteps, skippedSteps, showSteps, writeSetup } from "./setup.ts";
+import { claudeConfig, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
@@ -83,6 +83,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   decide <ticket> <who> <what> [why] log a decision
   setup [--json]                     the first-run checklist: each step ok, missing or skipped, with its fix command
   setup skip|unskip <step>           set a step aside (it stays on the list; rerun setup any time)
+  setup trust                        mark the factory's folders trusted in Claude Code, so its agents never stop at that prompt
   setup write [--budget 3M/150k] [--budget-day 40M/2M] [--merge human|auto] [--max-running n] [--queue owner/project]
                                      write .factory/ on branch factory/setup (a temporary worktree; your checkout is untouched)
   migrate flow-stack [--dry-run]     copy decisions, past tasks and lessons count from ~/.flow-stack and .flow/; prints proposals
@@ -106,6 +107,16 @@ const FIELDS: Record<string, [string, (v: string) => unknown]> = {
 const WORK = new Set(["pr_number", "pr_watched", "pr_checked_at"]);
 function nullable(v: string) { return v === "" || v === "null" ? null : v; }
 function nullableNumber(v: string) { return v === "" || v === "null" ? null : Number(v); }
+
+// Only a terminal the factory labelled for this ticket, and never from tests.
+function closeFinished(terminal: string, ticket: number) {
+  if (process.env.FACTORY_TEST_SANDBOX) return;
+  try {
+    const t = JSON.parse(sh(["hc", "get", terminal, "--json"]).out);
+    if (t.labels?.["factory.ticket"] !== String(ticket)) return;
+  } catch { return; }
+  Bun.spawn(["sh", "-c", `sleep 5; hc kill '${terminal}' >/dev/null 2>&1`], { stdio: ["ignore", "ignore", "ignore"] }).unref();
+}
 
 const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory");
 
@@ -178,12 +189,16 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (sub === "skip" || sub === "unskip") {
         change(db, () => skipStep(db, rest[0] ?? "", sub === "skip"));
         log(`${rest[0]}: ${sub === "skip" ? "skipped" : "back on the list"}`);
+      } else if (sub === "trust") {
+        const added = trust();
+        log(added.length ? `Claude Code now trusts ${added.join(" and ")} (in ${claudeConfig()}), so the factory's agents don't stop at "do you trust this folder?"` : "Claude Code trusts the factory's folders already");
+        return;
       } else if (sub === "write") {
         const r = writeSetup({ repo: lead.path, name: getMeta(db, "name") ?? name, slug: lead.slug,
           basics: { budget: budgetFlag ?? undefined, budgetDay: budgetDayFlag ?? undefined, merge: mergeFlag ?? undefined, maxRunning: maxRunningFlag === null ? undefined : Number(maxRunningFlag), queue: queueFlag ?? undefined } });
         log(`${r.committed ? `committed ${r.sha} on` : "already up to date on"} ${r.branch}: ${r.files.join(", ")}\nyour checkout (${r.from}) is untouched; review the branch, then merge it: git merge ${r.branch}`);
         return;
-      } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | write [--budget …]]");
+      } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | trust | write [--budget …]]");
       else {
         const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db) });
         log(json ? JSON.stringify({ steps }) : showSteps(steps));
@@ -267,10 +282,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       // A held start still adds the ticket; it waits in the queue.
       const held = start ? startHold(db, lead.path, new Date()) : null;
       change(db, () => {
-        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now() });
+        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start });
         if (start && !held) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
       });
-      log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " queued"}`);
+      log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " added; the triage agent grooms it, and it starts once nothing is left to ask"}`);
       writeStatus(db, p.status);
       writeTicketFiles(db, p.dir, r.id);
       return;
@@ -299,8 +314,13 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     } else if (cmd === "stage-done") {
       const repoDir = needLead(db).path;
       let r: any = null;
+      const open = db.query("SELECT id, terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(Number(sub)) as { id: number; terminal: string }[];
       change(db, () => { r = advance(db, { dir: p.dir, repo: repoDir, id: Number(sub), failed: failReason ?? undefined }); });
       log(`#${sub}: ${r.questions ? `groomed, waiting on ${r.questions} answer${r.questions > 1 ? "s" : ""}` : r.groomed ? `groomed${r.started ? " and started" : ", queued"}` : r.parked ? `parked at ${r.stage}` : r.ready ? `ready (${r.stage})` : r.terminal ? `${r.stage} agent in ${r.terminal}` : `waiting at ${r.stage}`}`);
+      // The agent that said it's done is closed a few seconds later (it's usually the one
+      // running this command, so it sees the result first). Its transcript stays in Runs.
+      const ended = open.filter((s) => (db.query("SELECT ended_at FROM sessions WHERE id = ?").get(s.id) as { ended_at: string | null }).ended_at);
+      for (const s of ended) closeFinished(s.terminal, Number(sub));
     } else if (cmd === "budget") {
       const [text = ""] = rest;
       const [input, output] = text.split("/").map(parseTokens);
@@ -462,7 +482,11 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       log(`${s.factory.name}: ${s.tickets.length} tickets, daemon ${s.factory.daemon ? "on" : "off"} → ${p.status}`);
       return;
     } else if (cmd === "run") {
-      const tick = () => { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); };
+      // A tick that fails (a locked database, a gh hiccup) is logged; the next one tries again.
+      const tick = () => {
+        try { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); }
+        catch (e) { log(`factory: tick failed: ${(e as Error).message}`); }
+      };
       tick();
       log(`factory ${name}: writing ${p.status} every ${interval}s`);
       setInterval(tick, interval * 1000);
@@ -569,7 +593,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as
     { id: number; ticket: number; terminal: string; in_space: number; agent_seen: number; started_at: string }[];
   // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
-  for (const { id } of db.query("SELECT id FROM tickets WHERE state = 'running' AND stage = 'pr' AND location != 'cloud'").all() as { id: number }[]) {
+  // A pr stage whose agent is still writing PR.md waits for it.
+  for (const { id } of db.query(`SELECT id FROM tickets t WHERE state = 'running' AND stage = 'pr' AND location != 'cloud'
+      AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL)`).all() as { id: number }[]) {
     try {
       let r: any;
       change(db, () => { r = tryPr(db, { dir: p.dir, repo: repoDir, id, run }); });

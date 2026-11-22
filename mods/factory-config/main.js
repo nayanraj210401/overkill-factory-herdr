@@ -9,8 +9,12 @@ import { keyAction, clamp } from "./lib/keys.js";
 // The Config page: the daemon's service controls, the .factory/ files, the selected
 // one read-only, ⌘O to edit it in your own editor (docs/layouts/07-config.png).
 export default class FactoryConfig extends View {
+  // The lead repo's checkout holds .factory/; the sample data keeps one beside its status.json.
+  get dir() {
+    return `${status()?.factory?.path ?? root()}/.factory`;
+  }
+
   init(_props, cx) {
-    this.dir = `${root()}/.factory`;
     this.files = [];
     this.selected = null;
     this.error = null;

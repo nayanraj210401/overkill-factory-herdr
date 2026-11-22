@@ -3,15 +3,37 @@
 // and opens as an unnamed space, which Herdr nests under the repo's space. Each
 // stage's agent is a tab there. When the app isn't running (the daemon runs from
 // launchd), callers fall back to a free-floating `hc run`.
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Run } from "./runner.ts";
 
 // `bun test` started outside the repo root skips bunfig.toml's preload, and its tests
 // would open spaces, agents and worktrees in the person's own Herdr. Refuse instead.
 if (process.env.NODE_ENV === "test" && !process.env.FACTORY_TEST_SANDBOX)
   throw new Error("bun test ran without daemon/test-env.ts (bunfig.toml's preload); run it from the repo root");
+
+// An agent reports through the factory CLI (factory pick, stage-done, verdict…), so it
+// needs \`factory\` on its PATH and to know which factory it works for: its cwd (a ticket
+// folder or a worktree) doesn't name one. \`dir\` is the factory's data folder,
+// <FACTORY_HOME>/<name>; the command is a small script in <FACTORY_HOME>/bin that runs
+// this checkout's CLI with bun.
+// The PATH agents and checks run with: bun's own folder and Homebrew's first, so a
+// daemon started by launchd (whose PATH is /usr/bin:/bin) still finds the repo's tools.
+export const toolPath = () => [...new Set([dirname(process.execPath), "/opt/homebrew/bin", "/usr/local/bin", ...(process.env.PATH ?? "/usr/bin:/bin").split(":")])].join(":");
+
+export function withFactory(argv: string[], dir: string) {
+  const home = dirname(dir);
+  const bin = join(home, "bin");
+  const script = `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, "cli.ts")}' "$@"\n`;
+  const file = join(bin, "factory");
+  if (!existsSync(file) || readFileSync(file, "utf8") !== script) {
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(file, script);
+    chmodSync(file, 0o755);
+  }
+  return ["env", `FACTORY_HOME=${home}`, `FACTORY_NAME=${basename(dir)}`, `PATH=${bin}:${toolPath()}`, ...argv];
+}
 
 const appHome = () => process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");
 
@@ -40,7 +62,8 @@ export function openAgent(run: Run, o: { folder: string; space: string | null; n
     try { const m = JSON.parse(r.out); return r.code === 0 && m.terminal ? (m as Made) : null; } catch { return null; }
   };
   // A space the person closed is gone; the ticket then gets a new one.
-  return (o.space && tryDo("tab.new", { space: o.space, name: o.name, argv: o.argv, focus: false }))
+  // The tab opens in this agent's folder: a ticket's space starts in its ticket folder (grooming).
+  return (o.space && tryDo("tab.new", { space: o.space, folder: o.folder, name: o.name, argv: o.argv, focus: false }))
     || tryDo("space.new", { folder: o.folder, argv: o.argv, focus: false });
 }
 

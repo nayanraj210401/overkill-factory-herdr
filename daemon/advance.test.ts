@@ -1,9 +1,9 @@
 import { test, expect } from "bun:test";
 import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { open, setMeta, setRepo } from "./db.ts";
-import { advance, sh, startTicket, type Run } from "./runner.ts";
+import { advance, runCheck, sh, startTicket, type Run } from "./runner.ts";
 import { watchSessions } from "./cli.ts";
 import { recordVerdict } from "./ready.ts";
 import { existsSync, readFileSync } from "node:fs";
@@ -45,11 +45,12 @@ test("a feature ticket walks its agents, passes the evidence check, and waits at
   verdict("holdout", "PASS");
   expect(step()).toMatchObject({ stage: "review", terminal: "t5" });
   verdict("review", "PASS");
-  expect(step()).toMatchObject({ stage: "pr", waiting: true });
-  expect(started).toEqual(["spec", "plan", "implement", "holdout", "review"]);
+  expect(step()).toMatchObject({ stage: "pr", terminal: "t6" }); // the pr-writer agent writes PR.md
+  expect(step()).toMatchObject({ stage: "pr", waiting: true });   // then the ready rules decide; no PR.md yet
+  expect(started).toEqual(["spec", "plan", "implement", "holdout", "review", "pr"]);
   expect(ticket()).toMatchObject({ state: "running", stage: "pr" });
   expect((db.query("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL").get() as any).n).toBe(0);
-  expect((db.query("SELECT result, detail FROM evidence WHERE check_name = 'evidence'").get() as any)).toEqual({ result: "PASS", detail: "1 checks pass" });
+  expect((db.query("SELECT result, detail FROM evidence WHERE check_name = 'evidence'").get() as any)).toEqual({ result: "PASS", detail: "2 checks pass" }); // its own run of the quality floor, and the one before
 });
 
 test("a failing check goes back to on_fail, then parks after max_retries", () => {
@@ -90,7 +91,8 @@ test("a reviewer's blockers go to REVIEW.md and back to implement; a reviewer wi
 
 test("the tests check runs quality_floor in the worktree and records each command", () => {
   const pass = setup("chore", '"true"');
-  expect(pass.step()).toMatchObject({ stage: "pr", waiting: true }); // implement → verify(tests) → pr
+  expect(pass.step()).toMatchObject({ stage: "pr", terminal: "t2" }); // implement → verify(tests) → pr's writer
+  expect(pass.step()).toMatchObject({ stage: "pr", waiting: true });
   const fail = setup("chore", '"echo boom; exit 3"');
   expect(fail.step()).toMatchObject({ stage: "implement" });
   const row = fail.db.query("SELECT result, detail FROM evidence ORDER BY id DESC LIMIT 1").get() as any;
@@ -118,4 +120,26 @@ test("blockers a reviewer gave aren't written twice when the fix stage's agent f
   expect(existsSync(join(dir, "tickets/7/REVIEW.md"))).toBe(false);
   expect(step()).toMatchObject({ stage: "implement" });
   expect(readFileSync(join(dir, "tickets/7/REVIEW.md"), "utf8").match(/raw email key/g)).toHaveLength(1);
+});
+
+test("the evidence check runs the quality floor itself, and its own earlier failure never keeps it failing", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "factory-")), "factory.db"));
+  db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (1, 't', 'feature', '2026-11-21T10:00:00Z')").run();
+  const repo = mkdtempSync(join(tmpdir(), "repo-"));
+  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
+  let pass = false;
+  writeFileSync(join(repo, ".factory/factory.yaml"), "name: t\nquality_floor: [bun test]\n");
+  const calls: string[][] = [];
+  const run: Run = (argv) => (calls.push(argv), argv.includes("bun test") ? { code: pass ? 0 : 1, out: pass ? "3 pass" : "1 fail" } : { code: 0, out: "" });
+  const check = (now: string) => runCheck(db, { id: 1, repo, worktree: repo, check: "evidence", run, now });
+  expect(check("2026-11-21T10:01:00Z")).toBe(false); // the tests fail
+  // The command runs with bun's own folder on its PATH, as a launchd daemon's minimal PATH lacks it.
+  expect(calls[0].slice(0, 2)).toEqual(["env", expect.stringContaining(`PATH=${dirname(process.execPath)}:`)]);
+  pass = true;
+  expect(check("2026-11-21T10:02:00Z")).toBe(true);  // fixed: the floor ran again, and the earlier FAIL of evidence itself doesn't count
+  expect(db.query("SELECT check_name, result FROM evidence ORDER BY id").all()).toEqual([
+    { check_name: "bun test", result: "FAIL" }, { check_name: "evidence", result: "FAIL" },
+    { check_name: "bun test", result: "PASS" }, { check_name: "evidence", result: "PASS" },
+  ]);
 });

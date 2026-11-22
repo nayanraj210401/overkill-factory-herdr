@@ -73,3 +73,12 @@ test("the queue adds this repo's Ready issues assigned to you as grooming ticket
   expect(pollQueue(db, { queue: undefined, repo: "acme/api", run, now })).toEqual([]);
   expect(() => pollQueue(db, { queue: { github_project: "Engineering" }, repo: "acme/api", run, now })).toThrow("isn't owner/<number or title>");
 });
+
+test("a new ticket waits in grooming for the triage agent; one started right away is queued for its start", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "factory-")), "factory.db"));
+  const run: Run = () => ({ code: 0, out: "" });
+  const now = "2026-11-21T10:00:00Z";
+  newTicket(db, { text: "Add slugify", repo: "acme/api", blueprint: "feature", run, now, groom: true });
+  newTicket(db, { text: "Fix the build", repo: "acme/api", blueprint: "feature", run, now });
+  expect(db.query("SELECT title, state FROM tickets ORDER BY id").all()).toEqual([{ title: "Add slugify", state: "grooming" }, { title: "Fix the build", state: "queued" }]);
+});

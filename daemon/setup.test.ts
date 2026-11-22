@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, paths } from "./cli.ts";
 import { open } from "./db.ts";
-import { setupSteps, writeSetup, type Probe } from "./setup.ts";
+import { detectFloor, isTrusted, setupSteps, trust, writeSetup, type Probe } from "./setup.ts";
 import { buildStatus } from "./status.ts";
 import { migrateFlowStack, errRatio, parseProfile } from "./migrate.ts";
 import { validateStatus } from "../lib/status.js";
@@ -22,15 +22,15 @@ const repoWithCommit = () => {
   git(repo, "commit", "-q", "-m", "init");
   return repo;
 };
-const probe = (o: Partial<{ have: string[]; gh: boolean; service: string }> = {}): Probe => ({
-  has: (b) => (o.have ?? ["hc", "gh", "claude"]).includes(b), ghLoggedIn: () => o.gh ?? true, service: () => o.service ?? "running",
+const probe = (o: Partial<{ have: string[]; gh: boolean; service: string; trusted: boolean }> = {}): Probe => ({
+  has: (b) => (o.have ?? ["hc", "gh", "claude"]).includes(b), ghLoggedIn: () => o.gh ?? true, service: () => o.service ?? "running", trusted: () => o.trusted ?? true,
 });
 const by = (steps: ReturnType<typeof setupSteps>) => Object.fromEntries(steps.map((s) => [s.id, s.status]));
 
 test("the checklist names each missing tool with its fix, and a skipped step stays listed", () => {
   const repo = mkdtempSync(join(tmpdir(), "bare-"));
   const all = setupSteps({ repo, probe: probe() });
-  expect(by(all)).toEqual({ "herdr-core": "ok", gh: "ok", harness: "ok", service: "ok", queue: "missing", basics: "missing", "factory-dir": "missing" });
+  expect(by(all)).toEqual({ "herdr-core": "ok", gh: "ok", harness: "ok", trust: "ok", service: "ok", queue: "missing", basics: "missing", "factory-dir": "missing" });
   expect(all.find((s) => s.id === "factory-dir")!.fix).toBe("factory setup write");
 
   const bare = setupSteps({ repo, probe: probe({ have: [], service: "absent" }), skipped: ["service"] });
@@ -78,6 +78,9 @@ test("setup write commits .factory/ on factory/setup and leaves the checkout alo
   expect(yaml).toContain("per_ticket: { input: 2M, output: 100k }");
   expect(yaml).toContain("merge: auto");
   expect(yaml).toContain("max_running: 2");
+  // Grooming picks only blueprints it may start: address-review is the review-comments trigger's.
+  expect(yaml).toMatch(/blueprints: \[[^\]]*feature[^\]]*\]/);
+  expect(yaml).not.toMatch(/blueprints: \[[^\]]*address-review/);
   expect(git(repo, "log", "-1", "--format=%s", "factory/setup")).toContain("factory setup write");
   // Again with the same answers: nothing new to commit. With another: one more commit.
   expect(writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { budget: "2M/100k", merge: "auto", maxRunning: 2 } }).committed).toBe(false);
@@ -110,7 +113,7 @@ test("the CLI: setup lists steps, skip and unskip are stored, status.json carrie
   out.length = 0;
   run("setup", "--json");
   const steps = JSON.parse(out[0]).steps;
-  expect(steps.map((s: any) => s.id)).toEqual(["herdr-core", "gh", "harness", "service", "queue", "basics", "factory-dir"]);
+  expect(steps.map((s: any) => s.id)).toEqual(["herdr-core", "gh", "harness", "trust", "service", "queue", "basics", "factory-dir"]);
   expect(steps.find((s: any) => s.id === "service").status).toBe("missing"); // the sandbox has no launchd service
 
   run("setup", "skip", "service");
@@ -237,4 +240,31 @@ test("the profile and calibration parsers read flow-stack's shapes", () => {
   expect(errRatio("+60%")).toBe(1.6);
   expect(errRatio("1.5x")).toBe(1.5);
   expect(errRatio("a lot")).toBeNull();
+});
+
+test("trust marks the factory's folders in Claude Code's config, keeps what's there, and a parent's trust covers a child", () => {
+  const cfg = join(mkdtempSync(join(tmpdir(), "claude-")), ".claude.json");
+  writeFileSync(cfg, JSON.stringify({ theme: "dark", projects: { "/w/trusted": { hasTrustDialogAccepted: true, allowedTools: ["x"] } } }));
+  expect(isTrusted("/f/acme/tickets/1", cfg)).toBe(false);
+  expect(trust(["/f", "/w/trusted"], cfg)).toEqual(["/f"]); // /w/trusted was already
+  const after = JSON.parse(readFileSync(cfg, "utf8"));
+  expect(after.theme).toBe("dark");
+  expect(after.projects["/w/trusted"]).toEqual({ hasTrustDialogAccepted: true, allowedTools: ["x"] });
+  expect(after.projects["/f"].hasTrustDialogAccepted).toBe(true);
+  expect(isTrusted("/f/acme/tickets/1", cfg)).toBe(true);
+  expect(trust(["/f"], cfg)).toEqual([]); // nothing to add, nothing written
+  // The step: missing until trusted, and its fix is the command.
+  const repo = mkdtempSync(join(tmpdir(), "tr-"));
+  expect(setupSteps({ repo, probe: probe({ trusted: false }) }).find((s) => s.id === "trust")).toMatchObject({ status: "missing", fix: "factory setup trust" });
+});
+
+test("setup write's quality floor is the repo's own test command", () => {
+  const repo = mkdtempSync(join(tmpdir(), "fl-"));
+  expect(detectFloor(repo)).toEqual([]);
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { test: "bun test" } }));
+  expect(detectFloor(repo)).toEqual(["npm test"]);
+  writeFileSync(join(repo, "bun.lock"), "");
+  expect(detectFloor(repo)).toEqual(["bun run test"]);
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { test: "echo \"Error: no test specified\" && exit 1" } }));
+  expect(detectFloor(repo)).toEqual([]);
 });

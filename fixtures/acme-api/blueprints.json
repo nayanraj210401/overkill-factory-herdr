@@ -84,8 +84,8 @@
         },
         {
           "id": "pr",
-          "agent": null,
-          "role": null,
+          "agent": "pr-writer",
+          "role": "build",
           "check": null,
           "next": [
             "merge"
@@ -145,8 +145,8 @@
         },
         {
           "id": "pr",
-          "agent": null,
-          "role": null,
+          "agent": "pr-writer",
+          "role": "build",
           "check": null,
           "next": [
             "merge"
@@ -259,8 +259,8 @@
         },
         {
           "id": "pr",
-          "agent": null,
-          "role": null,
+          "agent": "pr-writer",
+          "role": "build",
           "check": null,
           "next": [
             "merge"

@@ -15,7 +15,7 @@ test("the sample blueprints.json keeps the contract", () => {
 test("stages follow each first next from the start; skipped ones come after", () => {
   assert.deepEqual(stageOrder(feature).map((s) => [s.id, s.onPath, s.who]), [
     ["spec", true, "spec-writer agent"], ["plan", true, "planner agent"], ["implement", true, "builder agent"], ["verify", true, "check: evidence"],
-    ["holdout", true, "checker agent"], ["review", true, "reviewer agent"], ["pr", true, "daemon"], ["merge", true, "you"],
+    ["holdout", true, "checker agent"], ["review", true, "reviewer agent"], ["pr", true, "pr-writer agent"], ["merge", true, "you"],
   ]);
   const skip = { start: "a", stages: [{ id: "a", next: ["c"], runs: 0 }, { id: "b", next: ["c"], runs: 0 }, { id: "c", next: ["end"], runs: 0 }] };
   assert.deepEqual(stageOrder(skip).map((s) => [s.id, s.onPath]), [["a", true], ["c", true], ["b", false]]);
