@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncate
 import { dirname, join } from "node:path";
 import { validateDir, validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
-import { openPr, prBody, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
+import { openPr, prBody, prText, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
 import { closeSpace, openAgent, openTab, toolPath, withFactory, worktreePath } from "./herdr.ts";
 import { answerQuestions, finishGrooming } from "./groom.ts";
 import { commentGate } from "./comments.ts";
@@ -23,6 +23,7 @@ import { loadPrompt, render } from "./prompts.ts";
 import { finishSlice, readSlices, sliceInHand } from "./slices.ts";
 import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
 import { chooseNext } from "./orchestrate.ts";
+import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -225,7 +226,7 @@ export function checkReady(db: Database, o: { dir: string; repo: string; id: num
 }
 
 // A check stage the daemon runs itself. Returns whether it passed, after recording evidence.
-export function runCheck(db: Database, o: { id: number; repo: string; worktree: string; check: string; run: Run; now: string }) {
+export function runCheck(db: Database, o: { id: number; repo: string; worktree: string; check: string; run: Run; now: string; dir?: string }) {
   const record = (name: string, ok: boolean, detail: string) =>
     db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(o.id, name, ok ? "PASS" : "FAIL", detail, o.now);
   if (o.check === "tests" || o.check === "lint") {
@@ -258,9 +259,29 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     record("factory validate", !bad.length, bad.length ? bad.map((r) => `${r.path}: ${r.errors[0]}`).join("; ").slice(0, 200) : "every .factory/ file passes");
     const outside = changedFiles(o.run, o.repo, o.worktree).filter((f) => !f.startsWith(".factory/"));
     record("only .factory/", !outside.length, outside.length ? `changed outside .factory/: ${outside.slice(0, 5).join(", ")}` : "every change is in .factory/");
-    return !bad.length && !outside.length;
+    const dry = bad.length || !o.dir ? true : dryRunChanged(db, { ...o, dir: o.dir, record });
+    return !bad.length && !outside.length && dry;
   }
   throw new Error(`unknown check "${o.check}"`);
+}
+
+// A changed blueprint gets a dry run: DRYRUN.md in the ticket's folder, which the PR body
+// carries (ready.ts). A draft whose graph names a stage that isn't there fails the check.
+function dryRunChanged(db: Database, o: { id: number; repo: string; worktree: string; run: Run; dir: string; record: (name: string, ok: boolean, detail: string) => void }) {
+  const out = join(o.dir, "tickets", String(o.id), "DRYRUN.md");
+  const files = changedFiles(o.run, o.repo, o.worktree).filter((f) => f === ".factory/blueprint.yaml" || /^\.factory\/blueprints\/[^/]+\.yaml$/.test(f));
+  const drafts = files.filter((f) => existsSync(join(o.worktree, f)));
+  if (!drafts.length) { if (existsSync(out)) unlinkSync(out); return true; }
+  try {
+    const parts = drafts.map((f) => dryRunMarkdown(dryRun(db, loadDraft(readFileSync(join(o.worktree, f), "utf8"), f.slice(".factory/".length)), 5)));
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, parts.join("\n"));
+    o.record("blueprint dry run", true, `${drafts.length} blueprint${drafts.length === 1 ? "" : "s"} replayed; DRYRUN.md goes on the PR`);
+    return true;
+  } catch (e) {
+    o.record("blueprint dry run", false, (e as Error).message.replace(/\s+/g, " ").slice(0, 200));
+    return false;
+  }
 }
 
 // Files the ticket's branch changed since it left the repo's checkout, committed or not.
@@ -367,7 +388,7 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
     if (next.check) {
       enterStage(db, o.id, title(to), `check: ${next.check}`, plannedPath(b, to).map(title), now);
       at = to;
-      failed = runCheck(db, { id: o.id, repo: o.repo, worktree: t.worktree, check: next.check, run, now }) ? null : `${next.check} check failed`;
+      failed = runCheck(db, { id: o.id, repo: o.repo, worktree: t.worktree, check: next.check, run, now, dir: o.dir }) ? null : `${next.check} check failed`;
       continue;
     }
     if (next.gate === "human") {
@@ -442,7 +463,7 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
 
 // New PRs of a cross-repo change didn't know each other's numbers: every body gets them.
 function linkPrs(o: { dir: string; id: number }, prs: { repo: string; worktree: string | null; pr_number: number }[], rules: ReturnType<typeof checkReady>, run: Run) {
-  const md = readFileSync(join(o.dir, "tickets", String(o.id), "PR.md"), "utf8");
+  const md = prText(o.dir, o.id);
   const bodyFile = join(o.dir, "tickets", String(o.id), ".pr-body.md");
   for (const p of prs) {
     writeFileSync(bodyFile, prBody(md, rules, prs.filter((x) => x !== p).map((x) => ({ repo: x.repo, pr: x.pr_number }))));
