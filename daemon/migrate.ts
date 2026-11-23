@@ -7,17 +7,19 @@
 //   <repo>/.flow/features/<id>.md   the feature map: owns globs and the verify driver's scenario (daemon/features.ts)
 //   <repo>/.claude/skills/verify-*/ the verify drivers the scenarios run
 //
-// The import (past tasks, decisions, lessons) goes into SQLite now, once each, so it is safe
-// to run again. The rest is configuration, so only the maintainer writes it: with
-// `--propose <request id>` the migration writes it into that request's worktree and folder
-// (profile into ACCOUNT-CONFIG.yaml, calibration and the feature map into factory.yaml) and
-// MIGRATION.md says what it did and what is left to do. The PR is the gate.
+// The import (past tasks, decisions, lessons) goes into SQLite, once each, so it is safe to
+// run again. The configuration is written in place, each file backed up first
+// (maintainer.ts): the profile into the account config, the calibration and the feature map
+// into the lead repo's .factory/factory.yaml. MIGRATION.md in the factory's folder says what
+// it did and what is left to do. The maintainer runs it when the person asks; nothing is
+// committed or merged.
 import type { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getMeta, setMeta } from "./db.ts";
 import { addLesson, exportPatch, nearDuplicate } from "./learn.ts";
-import { BLUEPRINT, proposeAccount } from "./maintainer.ts";
+import { backup } from "./maintainer.ts";
+import { accountFile } from "./account.ts";
 import { featureFiles, readFeatures, scenarioPaths } from "./features.ts";
 import type { Run } from "./runner.ts";
 import { LOCAL_IDS } from "./intake.ts";
@@ -94,7 +96,7 @@ export const tasteLine = (l: string) => l.replace(/^\d{4}-\d{2}-\d{2}\s*·\s*/, 
 // The factory's own files for ticket folders keep their names; flow-stack's EVIDENCE.md and STATUS.md would be rewritten by the daemon.
 const renamed = (f: string) => (f === "EVIDENCE.md" || f === "STATUS.md" ? f.replace(".md", "-flow.md") : f);
 
-export function migrateFlowStack(db: Database, o: { home: string; repo: string; dir: string; blueprints: string[]; dryRun: boolean; now: string; log: (s: string) => void; propose?: number; run?: Run }) {
+export function migrateFlowStack(db: Database, o: { home: string; repo: string; dir: string; blueprints: string[]; dryRun: boolean; now: string; log: (s: string) => void; run?: Run; account?: string }) {
   const { log } = o;
   const profilePath = join(o.home, ".flow-stack", "profile.md");
   const profile = existsSync(profilePath) ? parseProfile(text(profilePath)) : null;
@@ -142,7 +144,7 @@ export function migrateFlowStack(db: Database, o: { home: string; repo: string; 
 
   if (profile) {
     const f = profile.front;
-    log(`\nproposal from your profile (${o.propose ? "written into the request below" : "nothing is written; the maintainer writes it with --propose <request id>"}):`);
+    log(`\nfrom your profile (${o.dryRun ? "nothing is written in a dry run" : "written below"}):`);
     const map = [f.max_parallel_agents && `max_running: ${f.max_parallel_agents}`, f.build_model && `defaults: { harness: claude, model: ${f.build_model} }`].filter(Boolean);
     for (const l of map) log(`  ${l}`);
     if (f.handoff_at_context_pct) log(`  (handoff at ${f.handoff_at_context_pct}% of context: the factory hands off at 60% and stops at 80% already)`);
@@ -150,18 +152,18 @@ export function migrateFlowStack(db: Database, o: { home: string; repo: string; 
     if (profile.taste.length) log(`  taste (${profile.taste.length}), for the agent prompts:\n${profile.taste.map((r) => `    - ${tasteLine(r)}`).join("\n")}`);
     if (!map.length && !profile.rules.length && !profile.taste.length) log("  nothing in the profile to carry over");
     if (profile.calibration.length) {
-      log("\ncalibration, as default budgets (proposal only):");
+      log("\ncalibration, as default budgets:");
       for (const c of profile.calibration) log(`  ${c.type}: ${c.tasks} tasks, avg $ error ${c.dollars}`);
       const ratios = profile.calibration.map((c) => errRatio(c.dollars)).filter((r): r is number => r !== null && r > 1);
       if (ratios.length) log(`  your tasks cost up to ${Math.max(...ratios).toFixed(1)}x their estimate: consider budget.headroom: ${Math.max(...ratios).toFixed(1)} in factory.yaml`);
     } else log("\ncalibration: none recorded yet");
   }
-  if (o.propose && !o.dryRun) proposeChanges(db, { ...o, id: o.propose, profile });
+  if (!o.dryRun) writeChanges(db, { ...o, profile });
   if (o.dryRun) log("\ndry run: nothing was changed");
   return { tickets, decisions, lessons: added };
 }
 
-// ---- --propose <id>: the configuration, written into the maintainer's request ---------
+// ---- the configuration, written in place ----------------------------------------------
 
 // The profile's rules and taste merged into an account config's text: what's there stays,
 // new lines are added, the rest of the file (and its comments) is untouched.
@@ -181,28 +183,29 @@ export function withProfile(yaml: string, rules: string[], taste: string[]) {
 }
 
 // One setting at a time, as `factory learn export` writes it: a path through an inline map comes back as a note.
-function setKey(o: { worktree: string; folder: string; run: Run }, key: string, value: unknown): string | null {
-  const { patch, notes } = exportPatch(o.worktree, [{ key, value, reason: null, at: "" }]);
+function setKey(o: { repo: string; folder: string; run: Run }, key: string, value: unknown): string | null {
+  const { patch, notes } = exportPatch(o.repo, [{ key, value, reason: null, at: "" }]);
   if (!patch) return notes[0] ?? `${key}: nothing to change`;
   const file = join(o.folder, ".migration.patch");
   writeFileSync(file, `${patch}\n`);
-  const r = o.run(["git", "-C", o.worktree, "apply", "--unidiff-zero", file]);
+  const r = o.run(["git", "-C", o.repo, "apply", "--unidiff-zero", file]);
   return r.code === 0 ? null : `${key}: git apply failed: ${r.out.slice(0, 120)}`;
 }
 
 const tracked = (run: Run, repo: string, path: string) => run(["git", "-C", repo, "ls-files", "--error-unmatch", path]).code === 0;
 
-export function proposeChanges(db: Database, o: { dir: string; repo: string; id: number; profile: Profile | null; now: string; log: (s: string) => void; run?: Run }) {
+export function writeChanges(db: Database, o: { dir: string; repo: string; profile: Profile | null; now: string; log: (s: string) => void; run?: Run; account?: string }) {
   const run = o.run ?? ((argv, cwd) => { const r = Bun.spawnSync(argv, { cwd }); return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() }; });
-  const t = db.query("SELECT blueprint, worktree, state FROM ticket_lead WHERE id = ?").get(o.id) as { blueprint: string; worktree: string | null; state: string } | null;
-  if (!t || t.blueprint !== BLUEPRINT) throw new Error(`#${o.id} isn't a request for the maintainer`);
-  if (!t.worktree || !existsSync(t.worktree)) throw new Error(`#${o.id} has no worktree; the maintainer runs --propose from its own ticket`);
-  if (!existsSync(join(t.worktree, ".factory", "factory.yaml"))) throw new Error(`#${o.id}'s worktree has no .factory/factory.yaml to write into`);
-  const folder = join(o.dir, "tickets", String(o.id));
-  mkdirSync(folder, { recursive: true });
-  const done: string[] = [], todo: string[] = [];
-  const ctx = { worktree: t.worktree, folder, run };
+  const factoryFile = join(o.repo, ".factory", "factory.yaml");
+  mkdirSync(o.dir, { recursive: true });
+  const done: string[] = [], todo: string[] = [], backups: string[] = [];
+  const kept = new Set<string>();
+  // Each file once, as it was before the migration touched it.
+  const keep = (file: string) => { if (kept.has(file)) return; kept.add(file); const b = backup(file, o.now); if (b) backups.push(b); };
+  const ctx = { repo: o.repo, folder: o.dir, run };
   const set = (key: string, value: unknown, why: string) => {
+    if (!existsSync(factoryFile)) { todo.push(`Set \`${key}: ${value}\` in factory.yaml (${why}): ${o.repo} has no .factory/factory.yaml yet`); return; }
+    keep(factoryFile);
     const note = setKey(ctx, key, value);
     if (note) todo.push(`Set \`${key}: ${value}\` in factory.yaml by hand (${why}): ${note}`);
     else done.push(`\`${key}: ${value}\` in factory.yaml (${why})`);
@@ -211,9 +214,15 @@ export function proposeChanges(db: Database, o: { dir: string; repo: string; id:
   // Profile rules and taste: the account config's profile, which every stage brief reads.
   const p = o.profile;
   if (p && (p.rules.length || p.taste.length)) {
-    const file = proposeAccount(o.dir, o.id);
-    writeFileSync(file, withProfile(readFileSync(file, "utf8"), p.rules, p.taste.map(tasteLine)));
-    done.push(`Profile: ${p.rules.length} rules and ${p.taste.length} taste lines in the account config's \`profile:\`, which every stage brief reads (ACCOUNT-CONFIG.yaml; applied when this merges)`);
+    const file = o.account ?? accountFile();
+    const before = existsSync(file) ? readFileSync(file, "utf8") : "# ~/.factory/config.yaml: what belongs to you in every factory (plan, budget, away, cloud, profile)\n";
+    const after = withProfile(before, p.rules, p.taste.map(tasteLine));
+    if (after !== before) {
+      keep(file);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, after);
+    }
+    done.push(`Profile: ${p.rules.length} rules and ${p.taste.length} taste lines in the account config's \`profile:\` (${file}), which every stage brief reads`);
   }
   // The front matter and the calibration: factory.yaml.
   if (p?.front.max_parallel_agents && /^\d+$/.test(p.front.max_parallel_agents)) set("max_running", Number(p.front.max_parallel_agents), "the profile's max_parallel_agents");
@@ -234,10 +243,10 @@ export function proposeChanges(db: Database, o: { dir: string; repo: string; id:
     else {
       let dir = ".flow/features";
       if (!tracked(run, o.repo, ".flow/features")) {
-        // Not in git: a copy under .factory/ goes with the PR, so every worktree has it.
+        // Not in git: a copy under .factory/, which every ticket reads from this checkout.
         dir = ".factory/features";
-        mkdirSync(join(t.worktree, dir), { recursive: true });
-        for (const f of featureFiles(join(o.repo, ".flow", "features"))) copyFileSync(join(o.repo, ".flow", "features", f), join(t.worktree, dir, f));
+        mkdirSync(join(o.repo, dir), { recursive: true });
+        for (const f of featureFiles(join(o.repo, ".flow", "features"))) { keep(join(o.repo, dir, f)); copyFileSync(join(o.repo, ".flow", "features", f), join(o.repo, dir, f)); }
       }
       set("verify.features", dir, `${withScenario} feature scenario${withScenario === 1 ? "" : "s"}${drivers.length ? ` driven by ${drivers.join(", ")}` : ""}; a ticket runs the ones whose owns: globs it touches`);
       if (dir === ".factory/features") done.push(`Copied the feature map into .factory/features/ (.flow/features isn't in git); flow-stack's own copy is unchanged`);
@@ -250,10 +259,12 @@ export function proposeChanges(db: Database, o: { dir: string; repo: string; id:
   const md = [
     "## Migrated from flow-stack", "",
     `Imported into the factory's database (already, once each): ${imported.n} past tasks as merged tickets with their decisions, and ${lessons.n} lessons in the lesson store.`, "",
-    "### In this change", "", ...(done.length ? done.map((d) => `- ${d}`) : ["- Nothing to change in the configuration."]), "",
+    "### Written", "", ...(done.length ? done.map((d) => `- ${d}`) : ["- Nothing to change in the configuration."]), "",
+    "### Backups", "", ...(backups.length ? backups.map((b) => `- ${b} (factory restore ${b} puts it back)`) : ["- None: no file was there before."]), "",
     "### Left to do", "", ...(todo.length ? todo.map((d) => `- ${d}`) : ["- Nothing."]), "",
   ].join("\n");
-  writeFileSync(join(folder, "MIGRATION.md"), md);
-  o.log(`\nwritten for #${o.id}:\n${done.map((d) => `  ✓ ${d}`).join("\n") || "  nothing to change"}${todo.length ? `\nleft to do (in MIGRATION.md):\n${todo.map((d) => `  - ${d}`).join("\n")}` : ""}`);
-  return { done, todo };
+  writeFileSync(join(o.dir, "MIGRATION.md"), md);
+  o.log(`\nwritten:\n${done.map((d) => `  ✓ ${d}`).join("\n") || "  nothing to change"}${backups.length ? `\nbackups:\n${backups.map((b) => `  ${b}`).join("\n")}` : ""}${todo.length ? `\nleft to do (in ${join(o.dir, "MIGRATION.md")}):\n${todo.map((d) => `  - ${d}`).join("\n")}` : ""}`);
+  setMeta(db, "flow_migrated_at", o.now);
+  return { done, todo, backups };
 }

@@ -57,7 +57,7 @@ Start small: one ticket at a time, a low daily budget, and a human merge gate. A
 | `x` / `u` | send a PR back with a note / answer a parked ticket |
 | `p` / `b` / `d` | pause or resume / change the budget / diff |
 
-You change the factory by asking Overwatch ("add a blueprint for migrations", "turn on the maintenance agent"). The maintainer agent does the work as a reviewable PR against `.factory/`.
+You change the factory by asking Overwatch ("add a blueprint for migrations", "turn on the maintenance agent"). The maintainer agent makes the change in place, in your local `.factory/` and `~/.factory/`, backs up each file first, and tells you what it changed: there is nothing to merge.
 
 ## Status
 

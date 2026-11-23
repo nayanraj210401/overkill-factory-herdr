@@ -15,6 +15,7 @@ export const PLACEHOLDERS: Record<string, string[]> = {
   stage: [...TICKET, "neighbours", "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "fix_brief", "slice", "shared", "publish"],
   handoff: [...TICKET, "neighbours", "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot", "tail", "publish_handoff"],
   overwatch: ["neighbours", "agent.prompt", "home", "factories"],
+  maintainer: ["neighbours", "agent.prompt", "home", "factories", "app", "notes"],
 };
 export const placeholdersFor = (name: string) => PLACEHOLDERS[name] ?? PLACEHOLDERS.stage;
 

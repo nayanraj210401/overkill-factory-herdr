@@ -23,8 +23,8 @@ import { exampleFiles, examplesDir, factoryAgentFiles, factoryAgentsDir, install
 import { installSkills, skillFiles, skillFileErrors, skillsDir } from "./skills.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
-import { applyMerged, isKind, proposeAccount, proposeExample, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
-import { cleanupPlan, planMarkdown, proposeCleanup } from "./cleanup.ts";
+import { backup, closeRetiredRequests, liveMaintainer, maintainer as startMaintainer, restore } from "./maintainer.ts";
+import { cleanupDir, cleanupPlan, performCleanup, planMarkdown, proposeCleanup } from "./cleanup.ts";
 import { learnerDigest, learnerDue, learnerHold, learningHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
 import { noteAttention, waiting } from "./attention.ts";
 import { watchPrs } from "./watch.ts";
@@ -49,9 +49,10 @@ import { learningMetrics, type LearningMetrics } from "./experiments.ts";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
-import { liveOverwatch, overwatch } from "./overwatch.ts";
+import { overwatch } from "./overwatch.ts";
+import { liveSession, SESSIONS } from "./globals.ts";
 import { liveRoster, rosterText, writeLive } from "./live.ts";
-import { ask as askAgent, askerOf, askTarget, deliverToOverwatch, deliverToRepoAgents, doneAsk, doneAsks, noteText, openAsks, type AskResult } from "./ask.ts";
+import { ask as askAgent, askerOf, askTarget, deliverToGlobal, deliverToRepoAgents, doneAsk, doneAsks, noteText, openAsks, type AskResult, type Live } from "./ask.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, restoreLesson, retireLesson, setOverride, undoOverride, UPKEEP_EVERY, upkeepLessons } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
@@ -68,18 +69,17 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
-  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request, back as a change you merge; takes --kind and --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run), or a repo agent as <owner/name>:<agent> (a bare <agent> is the asker's own repo's; a note typed into its live session there, else its next brief). A repo agent asks the factory agents and its own repo's; another repo's goes through overwatch
+  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request: typed into its terminal, which starts if it isn't running; takes --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run), or a repo agent as <owner/name>:<agent> (a bare <agent> is the asker's own repo's; a note typed into its live session there, else its next brief). A repo agent asks the factory agents and its own repo's; another repo's goes through overwatch
   asks [agent] [--json] | asks done <id>  the open notes (to one agent) / mark one handled
-  request [--kind k] [--repo owner/name] <the change…>  ask the maintainer, for you, for a change to the factory itself; it comes back as a change you merge.
-                                     kinds: config (.factory/, the account config), blueprint, agents (repo or factory agents),
-                                     cleanup (housekeeping), look (the factory app's pages and colours, a PR to its develop); guessed from the words
-  account propose <id>               the maintainer's copy of ~/.factory/config.yaml to edit, in the request's folder (applied when the request merges)
+  request [--repo owner/name] <the change…>  ask the maintainer, for you, for a change to the factory itself (config, a blueprint, an agent,
+                                     a cleanup, a migration, the look); it edits the local files in place, with backups, and says what it changed
+  maintainer [--json]                start the maintainer agent, or print the live one's terminal
+  backup <file…>                     copy each file into $FACTORY_HOME/backups/<when>/ before changing it; prints where
+  restore <backup>                   put a backup back over its file (what is there now is backed up first)
   agents live [--json]               every agent running for every factory (repo, ticket, PR, stage, status, terminal, tokens) and every repo; the daemon writes it to ~/.factory/agents-live.json each tick
-  agents propose <id> <name>         the maintainer's copy of a factory agent (~/.factory/agents/<name>.md) to edit, in the request's folder (applied when it merges)
-  examples propose <id> <name> [--from <example>]  the maintainer's copy of an example agent (~/.factory/examples/agents/<name>.md) to edit; a new one starts
-                                     from --from; emptied, it removes the example (applied when it merges)
-  cleanup [--dry-run] [--days N] [--folders] [--propose <id>]  housekeeping: --dry-run lists what would go (tickets finished N days ago, default 14);
-                                     --propose writes CLEANUP.md into a cleanup request; with neither, it files the request ("clean up")
+  cleanup [--dry-run|--propose|--run] [--days N] [--folders]  housekeeping (tickets finished N days ago, default 14): --dry-run lists what would go;
+                                     --propose writes the list to <factory>/cleanup/ (narrow CLEANUP.json); --run removes what it lists, each re-checked;
+                                     alone, it asks the maintainer to clean up
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
   repos <id> owner/name…             the repos a ticket that hasn't started works in (the lead is always one)
@@ -106,8 +106,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   away on|off                        you're away, in every factory: away: (config.yaml, then factory.yaml) applies; Home shows a digest when you're back
   learn set <key> <value> [--why reason]  tune a setting learn.tunable lists, for tickets that start from now on
   learn undo <key> | learn list      drop an override / show the active ones beside the file's value
-  learn export                       print the edits that make the overrides permanent, as a patch (never writes .factory/)
-  learn suggest <the change…> --why <evidence>  the learner files a change outside learn.tunable as a maintainer request, with its evidence
+  learn export                       print the edits that make the overrides permanent, as a patch (never writes .factory/; the maintainer applies it)
+  learn suggest <the change…> --why <evidence>  the learner asks the maintainer for a change outside learn.tunable, with its evidence
   learn digest [--json]              what the learner agent reads: outcomes by setting, the target's trend, lessons, repeated comments
   learn run                          run the learner agent now (budget.learning, warmup and learn.pause_above still apply)
   learn restore <id>                 undo the daily lesson upkeep (or lesson retire): a merged lesson takes its hits back, a retired one goes back into briefs
@@ -135,8 +135,9 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   setup write [--budget 3M/150k] [--budget-day 40M/2M] [--merge human|auto] [--max-running n] [--queue owner/project]
                                      write .factory/ into the lead repo's checkout, never committed (it stays local: /.factory/
                                      goes in .git/info/exclude); a file already there is kept
-  migrate flow-stack [--dry-run] [--propose <id>]  import past tasks, decisions and lessons from ~/.flow-stack and .flow/ (once each); --propose writes the profile, calibration and feature map into a maintainer request
-  setup migrate                      accept setup's flow-stack offer: a maintainer request that migrates it, as a PR
+  migrate flow-stack [--dry-run]     import past tasks, decisions and lessons from ~/.flow-stack and .flow/ (once each), and write the profile, calibration
+                                     and feature map into the account config and .factory/factory.yaml in place, with backups (MIGRATION.md says what)
+  setup migrate                      accept setup's flow-stack offer: asks the maintainer to migrate it
   health [trigger]                   run the full suite on each repo's default branch now, in a throwaway worktree; a failure files one bugfix ticket, a pass closes it
   bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
   claude [--json]                    which claude every factory session runs (claude.path in config.yaml, else the newest), and the others found
@@ -173,6 +174,35 @@ function closeFinished(terminal: string, ticket: number) {
 }
 
 const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory");
+
+// A global agent's live terminal (globals.ts).
+const live: Live = (agent) => liveSession(sh, agent);
+
+// A request just asked of the maintainer: typed into its live terminal, else it starts with the
+// request in its brief. Run inside the request's change. Says where the request went.
+function handTo(db: Database, r: AskResult, name?: string) {
+  if (r.delivered) return "typed into the maintainer's terminal";
+  try {
+    const m = startMaintainer({ db, run: sh, now: new Date().toISOString(), name });
+    return m.started ? `the maintainer started in ${m.terminal} with it` : `the maintainer runs in ${m.terminal}; it gets it on the next tick`;
+  } catch (e) {
+    return `the maintainer isn't running and didn't start (${(e as Error).message.split("\n")[0].slice(0, 120)}); it gets it when it next starts (factory maintainer)`;
+  }
+}
+
+// Every tick: requests waiting (from the learner, say) while no maintainer runs start one, at
+// most every 10 minutes, so a start that fails isn't retried on every tick.
+function wakeMaintainer(db: Database, name: string, log: (s: string) => void) {
+  if (!openAsks(db, "maintainer").some((a) => !a.delivered_at) || liveMaintainer(sh)) return;
+  const last = getMeta(db, "maintainer_woken_at");
+  if (last && Date.now() - Date.parse(last) < 600_000) return;
+  setMeta(db, "maintainer_woken_at", new Date().toISOString());
+  try {
+    let m!: { terminal: string };
+    change(db, () => { m = startMaintainer({ db, run: sh, now: new Date().toISOString(), name }); });
+    log(`factory ${name}: the maintainer started in ${m.terminal} for the requests waiting`);
+  } catch (e) { log(`factory ${name}: starting the maintainer: ${(e as Error).message}`); }
+}
 
 export function paths(name: string, home = factoryHome()) {
   const dir = join(home, name);
@@ -215,10 +245,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const why = flag(args, "why");
   const source = flag(args, "source");
   const scope = flag(args, "scope");
-  const propose = flag(args, "propose");
   const fromFlag = flag(args, "from");
   const aboutFlag = flag(args, "ticket");
-  const kindFlag = flag(args, "kind");
   const daysFlag = flag(args, "days");
   const p = paths(name);
   const all = args.includes("--all");
@@ -227,7 +255,9 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const dryRun = args.includes("--dry-run");
   const keepsWork = args.includes("--keeps-work");
   const folders = args.includes("--folders");
-  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work", "--folders"].includes(a));
+  const propose = args.includes("--propose");
+  const runFlag = args.includes("--run");
+  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work", "--folders", "--propose", "--run"].includes(a));
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0], login: loginFlag ?? undefined });
@@ -246,10 +276,25 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     const r = liveRoster({ run: sh, now: now() });
     return log(json ? JSON.stringify(r, null, 2) : rosterText(r));
   }
+  // Backups of what the maintainer changes (maintainer.ts): no factory needed, files only.
+  if (cmd === "backup") {
+    const files = [sub, ...rest].filter(Boolean);
+    if (!files.length) throw new Error("usage: factory backup <file…>");
+    for (const f of files) {
+      const b = backup(f, now());
+      log(b ? `${resolve(f)} → ${b} (factory restore ${b} puts it back)` : `${resolve(f)}: no file yet, nothing to back up (undo is deleting it)`);
+    }
+    return;
+  }
+  if (cmd === "restore") {
+    if (!sub) throw new Error("usage: factory restore <backup>");
+    const r = restore(sub, now());
+    return log(`${r.file} is back as it was in ${sub}${r.was ? `; what was there is in ${r.was}` : ""}`);
+  }
   if (cmd === "validate") {
-    // An account config (the maintainer's ACCOUNT-CONFIG.yaml proposal) is checked as one.
-    const accountLike = sub && /(^|\/)(ACCOUNT-CONFIG|config)\.yaml$/.test(sub) && existsSync(sub) && statSync(sub).isFile();
-    // A single agent file (a factory agent's FACTORY-AGENTS/<name>.md copy, say) is checked as an agent.
+    // An account config (~/.factory/config.yaml, or a copy of it) is checked as one.
+    const accountLike = sub && /(^|\/)config\.yaml$/.test(sub) && existsSync(sub) && statSync(sub).isFile();
+    // A single agent file (a factory agent's ~/.factory/agents/<name>.md, say) is checked as an agent.
     const agentLike = sub && !accountLike && sub.endsWith(".md") && existsSync(sub) && statSync(sub).isFile();
     const own = sub ?? ownFactory(p.db);
     const results = accountLike ? [{ path: sub, errors: validateAccount(readFileSync(sub, "utf8")) }]
@@ -329,19 +374,20 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         log(r.tracked.length ? trackedWarning(lead.slug, r.tracked.length) : ".factory/ stays on this machine: it's in .git/info/exclude, never committed or pushed");
         return;
       } else if (sub === "migrate") {
-        // You accepted the offer: the maintainer migrates flow-stack, and it comes back as a PR.
+        // You accepted the offer: the maintainer migrates flow-stack, in place.
         const open = migrationRequest(db);
-        if (open && !["merged", "closed"].includes(open.state)) return log(`#${open.id} already asks the maintainer to migrate flow-stack (${open.state})`);
+        if (open?.state === "migrated") return log(`flow-stack is migrated already (${open.at}); factory migrate flow-stack runs it again`);
+        if (open) return log(`note #${open.id} already asks the maintainer to migrate flow-stack`);
         const found = realProbe().flowStack?.(lead.path) ?? [];
         if (!found.length) throw new Error("no flow-stack here to migrate: no ~/.flow-stack/profile.md, no .flow/ in the repo, no flow-stack plugin");
-        let r: any = null;
+        let r!: AskResult, where = "";
         change(db, () => {
-          r = request(db, { text: MIGRATION_REQUEST, kind: "config", repo: lead.slug, run: sh, now: now(), dir: p.dir, evidence: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --propose <this ticket's id>\`, then review what it wrote and finish what MIGRATION.md lists.` });
-          setMeta(db, MIGRATION_META, String(r.id));
+          r = askAgent(db, { to: "maintainer", text: MIGRATION_REQUEST, from: "you", slug: lead.slug, run: sh, now: now(), name, live, why: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --name ${name}\`, then read what it wrote and finish what MIGRATION.md lists.` });
+          setMeta(db, MIGRATION_META, String(r.ask.id));
+          where = handTo(db, r, name);
         });
-        log(`#${r.id}: the maintainer migrates flow-stack (found ${found.join(", ")}); it comes back as a PR for you`);
+        log(`note #${r.ask.id}: the maintainer migrates flow-stack (found ${found.join(", ")}); ${where}`);
         writeStatus(db, p.status);
-        writeTicketFiles(db, p.dir, r.id);
         return;
       } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | trust | migrate | write [--budget …]]");
       else {
@@ -359,11 +405,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         return;
       }
     } else if (cmd === "migrate") {
-      if (sub !== "flow-stack") throw new Error("usage: factory migrate flow-stack [--dry-run] [--propose <request id>]");
-      if (propose !== null && !Number.isInteger(Number(propose))) throw new Error("--propose needs the maintainer request's ticket id");
+      if (sub !== "flow-stack") throw new Error("usage: factory migrate flow-stack [--dry-run]");
       const lead = needLead(db);
       const listed = existsSync(join(lead.path, ".factory", "blueprints")) ? readdirSync(join(lead.path, ".factory", "blueprints")).map((f) => f.replace(/\.yaml$/, "")) : [];
-      change(db, () => { migrateFlowStack(db, { home: process.env.HOME ?? homedir(), repo: lead.path, dir: p.dir, blueprints: listed, dryRun, now: now(), log, propose: propose === null ? undefined : Number(propose), run: sh }); });
+      change(db, () => { migrateFlowStack(db, { home: process.env.HOME ?? homedir(), repo: lead.path, dir: p.dir, blueprints: listed, dryRun, now: now(), log, run: sh }); });
     } else if (cmd === "repo") {
       if (sub === "add") {
         const [slug] = rest;
@@ -464,22 +509,19 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       writeStatus(db, p.status);
     } else if (cmd === "ask" || cmd === "request") {
       // One agent asks another (ask.ts). `factory request` is asking the maintainer for the
-      // person: Overwatch runs it once they agree, so it is from you unless --from says otherwise.
+      // person (Overwatch runs it when they tell it to), so it is from you unless --from says otherwise.
       const lead = needLead(db);
       const [to, words] = cmd === "request" ? ["maintainer", [sub, ...rest]] : [sub ?? "", rest];
       const about = aboutFlag ?? process.env.FACTORY_TICKET ?? null;
       if (about !== null && !Number.isInteger(Number(about))) throw new Error("--ticket takes the ticket's id");
-      if (kindFlag !== null && !isKind(kindFlag)) throw new Error(`--kind is one of ${REQUEST_KINDS.join(", ")}`);
-      let r!: AskResult;
+      let r!: AskResult, toMaintainer = "";
       change(db, () => {
         r = askAgent(db, { to, text: words.filter(Boolean).join(" "), why, from: cmd === "request" ? fromFlag ?? "you" : askerOf(fromFlag), fromRepo: process.env.FACTORY_REPO ?? null, about: about === null ? null : Number(about),
-          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(sh), requestKind: kindFlag ?? undefined, target: repo !== "unknown" ? repo : undefined });
+          slug: lead.slug, run: sh, now: now(), name, live, target: repo !== "unknown" ? repo : undefined });
+        if (r.ask.to === "maintainer") toMaintainer = handTo(db, r, name);
       });
       writeStatus(db, p.status);
-      if (r.kind === "request") {
-        writeTicketFiles(db, p.dir, r.id);
-        return log(`#${r.id} ${r.title}: a ${r.requestKind} request for the maintainer from ${r.ask.from}, in ${r.repo}; it starts when a slot is free, and the change comes back for you to merge`);
-      }
+      if (toMaintainer) return log(`note #${r.ask.id} for the maintainer, from ${r.ask.from}: ${toMaintainer}`);
       const where = r.ask.toRepo ? (r.delivered ? "typed into its live session" : `no session of it is live in ${r.ask.toRepo}: its next one there gets it`)
         : r.ask.to === "overwatch" ? (r.delivered ? "typed into Overwatch's terminal, and in Needs you" : "in Needs you; Overwatch gets it when its terminal is live") : `waits for the ${r.ask.to}'s next run`;
       return log(`note #${r.ask.id} for ${askTarget(r.ask)}, from ${r.ask.from}: ${where}`);
@@ -497,47 +539,31 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (!list.length) log(`no open notes${sub ? ` for ${sub}` : ""}`);
       for (const a of done) log(`Note #${a.id} from ${a.from === "you" ? "the person" : a.from}${a.about ? ` about #${a.about}` : ""}: ${a.text} [done]`);
       return;
-    } else if (cmd === "account") {
-      // The account config isn't in any repo: the maintainer edits a copy in the request's folder.
-      if (sub !== "propose" || !Number.isInteger(Number(rest[0]))) throw new Error("usage: factory account propose <request id>");
-      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
-      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
-      log(`${proposeAccount(p.dir, Number(rest[0]))}: edit this copy; the factory check validates it and the PR shows the diff. It applies when the request merges.`);
-      return;
-    } else if (cmd === "agents") {
-      // The factory agents aren't in any repo: the maintainer edits a copy in the request's folder.
-      if (sub !== "propose" || !Number.isInteger(Number(rest[0])) || !rest[1]) throw new Error("usage: factory agents propose <request id> <agent name>");
-      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
-      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
-      log(`${proposeFactoryAgent(p.dir, Number(rest[0]), rest[1])}: edit this copy; the factory check validates it and the PR shows the diff. It applies when the request merges.`);
-      return;
-    } else if (cmd === "examples") {
-      // The example library isn't in any repo either: the same, in EXAMPLES/ in the request's folder.
-      if (sub !== "propose" || !Number.isInteger(Number(rest[0])) || !rest[1]) throw new Error("usage: factory examples propose <request id> <example name> [--from <example>]");
-      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
-      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
-      log(`${proposeExample(p.dir, Number(rest[0]), rest[1], fromFlag ?? undefined)}: edit this copy (empty it to remove the example); the factory check validates it and the PR shows the diff. It applies when the request merges.`);
-      return;
     } else if (cmd === "cleanup") {
       const days = daysFlag === null ? undefined : Number(daysFlag);
       if (days !== undefined && !(Number.isFinite(days) && days >= 0)) throw new Error("--days takes a number of days, like --days 14");
       if (dryRun) return log(planMarkdown(cleanupPlan(db, { dir: p.dir, run: sh, now: now(), days, folders }), "Cleanup (dry run: nothing removed)"));
-      if (propose !== null) {
-        // The maintainer's step in a cleanup request: the list goes into its ticket, removed only once you merge it.
-        const id = Number(propose);
-        const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(id) as { blueprint: string } | null;
-        if (t?.blueprint !== "factory" || requestKind(db, id) !== "cleanup") throw new Error(`#${propose} isn't a cleanup request for the maintainer`);
-        const plan = proposeCleanup(db, { dir: p.dir, id, run: sh, now: now(), days, folders });
-        return log(`${plan.items.length} to remove, ${plan.kept.length} kept → ${join(p.dir, "tickets", String(id), "CLEANUP.md")}; nothing is removed until the request merges`);
+      if (propose) {
+        const plan = proposeCleanup(db, { dir: p.dir, run: sh, now: now(), days, folders });
+        return log(`${plan.items.length} to remove, ${plan.kept.length} kept → ${join(cleanupDir(p.dir), "CLEANUP.md")}; narrow ${join(cleanupDir(p.dir), "CLEANUP.json")} to what was asked, then factory cleanup --run`);
       }
-      // `factory cleanup` alone: a cleanup request, like asking Overwatch to clean up.
+      if (runFlag) {
+        let c!: ReturnType<typeof performCleanup>;
+        change(db, () => { c = performCleanup(db, { dir: p.dir, run: sh, now: now(), who: askerOf(fromFlag) }); });
+        if (c.vacuum) db.exec("VACUUM"); // never inside a transaction
+        log(`cleanup: ${c.summary} (${join(cleanupDir(p.dir), "CLEANUP.md")})`);
+        for (const d of c.done) log(`  removed ${d}`);
+        for (const k of c.skipped) log(`  ${k}`);
+        writeStatus(db, p.status);
+        return;
+      }
+      // `factory cleanup` alone: asks the maintainer, like telling Overwatch to clean up.
       const lead = needLead(db);
-      let r: any = null;
+      let r!: AskResult, where = "";
       const text = `Clean up tickets closed or merged more than ${days ?? 14} days ago${folders ? ", their ticket folders too" : ""}`;
-      change(db, () => { r = request(db, { text, repo: lead.slug, run: sh, now: now(), dir: p.dir, kind: "cleanup" }); });
-      log(`#${r.id}: a cleanup request for the maintainer; its list waits for you to merge before anything is removed`);
+      change(db, () => { r = askAgent(db, { to: "maintainer", text, from: "you", slug: lead.slug, run: sh, now: now(), name, live }); where = handTo(db, r, name); });
+      log(`note #${r.ask.id}: a cleanup for the maintainer; ${where}`);
       writeStatus(db, p.status);
-      writeTicketFiles(db, p.dir, r.id);
     } else if (cmd === "new") {
       const text = [sub, ...rest].filter(Boolean).join(" ");
       const lead = needLead(db);
@@ -663,11 +689,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const repoDir = needLead(db).path;
       let r: any = null;
       // gh runs outside the transaction (#110); the record of it is the short one.
-      const gh = mergeOnGithub(db, { repo: repoDir, id: Number(sub), dir: p.dir });
+      const gh = mergeOnGithub(db, { repo: repoDir, id: Number(sub) });
       change(db, () => { r = recordMerge(db, { repo: repoDir, id: Number(sub), r: gh }); });
-      let merged = { vacuum: false };
-      change(db, () => { merged = applyMerged(db, { dir: p.dir, now: now(), run: sh, log }); });
-      if (merged.vacuum) db.exec("VACUUM"); // a merged cleanup's; never inside a transaction
       if (r.failed) {
         // The merges that went through are recorded; the ticket stays ready for `m` again.
         writeStatus(db, p.status);
@@ -766,9 +789,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (!patch && !notes.length) log("# no overrides to export");
       } else if (sub === "suggest") {
         let r: any = null;
-        change(db, () => { r = learnerSuggest(db, { dir: p.dir, repo: lead.path, slug: lead.slug, text: rest.join(" "), evidence: why ?? "", run: sh, now: now() }); });
-        log(r ? `#${r.id}: a request for the maintainer, from the learner` : "an open request already asks for this");
-        if (r) writeTicketFiles(db, p.dir, r.id);
+        change(db, () => { r = learnerSuggest(db, { repo: lead.path, slug: lead.slug, text: rest.join(" "), evidence: why ?? "", run: sh, now: now() }); });
+        log(r ? `note #${r.id}: a request for the maintainer, from the learner` : "an open request already asks for this");
       } else if (sub === "digest") {
         const d = learnerDigest(db, lead.path);
         if (json) return log(JSON.stringify(d));
@@ -781,7 +803,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         const r = runLearner(db, { dir: p.dir, repo: lead.path, slug: lead.slug, run: sh, now: now(), force: true, commit: (fn) => change(db, fn) });
         if (!r.ran) throw new Error(`the learner didn't run: ${r.why}`);
         log(`learner run: ${r.status}${r.status === "done" ? "" : ` (${r.why})`}`);
-        for (const f of r.filed) { log(`#${f.id}: ${f.title}`); writeTicketFiles(db, p.dir, f.id); }
+        for (const f of r.filed) log(`note #${f.id} for the maintainer: ${f.title}`);
         for (const x of r.skipped) log(`already asked: ${x}`);
       } else if (sub === "restore") {
         if (!Number.isInteger(Number(rest[0])) || !rest[0]) throw new Error("usage: factory learn restore <id>");
@@ -806,6 +828,15 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         change(db, () => retireLesson(db, Number(rest[0]), now()));
         log(`lesson ${rest[0]} retired`);
       } else throw new Error("usage: factory lesson add|list|retire");
+    } else if (cmd === "maintainer") {
+      // One for every factory, like Overwatch; it starts with this factory's waiting requests (maintainer.ts).
+      let r!: { terminal: string; started: boolean };
+      change(db, () => {
+        r = startMaintainer({ db, run: sh, now: now(), name });
+        if (r.started) db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (NULL, ?, 'started the maintainer agent', ?)").run(askerOf(fromFlag), now());
+      });
+      writeStatus(db, p.status);
+      return log(json ? JSON.stringify(r) : `maintainer ${r.started ? "started" : "running"} in ${r.terminal}`);
     } else if (cmd === "overwatch") {
       let r: any = null;
       // One for every factory: found or started from any of them (overwatch.ts).
@@ -1035,24 +1066,20 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   // A ready ticket whose last gate is auto merges itself (the same code `m` runs), if its safety holds.
   try { autoMerge(db, { dir: p.dir, repo: repoDir, run, commit: (fn) => change(db, fn), log }); }
   catch (e) { log(`factory: auto merge: ${(e as Error).message}`); }
-  // A merged request's changes outside its repo apply (the account config, factory agents, a
-  // cleanup); an override that held files its request.
-  try {
-    let merged = { vacuum: false };
-    change(db, () => { merged = applyMerged(db, { dir: p.dir, now: nowIso, run, log }); });
-    if (merged.vacuum) { db.exec("VACUUM"); log("factory: the database is compacted (VACUUM)"); }
-  } catch (e) { log(`factory: applying a merged request: ${(e as Error).message}`); }
+  // Requests that were tickets on the retired `factory` blueprint close, once each (maintainer.ts).
+  try { change(db, () => { for (const id of closeRetiredRequests(db, { run, now: nowIso })) log(`factory: #${id}: closed; requests go to the live maintainer now, not a ticket`); }); }
+  catch (e) { log(`factory: closing old maintainer requests: ${(e as Error).message}`); }
   const lastLearn = getMeta(db, "learner_checked_at");
   if (!lastLearn || Date.now() - Date.parse(lastLearn) >= 600_000) {
     setMeta(db, "learner_checked_at", nowIso);
-    try { change(db, () => { for (const r of promoteOverrides(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso })) log(`factory: #${r.id}: the learner asks the maintainer to ${r.title}`); }); }
+    try { change(db, () => { for (const r of promoteOverrides(db, { repo: repoDir, slug: lead.slug, run, now: nowIso })) log(`factory: note #${r.id}: the learner asks the maintainer to ${r.title}`); }); }
     catch (e) { log(`factory: the learner: ${(e as Error).message}`); }
   }
   // The learner agent, on its schedule (after learn.review_every merged tickets, or daily).
   try {
     const r = runLearner(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso, commit: (fn) => change(db, fn) });
     if (r.ran) log(`factory: learner run ${r.status}${r.status === "done" ? `: ${r.filed.length} request${r.filed.length === 1 ? "" : "s"} for the maintainer` : ` (${r.why})`}`);
-    for (const f of r.filed) log(`factory: #${f.id}: the learner asks the maintainer to ${f.title}`);
+    for (const f of r.filed) log(`factory: note #${f.id}: the learner asks the maintainer to ${f.title}`);
   } catch (e) { log(`factory: the learner agent: ${(e as Error).message}`); }
   // Lesson upkeep, daily: near-duplicates merge, lessons unused for learn.retire_after days retire.
   const lastUpkeep = getMeta(db, "lessons_upkeep_at");
@@ -1230,8 +1257,9 @@ function runAll(interval: number, log: (s: string) => void) {
         if (lead0) power(db, p, lead0.path);
         recordUsage(db, log);
         watchSessions(db, p, sh, log);
-        // Notes for Overwatch that its terminal hasn't had yet (it was busy, or not running).
-        deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(sh), name });
+        // Notes for Overwatch and the maintainer that their terminals haven't had yet (busy, or not running).
+        for (const agent of SESSIONS) deliverToGlobal(db, agent, { run: sh, now: new Date().toISOString(), terminal: () => live(agent), name });
+        wakeMaintainer(db, name, log);
         // Notes for repo agents whose session wasn't live (or busy) when they were asked.
         deliverToRepoAgents(db, { run: sh, now: new Date().toISOString(), name });
         const lead = leadRepo(db);

@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { giveAccess, withSkillsLine } from "./skills.ts";
 import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { validateDir, validateFile } from "./validate.ts";
+import { validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { closesIssue, openPr, prBody, prText, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
 import { closeSpace, openAgent, openTab, toolPath, withFactory, worktreePath } from "./herdr.ts";
@@ -26,9 +26,6 @@ import { applySteps } from "./steps.ts";
 import { finishSlice, readSlices, sliceInHand } from "./slices.ts";
 import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
 import { chooseNext } from "./orchestrate.ts";
-import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
-import { APP_BRANCH, appPath, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount, checkExamples, checkFactoryAgents, outsidePending, requestKind, unreachableBlueprints } from "./maintainer.ts";
-import { checkCleanup } from "./cleanup.ts";
 import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
 import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from "./artifacts.ts";
@@ -51,16 +48,9 @@ export const sh: Run = (argv, cwd) => {
 type Stage = { step?: string; agent?: string; check?: string; next?: string[]; output?: string; prompt?: string; per?: "ticket" | "slice" };
 type Blueprint = { name: string; orchestrator?: string; start: string; stages: Record<string, Stage> };
 
-// The maintainer's blueprint ships with the factory (setup copies it too): a factory
-// without its own uses it, so every factory can take requests (maintainer.ts). The
-// maintainer agent itself is a factory agent, one for every repo (agents.ts).
-const BUILT_IN = join(import.meta.dir, "../fixtures/acme-api/.factory");
-const SHIPPED = ["blueprints/factory.yaml"];
-
 function readYaml(repo: string, path: string) {
-  const own = join(repo, ".factory", path);
-  const file = existsSync(own) ? own : SHIPPED.includes(path) ? join(BUILT_IN, path) : null;
-  if (!file) return null;
+  const file = join(repo, ".factory", path);
+  if (!existsSync(file)) return null;
   const text = readFileSync(file, "utf8");
   const errors = validateFile(path, text);
   if (errors.length) throw new Error(`.factory/${path}: ${errors[0]}`);
@@ -73,9 +63,6 @@ export function loadBlueprint(repo: string, name: string): Blueprint {
   const b = Bun.YAML.parse(text) as Blueprint;
   // A stage naming a shared step gets the step's fields under its own (steps.ts).
   try { b.stages = applySteps(b.stages, repo); } catch (e) { throw new Error(`blueprint "${name}": ${(e as Error).message}`); }
-  // A maintainer's PR merges as factory.yaml's maintainer.gate says: human unless you chose auto.
-  const gate = name === "factory" ? readFactory(repo).maintainer?.gate : undefined;
-  if (gate && b.stages.merge) (b.stages.merge as BlueprintStage).gate = gate;
   return b;
 }
 
@@ -248,7 +235,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; arms?: Record<string, unknown[]>; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number; retire_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; arms?: Record<string, unknown[]>; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number; retire_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
@@ -321,55 +308,7 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     record("evidence", ok, ok ? `${latest.length - broken} checks pass${broken ? `, ${broken} broken` : ""}` : latest.length ? `${failing} failing` : "no checks recorded");
     return ok;
   }
-  if (o.check === "factory") return factoryCheck(db, { ...o, record });
   throw new Error(`unknown check "${o.check}"`);
-}
-
-// A maintainer's change (maintainer.ts), checked by its request's kind, in the repo its
-// worktree is in (the request's repo: the lead, another of the factory's, or the app).
-function factoryCheck(db: Database, o: { id: number; repo: string; worktree: string; run: Run; now: string; dir?: string; record: Record_ }) {
-  const kind = requestKind(db, o.id);
-  const own = ticketRepos(db, o.id)[0];
-  const base = (db.query("SELECT base FROM tickets WHERE id = ?").get(o.id) as { base: string | null } | null)?.base ?? undefined;
-  const changed = changedFiles(o.run, own.path, o.worktree, base);
-  if (kind === "cleanup") {
-    // Housekeeping changes no file: its list is in the ticket's folder, removed only on merge (cleanup.ts).
-    o.record("no file changes", !changed.length, changed.length ? `a cleanup changes no file, but changed: ${changed.slice(0, 5).join(", ")}` : "a cleanup changes no file");
-    const c = o.dir ? checkCleanup(db, { dir: o.dir, id: o.id, run: o.run, now: o.now }) : { ok: false, detail: "no ticket folder" };
-    o.record("cleanup", c.ok, c.detail);
-    return !changed.length && c.ok;
-  }
-  if (kind === "look") {
-    // The factory app's own repo: only its look, proven by the repo's own check.
-    const outside = changed.filter((f) => !appPath(f));
-    o.record("only the factory's look", !outside.length, outside.length ? `changed outside the app's look: ${outside.slice(0, 5).join(", ")}` : "every change is in the app's mods, themes, lib or layouts");
-    const r = o.run(["env", `PATH=${toolPath()}`, "bash", "scripts/check.sh"], o.worktree);
-    const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
-    o.record("scripts/check.sh", r.code === 0, r.code === 0 ? "every test, the generated files and herdr-app check on each mod pass" : `exit ${r.code}: ${tail}`);
-    return !outside.length && r.code === 0;
-  }
-  // config, blueprint, agents: every .factory/ file passes the schema check, nothing outside
-  // .factory/ changed (the maintainer looks after the factory, not the code), a changed
-  // blueprint gets a dry run, and a new one is one grooming or a trigger can start.
-  const dir = join(o.worktree, ".factory");
-  const bad = existsSync(dir) ? validateDir(dir).filter((r) => r.errors.length) : [];
-  o.record("factory validate", !bad.length, bad.length ? bad.map((r) => `${r.path}: ${r.errors[0]}`).join("; ").slice(0, 200) : "every .factory/ file passes");
-  const outside = changed.filter((f) => !f.startsWith(".factory/"));
-  o.record("only .factory/", !outside.length, outside.length ? `changed outside .factory/: ${outside.slice(0, 5).join(", ")}` : "every change is in .factory/");
-  const dry = bad.length || !o.dir ? true : dryRunChanged(db, { ...o, dir: o.dir, repo: own.path, changed });
-  const from = base ?? o.run(["git", "-C", own.path, "rev-parse", "HEAD"]).out.trim();
-  const added = changed.map((f) => f.match(/^\.factory\/blueprints\/([^/]+)\.ya?ml$/)?.[1]).filter((n): n is string => !!n && existsSync(join(dir, "blueprints", `${n}.yaml`)))
-    .filter((n) => o.run(["git", "-C", o.worktree, "cat-file", "-e", `${from}:.factory/blueprints/${n}.yaml`]).code !== 0);
-  const stranded = bad.length ? [] : unreachableBlueprints(dir, added);
-  if (added.length) o.record("new blueprint can start", !stranded.length, stranded.length ? `nothing starts ${stranded.join(", ")}: add it to grooming.blueprints in factory.yaml, or a trigger` : `${added.join(", ")} can be picked once this merges`);
-  // Files no repo holds: proposals in the ticket's folder (maintainer.ts).
-  const account = o.dir ? checkAccount(o.dir, o.id) : null;
-  if (account) o.record("account config", account.ok, account.detail);
-  const agents = o.dir ? checkFactoryAgents(o.dir, o.id) : null;
-  if (agents) o.record("factory agents", agents.ok, agents.detail);
-  const examples = o.dir ? checkExamples(o.dir, o.id) : null;
-  if (examples) o.record("example library", examples.ok, examples.detail);
-  return !bad.length && !outside.length && dry && !stranded.length && (account?.ok ?? true) && (agents?.ok ?? true) && (examples?.ok ?? true);
 }
 
 // verify.features (flow-stack's feature map): the scenario of each feature the ticket's
@@ -385,25 +324,6 @@ function featureScenarios(db: Database, o: { id: number; repo: string; worktree:
     ok = commandResult(db, o, `feat:${f.id}`, o.run(["env", `PATH=${toolPath()}`, "sh", "-c", f.scenario], o.worktree), "passed", `${f.scenario}: `) && ok;
   }
   return ok;
-}
-
-// A changed blueprint gets a dry run: DRYRUN.md in the ticket's folder, which the PR body
-// carries (ready.ts). A draft whose graph names a stage that isn't there fails the check.
-function dryRunChanged(db: Database, o: { id: number; repo: string; worktree: string; run: Run; dir: string; changed: string[]; record: (name: string, ok: boolean, detail: string) => void }) {
-  const out = join(o.dir, "tickets", String(o.id), "DRYRUN.md");
-  const files = o.changed.filter((f) => f === ".factory/blueprint.yaml" || /^\.factory\/blueprints\/[^/]+\.yaml$/.test(f));
-  const drafts = files.filter((f) => existsSync(join(o.worktree, f)));
-  if (!drafts.length) { if (existsSync(out)) unlinkSync(out); return true; }
-  try {
-    const parts = drafts.map((f) => dryRunMarkdown(dryRun(db, loadDraft(readFileSync(join(o.worktree, f), "utf8"), f.slice(".factory/".length), o.worktree), 5)));
-    mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(out, parts.join("\n"));
-    o.record("blueprint dry run", true, `${drafts.length} blueprint${drafts.length === 1 ? "" : "s"} replayed; DRYRUN.md goes on the PR`);
-    return true;
-  } catch (e) {
-    o.record("blueprint dry run", false, (e as Error).message.replace(/\s+/g, " ").slice(0, 200));
-    return false;
-  }
 }
 
 // The .factory/ files a ticket's branches committed, in every repo it works in (a repo's own
@@ -586,9 +506,8 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   }
   // One PR per repo. A cross-repo change's bodies then name each other's PRs.
   const repos = ticketRepos(db, o.id);
-  // .factory/ stays local (local.ts): a branch that commits to it never reaches a PR. The
-  // maintainer's requests are its own flow (maintainer.ts), not guarded here.
-  const local = t.blueprint === FACTORY_BLUEPRINT ? [] : localChanges(run, repos, t.base ?? undefined);
+  // .factory/ stays local (local.ts): a branch that commits to it never reaches a PR.
+  const local = localChanges(run, repos, t.base ?? undefined);
   if (local.length) {
     const detail = `${LOCAL_REASON}: ${local.slice(0, 3).join(", ")}${local.length > 3 ? ` and ${local.length - 3} more` : ""}; take those commits off the branch`;
     if (t.detail !== detail) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'no PR: the branch changes .factory/', ?, ?)").run(o.id, detail, now);
@@ -596,17 +515,8 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
     db.query("UPDATE tickets SET detail = ? WHERE id = ?").run(detail, o.id);
     return { waiting: true, stage: t.stage, failing: 1 };
   }
-  // A request that changes only what no repo holds (the account config, the factory agents,
-  // a cleanup) has no commits to open a PR from: it waits for you at the merge gate, and `m` applies it.
-  if (t.blueprint === FACTORY_BLUEPRINT && t.pr_number == null && outsidePending(o.dir, o.id) && !changedFiles(run, repos[0].path, t.worktree, t.base ?? undefined).length) {
-    db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'no PR: nothing in a repo changes', ?, ?)")
-      .run(o.id, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}; the ticket's folder shows what changes (ACCOUNT-CONFIG.md, FACTORY-AGENTS.md, EXAMPLES.md, CLEANUP.md)`, now);
-    return advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, opened: true });
-  }
   const prs = repos.map((r) => {
-    // The factory app's PRs go to its develop branch (a look request, maintainer.ts).
-    const app = !!(db.query("SELECT app FROM repos WHERE slug = ?").get(r.repo) as { app: number } | null)?.app;
-    const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number, base: app ? APP_BRANCH : undefined,
+    const number = openPr(db, { id: o.id, dir: o.dir, worktree: r.worktree!, branch: r.branch!, rules, run, existing: r.pr_number,
       others: repos.filter((x) => x !== r).map((x) => ({ repo: x.repo, pr: x.pr_number })), closes: closesIssue(db, o.id, r, repos.length > 1) });
     setWork(db, o.id, { pr_number: number, pr_watched: 1, pr_checked_at: now, pr_state: "open" }, r.repo);
     return { ...r, pr_number: number };
@@ -636,15 +546,12 @@ function linkPrs(db: Database, o: { dir: string; id: number }, prs: { repo: stri
 // factory.yaml's merge_method says (squash unless it names merge or rebase).
 // Two halves, so a caller can keep the gh calls (seconds long) out of a database transaction
 // (#110): mergeOnGithub only reads the database, recordMerge writes what happened.
-export type GithubMerge = { outside: true } | { outside?: false; pr: number; method: string; merged: { repo: string; pr: number; slug: string }[]; failed?: string; count: number };
+export type GithubMerge = { pr: number; method: string; merged: { repo: string; pr: number; slug: string }[]; failed?: string; count: number };
 
-export function mergeOnGithub(db: Database, o: { repo: string; id: number; run?: Run; dir?: string }): GithubMerge {
+export function mergeOnGithub(db: Database, o: { repo: string; id: number; run?: Run }): GithubMerge {
   const run = o.run ?? sh;
-  const t = db.query("SELECT state, pr_number, blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; pr_number: number | null; blueprint: string } | null;
+  const t = db.query("SELECT state, pr_number FROM ticket_lead WHERE id = ?").get(o.id) as { state: string; pr_number: number | null } | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
-  // A request with no PR (the account config, factory agents, a cleanup): your `m` is the
-  // gate; the caller applies the change (applyMerged in maintainer.ts).
-  if (t.state === "ready" && t.pr_number == null && t.blueprint === FACTORY_BLUEPRINT && o.dir && outsidePending(o.dir, o.id)) return { outside: true };
   if (t.state !== "ready" || t.pr_number == null) throw new Error(`#${o.id} is ${t.state}${t.pr_number == null ? " with no PR" : ""}; only a ready ticket's PR merges`);
   const method = readFactory(o.repo).merge_method ?? "squash";
   // Every repo's PR, in merge order; it stops at the first that fails. The ones merged
@@ -672,10 +579,6 @@ export function recordMerge(db: Database, o: { repo: string; id: number; r: Gith
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
   const note = o.note ? `; ${o.note}` : "";
-  if (o.r.outside) {
-    finishPr(db, { repo: o.repo, id: o.id, run, now, state: "merged", why: `a change outside the repo${note}`, who: o.who });
-    return { pr: null, merged: [] as string[] };
-  }
   for (const m of o.r.merged) setWork(db, o.id, { merged_at: now }, m.repo);
   const merged = o.r.merged.map((m) => m.slug);
   if (o.r.failed) {
@@ -737,17 +640,17 @@ export function autoMerge(db: Database, o: { dir: string; repo: string; run?: Ru
     const why = autoBlock(db, { dir: o.dir, repo: o.repo, id: t.id, run });
     if (why) { say(`auto merge waits for you: ${why}`); continue; }
     let r: GithubMerge;
-    try { r = mergeOnGithub(db, { repo: o.repo, id: t.id, run, dir: o.dir }); }
+    try { r = mergeOnGithub(db, { repo: o.repo, id: t.id, run }); }
     catch (e) { say(`auto merge failed: ${(e as Error).message}`); continue; }
     const note = "merged automatically (gate: auto)";
     o.commit(() => {
       const row = db.query("SELECT state FROM tickets WHERE id = ?").get(t.id) as { state: string } | null;
       if (row?.state !== "ready") return; // merged on GitHub, or sent back, while gh ran
       const res = recordMerge(db, { repo: o.repo, id: t.id, r, run, now, who: "daemon", note });
-      if (!res.failed) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)").run(t.id, note, res.merged.join(", ") || "a change outside the repo", now);
+      if (!res.failed) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)").run(t.id, note, res.merged.join(", "), now);
     });
-    const failed = r.outside ? undefined : r.failed;
-    o.log?.(failed ? `factory: #${t.id}: merged ${r.outside ? "" : r.merged.map((m) => m.slug).join(", ")}, then stopped: ${failed}` : `factory: #${t.id}: ${note}`);
+    const failed = r.failed;
+    o.log?.(failed ? `factory: #${t.id}: merged ${r.merged.map((m) => m.slug).join(", ")}, then stopped: ${failed}` : `factory: #${t.id}: ${note}`);
     if (!failed) done.push(t.id);
   }
   return done;

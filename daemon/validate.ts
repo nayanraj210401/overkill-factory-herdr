@@ -350,16 +350,18 @@ export function gateWarnings(path: string, file: string): string[] {
   if (kind !== "blueprint" && kind !== "factory") return [];
   let doc: any;
   try { doc = Bun.YAML.parse(readFileSync(file, "utf8")); } catch { return []; }
-  if (kind === "factory") return doc?.maintainer?.gate === "auto" ? ["maintainer.gate is auto: the maintainer's PRs merge themselves, and the account config and factory agents change on that merge, with nobody looking. Check the revert rate on Home"] : [];
+  if (kind === "factory") return doc?.maintainer?.gate != null ? ["maintainer.gate is ignored: the maintainer edits the factory's files in place, with backups, and has no PR to gate. Remove it"] : [];
   // A gate set by a shared step counts too; the repo is the folder above .factory/ (steps.ts).
   const stages = applySteps(doc?.stages && typeof doc.stages === "object" ? doc.stages : {}, dirname(file.endsWith(path) ? file.slice(0, -path.length - 1) : dirname(file)), () => {});
   return Object.entries<any>(stages).filter(([, s]) => s?.gate === "auto")
     .map(([id]) => `stages.${id}.gate is auto: this stage passes without you${(stages[id].next ?? []).every((n: string) => n === "end") ? ", and ready PRs of this blueprint merge themselves" : ""}. Check this blueprint's revert rate on Home`);
 }
 
-// Files that pass but do nothing: a repo's copy of a factory agent, or of Overwatch's template, is never read.
+// Files that pass but do nothing: a repo's copy of a factory agent, of a global agent's template, or of the retired maintainer blueprint.
 function warningOf(path: string) {
-  if (path === "prompts/overwatch.md") return "ignored: Overwatch is one for every repo and uses the built-in template; change ~/.factory/agents/overwatch.md instead (through the maintainer)";
+  if (path === "blueprints/factory.yaml") return "ignored: requests to the maintainer no longer run as tickets on this blueprint; delete the file";
+  const global = path.match(/^prompts\/(overwatch|maintainer)\.md$/)?.[1];
+  if (global) return `ignored: ${global === "overwatch" ? "Overwatch" : "the maintainer"} is one for every repo and uses the built-in template; change ~/.factory/agents/${global}.md instead (through the maintainer)`;
   const name = path.match(/^agents\/([^/]+)\.md$/)?.[1];
   return name && isFactoryAgent(name) ? `ignored: ${name} is a factory agent, one for every repo; change ~/.factory/agents/${name}.md instead (through the maintainer)` : null;
 }

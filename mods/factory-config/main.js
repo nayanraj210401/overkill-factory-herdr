@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, EditorState, Editor } from "gpui-base";
 import { theme, exec, readTextFile, watchFolder, nextCommand, checking, notify } from "herdr";
-import { askedBy, configFiles, daemonView, pendingNotes, pendingRequests } from "./lib/model.js";
+import { configFiles, daemonView, pendingNotes } from "./lib/model.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { root, status, act } from "./lib/store.js";
 import { keyAction, clamp } from "./lib/keys.js";
@@ -122,14 +122,9 @@ export default class FactoryConfig extends View {
 
   // Requests for the maintainer (each comes back as a PR) and the notes agents left each other,
   // each with who asked whom: "from the learner to the maintainer".
-  pendingCard(t, rows, notes) {
+  pendingCard(t, notes) {
     return v_flex().id("pending").flex_none().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border)
       .child(div().px(8).pb(4).text_size(11).text_color(t.dim).child("PENDING CHANGES"))
-      .children(rows.map((r) => h_flex().h(26).px(8).gap(10).items_center()
-        .child(div().w(56).flex_none().text_color(t.dim).child(`#${r.id}`))
-        .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(r.title))
-        .child(div().flex_none().text_size(12).text_color(t.dim).child(`from ${askedBy(r)} to the maintainer`))
-        .child(div().flex_none().text_size(12).text_color(t.muted).child(r.pr ? `PR #${r.pr} · ${r.state}` : r.stage ? `${r.stage} · ${r.state}` : r.state))))
       .children(notes.map((a) => h_flex().h(26).px(8).gap(10).items_center()
         .child(div().w(56).flex_none().text_color(t.dim).child(`note ${a.id}`))
         .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(a.text))
@@ -234,11 +229,10 @@ export default class FactoryConfig extends View {
     };
     const overrides = this.overrides();
     this.at = clamp(this.at, overrides.length);
-    const pending = pendingRequests(status()?.tickets);
     const notes = pendingNotes(status()?.asks);
     return v_flex().size_full().gap(8).text_size(13).child(this.daemonBar(t))
       .when(Boolean(status()?.claude?.found?.length), (el) => el.child(this.claudeCard(t, status().claude)))
-      .when(pending.length + notes.length > 0, (el) => el.child(this.pendingCard(t, pending, notes)))
+      .when(notes.length > 0, (el) => el.child(this.pendingCard(t, notes)))
       .when(overrides.length > 0, (el) => el.child(this.overridesCard(t, overrides))).child(h_flex().flex_1().w_full().gap(8)
       .child(v_flex().id("files").w(240).flex_none().h_full().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()
         .child(div().px(8).pb(6).text_size(11).text_color(t.dim).child(".FACTORY"))

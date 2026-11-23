@@ -110,3 +110,31 @@ test("a hit blocks the call, is noted, kills the session and parks the ticket", 
   expect(existsSync(hardStopLog(dir, 7))).toBe(false); // read once, so answering and restarting doesn't park again
   expect(() => advance(db, { dir, repo, id: 7, run })).toThrow("isn't running");
 });
+
+test("a global agent's session never commits, pushes or opens a PR; a look commit only in the factory app's checkout", () => {
+  const app = mkdtempSync(join(tmpdir(), "app-"));
+  const repo = mkdtempSync(join(tmpdir(), "team-"));
+  const local = { stops: [], roots: [repo, app], cwd: repo, local: { app } };
+  const hit = (command: string, at = local) => guardHit("Bash", { command }, at)?.stop ?? null;
+  for (const c of ["git push", "git -C /x push origin main", "git commit -m x", `git -C ${app} push`, "gh pr create --fill", "gh pr merge 3", "gh pr edit 4 --body x", "cd x && git commit -am y"])
+    expect(hit(c)).toBe("factory-local");
+  expect(hit(`git -C ${app} commit -m "warmer accent"`)).toBeNull();
+  expect(hit("git commit -m x", { ...local, cwd: join(app, "mods") })).toBeNull();
+  for (const c of ["git status", "git diff", "gh pr view 3", "gh pr list", "factory validate --name acme", "cp a b"]) expect(hit(c)).toBeNull();
+  // No app known: no commit anywhere.
+  expect(hit(`git -C ${app} commit -m x`, { ...local, local: { app: null } })).toBe("factory-local");
+  // A worker's session (no `local`) is unchanged: its own stops only.
+  expect(guardHit("Bash", { command: "git commit -m x" }, g)).toBeNull();
+  // The hook is on even with no factory.yaml stops, and says it is a global session.
+  const settings = guardSettings({ stops: [], roots: [repo], log: "/l", local: { app }, bun: "/b", script: "/g.ts" })!;
+  expect(JSON.parse(settings).hooks.PreToolUse[0].hooks[0].command).toBe(`'/b' '/g.ts' --stops '' --roots '${repo}' --log '/l' --local '${app}'`);
+});
+
+test("the hook itself refuses a global agent's git push and says which hard stop", () => {
+  const log = join(mkdtempSync(join(tmpdir(), "gl-")), "maintainer.hard-stops.jsonl");
+  const p = Bun.spawnSync([process.execPath, join(import.meta.dir, "guard.ts"), "--stops", "", "--roots", "/r", "--log", log, "--local", ""], { stdin: Buffer.from(JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push origin main" }, cwd: "/r" })) });
+  expect(p.exitCode).toBe(2);
+  expect(p.stderr.toString()).toContain("Hard stop (factory-local)");
+  expect(p.stderr.toString()).toContain("which hard stop");
+  expect(JSON.parse(readFileSync(log, "utf8"))).toMatchObject({ stop: "factory-local", tool: "Bash" });
+});

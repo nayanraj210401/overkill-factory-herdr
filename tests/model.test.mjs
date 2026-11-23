@@ -209,23 +209,6 @@ test("planPct shows a dash when nothing reports the plan's usage", async () => {
   assert.equal(planPct({ week: 0.42 }, "week"), "42%"); // the sample has no source
 });
 
-test("Config's Pending changes lists the maintainer's open requests only", async () => {
-  const { pendingRequests } = await import("../lib/model.js");
-  const tickets = [
-    { id: 1, blueprint: "factory", state: "running" }, { id: 2, blueprint: "factory", state: "merged" },
-    { id: 3, blueprint: "feature", state: "running" }, { id: 4, blueprint: "factory", state: "queued" }, { id: 5, blueprint: "factory", state: "closed" },
-  ];
-  assert.deepEqual(pendingRequests(tickets).map((t) => t.id), [1, 4]);
-  assert.deepEqual(pendingRequests(undefined), []);
-});
-
-test("Pending changes say who asked: you, or the learner", async () => {
-  const { askedBy } = await import("../lib/model.js");
-  assert.equal(askedBy({ requested_by: "learner" }), "the learner");
-  assert.equal(askedBy({ requested_by: "you" }), "you");
-  assert.equal(askedBy({}), "you"); // a status.json from before the field
-});
-
 test("an agent waiting on you in its terminal is in Needs you, first, whatever its stage", async () => {
   const { groupOf, needsYou } = await import("../lib/model.js");
   const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "Waiting on you in its terminal (t1): open it to answer" } };
@@ -236,10 +219,11 @@ test("an agent waiting on you in its terminal is in Needs you, first, whatever i
 });
 
 test("notes between agents: Needs you shows the ones for Overwatch; Pending changes says from whom to whom", async () => {
-  const { agentLabel, askedBy, overwatchNotes, pendingNotes } = await import("../lib/model.js");
+  const { agentLabel, overwatchNotes, pendingNotes } = await import("../lib/model.js");
   assert.equal(agentLabel("overwatch"), "Overwatch");
   assert.equal(agentLabel("babysitter"), "the babysitter");
-  assert.equal(askedBy({ requested_by: "babysitter" }), "the babysitter");
+  assert.equal(agentLabel("maintainer"), "the maintainer");
+  assert.equal(agentLabel("you"), "you");
   assert.deepEqual(status.asks.map((a) => a.id), [3, 4]); // the sample has one of each
   assert.deepEqual(overwatchNotes(status.asks).map((a) => [a.id, a.route]), [[3, "from the spec-writer to Overwatch"]]);
   assert.deepEqual(pendingNotes(status.asks).map((a) => a.route), ["from the spec-writer to Overwatch", "from Overwatch to the learner"]);

@@ -114,12 +114,8 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktrees
 
 export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fail");
 
-// PR.md, then what the maintainer's work left: the migration's report, the blueprint dry run, the diffs of files no repo holds, a cleanup's list.
-export function prText(dir: string, id: number) {
-  const folder = join(dir, "tickets", String(id));
-  const extra = ["MIGRATION.md", "DRYRUN.md", "ACCOUNT-CONFIG.md", "FACTORY-AGENTS.md", "EXAMPLES.md", "CLEANUP.md"].map((f) => join(folder, f)).filter((f) => existsSync(f));
-  return [readFileSync(join(folder, "PR.md"), "utf8"), ...extra.map((f) => readFileSync(f, "utf8"))].map((s) => s.trim()).join("\n\n");
-}
+// A ticket's PR body text: its PR.md.
+export const prText = (dir: string, id: number) => readFileSync(join(dir, "tickets", String(id), "PR.md"), "utf8").trim();
 
 export const RULE_MARK: Record<Rule["result"], string> = { pass: "✓", skipped: "–", broken: "⚠", fail: "✗" };
 

@@ -1,26 +1,27 @@
 // Housekeeping (plan: Changing the factory). `factory cleanup --dry-run` lists what the
-// factory would remove; a "clean up" request has the maintainer write that list into its
-// ticket (`--propose`: CLEANUP.md for you, CLEANUP.json for the daemon), the factory check
-// holds it to what is still safe, and only once you merge the request does the daemon
-// remove it. What it may remove:
+// factory would remove. When the person asks for a cleanup, the maintainer writes the list
+// (`--propose`: <factory>/cleanup/CLEANUP.md to read, CLEANUP.json to narrow), and runs it
+// (`--run`), which removes what the list holds, each entry re-checked as safe right then.
+// What it may remove:
 //
 //   - tickets closed or merged more than N days ago (14 by default): their worktrees, their
 //     Herdr spaces and finished terminals (hc), their factory branches already merged,
 //     local and on origin, and with --folders their ticket folders;
 //   - factory worktrees under the worktree root that no ticket owns;
-//   - config.yaml.bak-* backups (and factory agents' *.md.bak-*) older than N days, the
-//     newest of each file always kept;
+//   - backups older than N days (<FACTORY_HOME>/backups/, and the config.yaml.bak-* and
+//     agents' *.md.bak-* left from before), the newest of each file always kept;
 //   - a VACUUM of the database.
 //
 // What it never removes: a branch that isn't merged, a worktree with uncommitted changes,
 // anything a ticket that is still open (queued, running, parked, ready…) owns, a worktree
 // on a branch the factory didn't make, and ticket folders unless asked. It is idempotent:
-// performing re-checks every entry, and one already gone is simply done.
+// running re-checks every entry, and one already gone is simply done.
 import type { Database } from "bun:sqlite";
-import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { accountFile } from "./account.ts";
 import { factoryAgentsDir } from "./agents.ts";
+import { backupsByFile } from "./maintainer.ts";
 import { closeSpace, worktreeRoot } from "./herdr.ts";
 import type { Run } from "./runner.ts";
 
@@ -38,9 +39,8 @@ export type Plan = { days: number; folders: boolean; items: Item[]; kept: Kept[]
 
 export const CLEANUP_MD = "CLEANUP.md";
 export const CLEANUP_JSON = "CLEANUP.json";
-const CHECKED = ".cleanup-checked.json";
-const DONE = ".cleanup-done.json";
 export const DEFAULT_DAYS = 14;
+export const cleanupDir = (dir: string) => join(dir, "cleanup");
 // The order things go in: a branch can't be deleted while a worktree has it checked out.
 const ORDER: Item["kind"][] = ["terminal", "space", "worktree", "branch", "remote-branch", "folder", "backup", "vacuum"];
 
@@ -108,10 +108,12 @@ function mergedWhy(run: Run, w: Work, sha: string, cache: Map<string, { state: s
   return pr?.state === "MERGED" && pr.head === sha ? `PR #${w.pr_number} merged at this commit` : null;
 }
 
-// Every backup of a file the maintainer applies: older than the cutoff, never the newest.
+// Every backup of a file the maintainer changed: older than the cutoff, never the newest.
 function backups(cutoff: number) {
   const out: string[] = [];
   const groups = new Map<string, { path: string; at: number }[]>();
+  for (const [file, g] of backupsByFile()) groups.set(file, g.map((b) => ({ path: b.path, at: statSync(b.path).mtimeMs })));
+  // Beside the file: how the account config and factory agents were backed up before.
   for (const [folder, re] of [[dirname(accountFile()), /^(config\.yaml)\.bak-/], [factoryAgentsDir(), /^(.+\.md)\.bak-/]] as const) {
     if (!existsSync(folder)) continue;
     for (const f of readdirSync(folder)) {
@@ -218,16 +220,18 @@ export function cleanupPlan(db: Database, o: { dir: string; run: Run; now: strin
 export function planMarkdown(p: Plan, heading = "Cleanup") {
   return [
     `# ${heading}`, "",
-    `What the cleanup removes once you merge this request: tickets closed or merged more than ${p.days} day${p.days === 1 ? "" : "s"} ago, factory worktrees no ticket owns, old backups.${p.folders ? " Ticket folders too, as asked." : " Ticket folders and their .md files stay."}`, "",
+    `What the cleanup removes when it runs (factory cleanup --run): tickets closed or merged more than ${p.days} day${p.days === 1 ? "" : "s"} ago, factory worktrees no ticket owns, old backups.${p.folders ? " Ticket folders too, as asked." : " Ticket folders and their .md files stay."}`, "",
     "## Removes", "", ...(p.items.length ? p.items.map((i) => `- ${describe(i)}`) : ["Nothing."]), "",
     "## Keeps", "", ...(p.kept.length ? p.kept.map((k) => `- ${k.what}: ${k.why}`) : ["Nothing it looked at needed keeping."]), "",
   ].join("\n");
 }
 
-// `factory cleanup --propose <id>`: the list goes into the request's folder.
-export function proposeCleanup(db: Database, o: { dir: string; id: number; run: Run; now: string; days?: number; folders?: boolean }) {
+// `factory cleanup --propose`: the list, in the factory's cleanup/ folder. Delete entries from
+// CLEANUP.json to narrow it to what was asked.
+export function proposeCleanup(db: Database, o: { dir: string; run: Run; now: string; days?: number; folders?: boolean }) {
   const p = cleanupPlan(db, o);
-  const folder = folderOf(o.dir, o.id);
+  const folder = cleanupDir(o.dir);
+  mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, CLEANUP_JSON), JSON.stringify(p, null, 2) + "\n");
   writeFileSync(join(folder, CLEANUP_MD), planMarkdown(p));
   return p;
@@ -237,59 +241,39 @@ const readPlan = (file: string): Plan | null => {
   try { return JSON.parse(readFileSync(file, "utf8")) as Plan; } catch { return null; }
 };
 
-// The factory check's cleanup part: every entry the request lists must still be one a
-// cleanup would remove now. The checked list is what the merge removes, and no more.
-export function checkCleanup(db: Database, o: { dir: string; id: number; run: Run; now: string }): { ok: boolean; detail: string } {
-  const folder = folderOf(o.dir, o.id);
-  rmSync(join(folder, CHECKED), { force: true });
-  if (!existsSync(join(folder, CLEANUP_JSON))) return { ok: false, detail: `no ${CLEANUP_JSON}: run factory cleanup --propose ${o.id}` };
-  const asked = readPlan(join(folder, CLEANUP_JSON));
-  if (!asked || !Array.isArray(asked.items)) return { ok: false, detail: `${CLEANUP_JSON} isn't a cleanup list; run factory cleanup --propose ${o.id} again` };
-  const now = cleanupPlan(db, { dir: o.dir, run: o.run, now: o.now, days: asked.days, folders: asked.folders });
-  const safe = new Set(now.items.map(keyOf));
-  const unsafe = asked.items.filter((i) => !safe.has(keyOf(i)));
-  if (unsafe.length) {
-    const why = now.kept.find((k) => k.key === keyOf(unsafe[0]))?.why ?? "it is gone or no longer one to remove";
-    return { ok: false, detail: `${describe(unsafe[0])}: ${why}; run factory cleanup --propose ${o.id} again`.slice(0, 200) };
-  }
-  // The check's own copy, with what the entries are now (a branch's commit, say).
-  const items = now.items.filter((i) => asked.items.some((a) => keyOf(a) === keyOf(i)));
-  const checked: Plan = { ...now, items, kept: now.kept };
-  writeFileSync(join(folder, CHECKED), JSON.stringify(checked, null, 2) + "\n");
-  writeFileSync(join(folder, CLEANUP_MD), planMarkdown(checked));
-  return { ok: true, detail: `${items.length} entr${items.length === 1 ? "y" : "ies"} to remove once this merges; CLEANUP.md lists them` };
-}
-
-export const cleanupPending = (dir: string, id: number) => existsSync(join(folderOf(dir, id), CHECKED));
-
-// Merged: remove what was checked, each entry re-checked now. Done ones are done.
-export function performCleanup(db: Database, o: { dir: string; id: number; run: Run; now: string }) {
-  const folder = folderOf(o.dir, o.id);
-  const checked = readPlan(join(folder, CHECKED));
-  if (!checked) return { done: [] as string[], skipped: [] as string[], vacuum: false, summary: "nothing was checked" };
-  const fresh = cleanupPlan(db, { dir: o.dir, run: o.run, now: o.now, days: checked.days, folders: checked.folders });
+// `factory cleanup --run`: removes what the proposed list holds, each entry re-checked now; one
+// no longer safe to remove is kept and said. The list is then set aside, so a second run
+// needs a new list.
+export function performCleanup(db: Database, o: { dir: string; run: Run; now: string; who?: string }) {
+  const folder = cleanupDir(o.dir);
+  const file = join(folder, CLEANUP_JSON);
+  if (!existsSync(file)) throw new Error("no cleanup list: run factory cleanup --propose first, then narrow CLEANUP.json to what was asked");
+  const asked = readPlan(file);
+  if (!asked || !Array.isArray(asked.items)) throw new Error(`${file} isn't a cleanup list; run factory cleanup --propose again`);
+  const fresh = cleanupPlan(db, { dir: o.dir, run: o.run, now: o.now, days: asked.days, folders: asked.folders });
   const byKey = new Map(fresh.items.map((i) => [keyOf(i), i]));
   const done: string[] = [], skipped: string[] = [], gone: string[] = [];
   let vacuum = false;
-  for (const asked of checked.items) {
-    const i = byKey.get(keyOf(asked));
+  for (const a of asked.items) {
+    const i = byKey.get(keyOf(a));
     if (!i) {
-      const k = fresh.kept.find((x) => x.key === keyOf(asked));
-      (k ? skipped : gone).push(k ? `${describe(asked)}: kept, ${k.why}` : describe(asked));
+      const k = fresh.kept.find((x) => x.key === keyOf(a));
+      (k ? skipped : gone).push(k ? `${describe(a)}: kept, ${k.why}` : describe(a));
       continue;
     }
-    // A branch that moved since the check isn't the one you agreed to delete.
-    if ((i.kind === "branch" || i.kind === "remote-branch") && asked.kind === i.kind && asked.sha !== i.sha) { skipped.push(`${describe(i)}: kept, it moved after the check`); continue; }
+    // A branch that moved since the list was written isn't the one listed.
+    if ((i.kind === "branch" || i.kind === "remote-branch") && a.kind === i.kind && a.sha !== i.sha) { skipped.push(`${describe(i)}: kept, it moved after the list was written`); continue; }
     const r = remove(db, o.run, i);
     (r ? skipped : done).push(r ? `${describe(i)}: ${r}` : describe(i));
     if (!r && i.kind === "vacuum") vacuum = true;
   }
   const summary = `${done.length} removed${skipped.length ? `, ${skipped.length} kept` : ""}${gone.length ? `, ${gone.length} already gone` : ""}`;
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'cleaned up', ?, ?)").run(o.id, summary, o.now);
-  writeFileSync(join(folder, CLEANUP_MD), [readFileSync(join(folder, CLEANUP_MD), "utf8").trimEnd(), "",
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (NULL, ?, 'cleaned up', ?, ?)").run(o.who ?? "you", summary, o.now);
+  const md = existsSync(join(folder, CLEANUP_MD)) ? readFileSync(join(folder, CLEANUP_MD), "utf8").trimEnd() : planMarkdown(asked);
+  writeFileSync(join(folder, CLEANUP_MD), [md, "",
     `## Done · ${o.now.slice(0, 16).replace("T", " ")}`, "", summary + ".", "",
     ...done.map((d) => `- removed ${d}`), ...skipped.map((s) => `- ${s}`), ...gone.map((g) => `- already gone: ${g}`), ""].join("\n"));
-  renameSync(join(folder, CHECKED), join(folder, DONE));
+  renameSync(file, join(folder, `CLEANUP.done-${o.now.replace(/[^0-9]/g, "").slice(0, 14)}.json`));
   return { done, skipped, vacuum, summary };
 }
 

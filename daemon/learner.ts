@@ -6,13 +6,12 @@
 //     (runLearner). It spends only from budget.learning.
 // It never writes a
 // file: an override that held for learn.promote_after merged tickets, a lesson that keeps
-// firing, or any change outside learn.tunable becomes a maintainer request carrying its
-// evidence, through the same request() Overwatch uses, marked as from the learner. One
-// request per override, and none while another for the same setting is still open.
+// firing, or any change outside learn.tunable becomes a request to the maintainer carrying
+// its evidence (`factory ask maintainer`, ask.ts), from the learner. One request per
+// override, and none while another for the same setting is still open.
 import type { Database } from "bun:sqlite";
 import { getMeta, setMeta } from "./db.ts";
-import { notesSection, openAsks, takeNotes } from "./ask.ts";
-import { request } from "./maintainer.ts";
+import { ask, notesSection, openAsks, takeNotes } from "./ask.ts";
 import { interactionsBefore, planKnown, planMeters } from "./metrics.ts";
 import { readFactory, type Run } from "./runner.ts";
 import { factoryMap, loadAgent } from "./agents.ts";
@@ -43,22 +42,27 @@ const avgOf = (db: Database, ids: number[], target: string) => {
 };
 const show = (target: string, v: number) => (target === "cost_per_pr" ? `$${v.toFixed(2)}` : target === "time_to_pr" ? `${Math.round(v)} min` : v.toFixed(1));
 
-// The request this key filed, while it's open; `ever` counts a finished one too.
+// The request this key filed, while it's open; `ever` counts a handled one too. (An id from
+// before requests were notes is a ticket's: open while that ticket is.)
 function filed(db: Database, key: string, ever = false) {
   const id = getMeta(db, `learner:${key}`);
   if (!id) return false;
+  if (id.startsWith("note:")) {
+    const a = db.query("SELECT done_at FROM asks WHERE id = ?").get(Number(id.slice(5))) as { done_at: string | null } | null;
+    return !!a && (ever || a.done_at == null);
+  }
   const t = db.query("SELECT state FROM tickets WHERE id = ?").get(Number(id)) as { state: string } | null;
   return !!t && (ever || !FINISHED.includes(t.state));
 }
 
-function file(db: Database, o: { keys: string[]; text: string; evidence: string; dir: string; slug: string; run: Run; now: string }) {
-  const r = request(db, { text: o.text, evidence: o.evidence, from: "learner", dir: o.dir, repo: o.slug, run: o.run, now: o.now });
-  for (const k of o.keys) setMeta(db, `learner:${k}`, String(r.id));
-  return r;
+function file(db: Database, o: { keys: string[]; text: string; evidence: string; slug: string; run: Run; now: string }) {
+  const r = ask(db, { to: "maintainer", text: o.text, why: o.evidence, from: "learner", slug: o.slug, run: o.run, now: o.now });
+  for (const k of o.keys) setMeta(db, `learner:${k}`, `note:${r.ask.id}`);
+  return { id: r.ask.id, title: r.ask.text };
 }
 
 // Every 10 minutes: overrides that held, and lessons that keep firing, go to the maintainer.
-export function promoteOverrides(db: Database, o: { dir: string; repo: string; slug: string; run: Run; now: string }) {
+export function promoteOverrides(db: Database, o: { repo: string; slug: string; run: Run; now: string }) {
   const learn = readFactory(o.repo).learn ?? {};
   const after = learn.promote_after ?? PROMOTE_AFTER;
   const target = learn.target ?? TARGET;
@@ -77,7 +81,7 @@ export function promoteOverrides(db: Database, o: { dir: string; repo: string; s
       `- Override #${ov.id}: \`${ov.key}\` = \`${ov.value}\`, set ${ov.created_at.slice(0, 10)}${ov.reason ? ` (${ov.reason})` : ""}.`,
       `- Held for ${held.length} merged tickets (learn.promote_after: ${after}).`,
       `- Metric (learn.target): ${target}. Before: ${before ? `${show(target, before.avg)} over ${before.n} tickets` : "no tickets without it to compare"}. After: ${withIt ? `${show(target, withIt.avg)} over ${withIt.n} tickets` : "not measured"}.`,
-      `- Make it permanent where the setting lives (\`factory learn export\` prints the edit); once that merges, the override matches the file and can be undone.`,
+      `- Make it permanent where the setting lives (\`factory learn export\` prints the edit); then the override matches the file and can be undone.`,
     ].join("\n");
     out.push(file(db, { keys: [`override:${ov.id}`, `setting:${ov.key}`], text: `Make ${ov.key} = ${ov.value} permanent (override #${ov.id}, held for ${held.length} tickets)`, evidence, ...o }));
   }
@@ -88,7 +92,7 @@ export function promoteOverrides(db: Database, o: { dir: string; repo: string; s
     const evidence = [
       `- Lesson #${l.id} (area \`${l.area}\`, from ${l.source}): ${l.text}`,
       `- Loaded into ${l.hits} ticket briefs (learn.promote_after: ${after}).`,
-      "- A lint rule, test or ready rule would catch it without a brief; retire the lesson once the check merges.",
+      "- A lint rule, test or ready rule would catch it without a brief; retire the lesson once the check is in.",
     ].join("\n");
     out.push(file(db, { keys: [`lesson:${l.id}`], text: `Turn lesson #${l.id} (${l.area}) into a lint rule or test`, evidence, ...o }));
   }
@@ -96,11 +100,11 @@ export function promoteOverrides(db: Database, o: { dir: string; repo: string; s
 }
 
 // `factory learn suggest`: a change outside learn.tunable (a prompt, a stage, a check), with its evidence.
-export function learnerSuggest(db: Database, o: { dir: string; repo: string; slug: string; text: string; evidence: string; run: Run; now: string }) {
+export function learnerSuggest(db: Database, o: { repo: string; slug: string; text: string; evidence: string; run: Run; now: string }) {
   if (!o.evidence.trim()) throw new Error('usage: factory learn suggest "<the change>" --why "<the evidence: metric, before/after, tickets>"');
   const key = `suggest:${o.text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
   if (filed(db, key)) return null;
-  return file(db, { keys: [key], text: o.text, evidence: o.evidence, dir: o.dir, slug: o.slug, run: o.run, now: o.now });
+  return file(db, { keys: [key], text: o.text, evidence: o.evidence, slug: o.slug, run: o.run, now: o.now });
 }
 
 // ---- the learner agent ----------------------------------------------------------------
@@ -250,8 +254,7 @@ export function learnerDigest(db: Database, repo: string): Digest {
   const repeated = [...groups].filter(([k, cs]) => k && new Set(cs.map((c) => c.ticket)).size >= 2)
     .map(([, cs]) => ({ text: cs[0].body.trim().replace(/\s+/g, " ").slice(0, 200), times: cs.length, tickets: new Set(cs.map((c) => c.ticket)).size }))
     .sort((a, b) => b.tickets - a.tickets || b.times - a.times).slice(0, 10);
-  const open = (db.query("SELECT id, title, trigger_name FROM tickets WHERE blueprint = 'factory' AND state NOT IN ('merged', 'closed') ORDER BY id").all() as any[])
-    .map((r) => ({ id: r.id, title: r.title, from: r.trigger_name === "learner" ? "learner" : "you" }));
+  const open = openAsks(db, "maintainer").map((a) => ({ id: a.id, title: a.text, from: a.from }));
   return {
     target,
     tickets: { finished: t.length, merged: merged.length, reverted, revert_rate: merged.length ? round(reverted / merged.length)! : 0 },
@@ -307,8 +310,7 @@ function readAnswer(out: string, prompt: string) {
 // An open request that already asks for this, from anyone.
 function alreadyAsked(db: Database, text: string) {
   const n = normal(text);
-  const open = db.query("SELECT title FROM tickets WHERE blueprint = 'factory' AND state NOT IN ('merged', 'closed')").all() as { title: string }[];
-  return open.some((r) => normal(r.title) === n);
+  return openAsks(db, "maintainer").some((a) => normal(a.text) === n);
 }
 
 export type LearnerResult = { ran: boolean; why: string; status?: "done" | "failed" | "unreadable"; filed: { id: number; title: string }[]; skipped: string[] };
@@ -350,7 +352,7 @@ export function runLearner(db: Database, o: { dir: string; repo: string; slug: s
         `- ${p.why}`,
         `- From learner run #${id} on ${o.now.slice(0, 10)} (${model}), over the newest ${digest.tickets.finished} finished tickets; learn.target: ${digest.target}.`,
       ].join("\n");
-      out.filed.push(file(db, { keys: [key], text: p.change, evidence, dir: o.dir, slug: o.slug, run: o.run, now: o.now }));
+      out.filed.push(file(db, { keys: [key], text: p.change, evidence, slug: o.slug, run: o.run, now: o.now }));
     }
     if (status === "done") takeNotes(db, "learner", o.now);
     db.query("UPDATE learner_runs SET filed = ? WHERE id = ?").run(out.filed.length ? out.filed.map((f) => f.id).join(",") : null, id);

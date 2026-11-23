@@ -7,7 +7,7 @@ import { giveAccess, withSkillsLine } from "./skills.ts";
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
-import { BLUEPRINT } from "./maintainer.ts";
+import { RETIRED_BLUEPRINT } from "./maintainer.ts";
 import { basename, join } from "node:path";
 import { enterStage } from "./ticket.ts";
 import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
@@ -26,11 +26,11 @@ import { splitGate } from "./split.ts";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
 
-// Blueprints no groomed ticket runs, even when grooming.blueprints names one: the maintainer's
-// (maintainer.ts) takes requests from Overwatch, and the maintenance agent's (PRD 7.5) runs
-// only from its daily trigger (triggers/maintenance.yaml).
+// Blueprints no groomed ticket runs, even when grooming.blueprints names one: the maintenance
+// agent's (PRD 7.5) runs only from its daily trigger (triggers/maintenance.yaml), and a repo's
+// old copy of the retired maintainer blueprint never runs (maintainer.ts).
 export const MAINTENANCE = "maintenance";
-export const NEVER_GROOMED: readonly string[] = [BLUEPRINT, MAINTENANCE];
+export const NEVER_GROOMED: readonly string[] = [RETIRED_BLUEPRINT, MAINTENANCE];
 
 export function grooming(repo: string) {
   const g = readFactory(repo).grooming ?? {};
