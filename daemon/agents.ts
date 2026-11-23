@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import type { Database } from "bun:sqlite";
-import { leadRepo, ticketRepos } from "./db.ts";
+import { listRepos, ticketRepos } from "./db.ts";
 
 export const FACTORY_AGENTS = ["overwatch", "babysitter", "maintainer", "learner"] as const;
 export type FactoryAgent = (typeof FACTORY_AGENTS)[number];
@@ -134,9 +134,11 @@ export function neededAgents(dir: string): string[] {
 }
 
 // ---- the neighbour map ---------------------------------------------------------------
-// Every brief opens with the factory's agents: name, tier, territory, and how to ask each.
-// It's built from the agents' headers only, sorted, so it reads the same in every session
-// and stays in the cached front of the brief (plan: Cache-friendly order).
+// Every brief opens with the agents its agent may ask (plan: Peer review, Who can ask whom):
+// name, tier, territory, and how to ask each. A repo agent's lists the factory agents and its
+// own repo's; a global agent's, the factory agents and every repo's, by repo. It's built from
+// the agents' headers only, sorted, so it reads the same in every session and stays in the
+// cached front of the brief (plan: Cache-friendly order).
 
 // An agent with no `territory:` gets its role's.
 const ROLE_TERRITORY: Record<string, string> = {
@@ -165,7 +167,9 @@ export function repoAgents(repo: string) {
   return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).filter((n) => !isFactoryAgent(n)).sort() : [];
 }
 
-export function neighbourMap(repos: { slug: string; path: string }[]) {
+// `own`: the repo a repo agent works in, whose agents alone it may ask; null for a global
+// agent, which may ask every repo's agents in `repos`.
+export function neighbourMap(repos: { slug: string; path: string }[], own: string | null = null) {
   const lines = [
     "## The factory's agents",
     "",
@@ -174,21 +178,22 @@ export function neighbourMap(repos: { slug: string; path: string }[]) {
     "Factory agents, one each for every repo:",
     ...FACTORY_AGENTS.map((n) => `- ${n}: ${territoryOf(safeLoad(null, n))}. Ask: ${HOW[n]}.`),
   ];
-  for (const r of [...repos].sort((a, b) => a.slug.localeCompare(b.slug))) {
+  const shown = own == null ? repos : repos.filter((r) => r.slug === own);
+  for (const r of [...shown].sort((a, b) => a.slug.localeCompare(b.slug))) {
     const names = repoAgents(r.path);
     if (!names.length) continue;
-    lines.push("", `Repo agents in ${r.slug}, each running one stage of one ticket; ask overwatch to route work to them:`);
+    const how = own == null ? `factory ask ${r.slug}:<agent> "<text>"` : `factory ask <agent> "<text>"`;
+    lines.push("", `${own == null ? `Repo agents in ${r.slug}` : `Agents in your repo, ${r.slug}`}, each running one stage of one ticket. Ask: ${how}; it is typed into the agent's live session, else given to its next one:`);
     for (const n of names) {
       const a = safeLoad(r.path, n);
       lines.push(`- ${n}${a?.role ? ` (${a.role})` : ""}: ${territoryOf(a)}.`);
     }
   }
+  if (own != null) lines.push("", "Agents in other repos are asked through a global agent: ask overwatch.");
   return lines.join("\n");
 }
 
-// The map in one factory's briefs: the factory agents and its lead repo's agents. It's the
-// same for every ticket, even one that works in another repo, so it stays cached.
-export const factoryMap = (db: Database) => {
-  const lead = leadRepo(db);
-  return neighbourMap(lead ? [lead] : []);
-};
+// The map in one factory's briefs. `own`: the repo a repo agent's session works in (its
+// ticket's lead repo), so the map is the same for every ticket there and stays cached; null
+// for a global agent, which sees every repo's agents.
+export const factoryMap = (db: Database, own: string | null) => neighbourMap(listRepos(db), own);

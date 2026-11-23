@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { giveAccess, withSkillsLine } from "./skills.ts";
 import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { validateDir, validateFile } from "./validate.ts";
 import { enterStage } from "./ticket.ts";
 import { closesIssue, openPr, prBody, prText, readyRules, rulesPass, VERDICT_OF_ROLE, type VerdictKind } from "./ready.ts";
@@ -32,6 +32,7 @@ import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
 import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from "./artifacts.ts";
 import { agentRepos, factoryMap, loadAgent, type AgentRepos } from "./agents.ts";
+import { briefNotes, deliveredInBrief, notesForBrief } from "./ask.ts";
 import { classify, EVIDENCE_OF, fileRepair, repairs, type CheckResult } from "./broken.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
@@ -211,9 +212,14 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run }), o.now).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
   const share = shareFor(db, { repo: o.repo, id: o.id, folder, output: s.output });
+  // The repo the session works in (its ticket's lead): its agents are the ones this agent may ask,
+  // and notes other agents left this agent there come last in the brief (ask.ts).
+  const workRepo = repos[0].repo;
+  const notes = notesForBrief(db, { agent: s.agent, repo: workRepo, ticket: o.id });
+  const text = [brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db, workRepo)), briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n");
   // Only the skills and tools its frontmatter lists (skills.ts); the plugin sits in the ticket folder, never the repo.
-  const argv = withHandoffHook(giveAccess(argvFor(use, defaults, brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db))), agent, join(folder, ".skills", s.agent), from), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
-  const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id }); // sessions keep the agent's own argv
+  const argv = withHandoffHook(giveAccess(argvFor(use, defaults, text), agent, join(folder, ".skills", s.agent), from), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
+  const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id, repo: workRepo }); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
   // The ticket's first worktree stage: the other repos' shell tabs join its space with it.
@@ -234,6 +240,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   }
   db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd, slice) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, t.worktree, slice?.key ?? null);
+  deliveredInBrief(db, notes, o.now);
   return terminal;
 }
 

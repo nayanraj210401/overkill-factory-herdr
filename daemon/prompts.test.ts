@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import { triageBrief } from "./groom.ts";
 import { overwatchBrief } from "./overwatch.ts";
@@ -10,6 +10,7 @@ import { brief, sh, startTicket, type Run } from "./runner.ts";
 import { validateDir, validateFile } from "./validate.ts";
 import { matchBrief } from "./snap.ts";
 import { neighbourMap } from "./agents.ts";
+import { ask } from "./ask.ts";
 
 const FIXTURE = join(import.meta.dir, "../fixtures/acme-api/.factory");
 
@@ -119,7 +120,18 @@ test("a stage's `prompt:` picks its own template; other stages keep stage.md", (
   expect(readFileSync(bp, "utf8")).toContain("prompt: specs");
   expect(validateDir(join(repo, ".factory")).filter((r) => r.errors.length)).toEqual([]);
   startTicket(db, { dir, repo, id: 412, run, now: "2026-11-21T10:00:00Z" });
-  expect(calls[0].at(-1)).toBe(`${neighbourMap([{ slug: "acme/api", path: repo }])}\n\nSPEC TEMPLATE for #412: Write INTENT.md.`);
+  expect(calls[0].at(-1)).toBe(`${neighbourMap([{ slug: "acme/api", path: repo }], "acme/api")}\n\nSPEC TEMPLATE for #412: Write INTENT.md.`);
+});
+
+test("a note left for a repo agent with no live session comes last in its next brief in that repo, once", () => {
+  const { dir, db, calls, run, repo } = stageSetup();
+  const note = ask(db, { to: "spec-writer", text: "Keep the API names stable", from: "overwatch", slug: "acme/api", dir, run, now: "2026-11-21T09:00:00Z", name: basename(dir) });
+  expect(note).toMatchObject({ kind: "note", delivered: false });
+  startTicket(db, { dir, repo, id: 412, run, now: "2026-11-21T10:00:00Z" });
+  const text = calls[0].at(-1)!;
+  expect(text.endsWith(`\n\n## Notes other agents left you\n\n- Note #${note.ask.id} from overwatch: Keep the API names stable. When it's handled: factory asks done ${note.ask.id} --name ${basename(dir)}`)).toBe(true);
+  expect(calls[0]).toContain("FACTORY_REPO=acme/api");
+  expect((db.query("SELECT delivered_at FROM asks WHERE id = ?").get(note.ask.id) as any).delivered_at).toBe("2026-11-21T10:00:00Z");
 });
 
 test("validate: a stage prompt must name a file; unknown placeholders and empty files are errors", () => {
@@ -150,7 +162,7 @@ test("every brief opens with the neighbour map, built from the agents' headers a
   expect(neighbourMap([{ slug: "acme/api", path: repo }])).toBe(map);
   expect(map).toContain('- maintainer: The factory itself: .factory/ in any repo');
   expect(map).toContain('Ask: factory ask maintainer "<the change, and why>" --why "<evidence>"');
-  expect(map).toContain("Repo agents in acme/api, each running one stage of one ticket");
+  expect(map).toContain('Repo agents in acme/api, each running one stage of one ticket. Ask: factory ask acme/api:<agent> "<text>"');
   expect(map).toContain("- spec-writer (spec): INTENT.md for its ticket."); // no territory: its role's
   expect(map).not.toContain("- maintainer (maintain)"); // a factory agent isn't listed as the repo's
   // The stable map first, the ticket after it (plan: Cache-friendly order).
@@ -168,4 +180,25 @@ test("every brief opens with the neighbour map, built from the agents' headers a
   const again = neighbourMap([{ slug: "acme/api", path: repo }]);
   expect(again).toContain("- reviewer (review): Payments diffs, strictly.");
   expect(again).toContain("- broken: Its own stage of its own ticket.");
+});
+
+test("a brief's map lists only the agents its agent may ask: a repo agent its own repo's, a global agent every repo's", () => {
+  const api = factory();
+  const web = factory();
+  writeFileSync(join(web, ".factory/agents/designer.md"), "---\nrole: build\nterritory: The web app's screens\n---\nDesign.\n");
+  const repos = [{ slug: "acme/web", path: web }, { slug: "acme/api", path: api }];
+  const mine = neighbourMap(repos, "acme/api");
+  matchBrief("neighboursRepo", mine);
+  expect(mine).toContain('Agents in your repo, acme/api, each running one stage of one ticket. Ask: factory ask <agent> "<text>"');
+  expect(mine).toContain("- spec-writer (spec)");
+  expect(mine).not.toContain("acme/web");
+  expect(mine).not.toContain("designer");
+  expect(mine).toContain("Agents in other repos are asked through a global agent: ask overwatch.");
+  for (const n of ["overwatch", "babysitter", "maintainer", "learner"]) expect(mine).toContain(`- ${n}: `);
+  const all = neighbourMap(repos, null);
+  matchBrief("neighboursGlobal", all);
+  expect(all.indexOf("Repo agents in acme/api")).toBeLessThan(all.indexOf("Repo agents in acme/web")); // grouped by repo, sorted
+  expect(all).toContain("- designer (build): The web app's screens.");
+  expect(all).toContain('factory ask acme/web:<agent> "<text>"');
+  expect(all).not.toContain("asked through a global agent");
 });

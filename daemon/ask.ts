@@ -4,42 +4,98 @@
 //   maintainer          a maintainer request (maintainer.ts), as `factory request` files it
 //   overwatch           a note in Needs you, typed into the live Overwatch terminal when one runs
 //   learner, babysitter a note queued for the agent's next run
-// Repo agents work one stage of one ticket and aren't asked directly: Overwatch routes that work.
+//   a repo agent        a note typed into its live session in that repo, else given to its next brief there
+// A repo agent is `<owner/name>:<agent>`, or a bare `<agent>`: the asker's own repo, or for a
+// global asker the one repo that has it.
+//
+// Who can ask whom (plan: Peer review): a repo agent asks the global agents and its own repo's
+// agents; another repo's goes through a global agent. A global agent, or you, asks anyone.
 import type { Database } from "bun:sqlite";
-import { FACTORY_AGENTS, isFactoryAgent, type FactoryAgent } from "./agents.ts";
+import { FACTORY_AGENTS, isFactoryAgent, repoAgents } from "./agents.ts";
+import { leadRepo, listRepos } from "./db.ts";
 import { request, type Kind } from "./maintainer.ts";
 import type { Run } from "./runner.ts";
 
-export type Ask = { id: number; from: string; to: FactoryAgent; text: string; why: string | null; about: number | null; request: number | null; at: string; delivered_at: string | null; done_at: string | null };
-const row = (r: any): Ask => ({ id: r.id, from: r.from_agent, to: r.to_agent, text: r.text, why: r.why, about: r.about, request: r.request, at: r.at, delivered_at: r.delivered_at, done_at: r.done_at });
+// `to` is the agent's name; `toRepo` the repo of a repo agent, null for a global one.
+export type Ask = { id: number; from: string; to: string; toRepo: string | null; text: string; why: string | null; about: number | null; request: number | null; at: string; delivered_at: string | null; done_at: string | null };
+const row = (r: any): Ask => ({ id: r.id, from: r.from_agent, to: r.to_agent, toRepo: r.to_repo ?? null, text: r.text, why: r.why, about: r.about, request: r.request, at: r.at, delivered_at: r.delivered_at, done_at: r.done_at });
+// How a note names its target: `owner/name:agent` for a repo agent.
+export const askTarget = (a: Pick<Ask, "to" | "toRepo">) => (a.toRepo ? `${a.toRepo}:${a.to}` : a.to);
 
 // The asker: --from, else the agent this session runs as (FACTORY_AGENT, set by withFactory), else you.
 export const askerOf = (flag: string | null | undefined, env = process.env) => flag || env.FACTORY_AGENT || "you";
 
+// Who asks or is asked: a global agent or the person (repo null), or a repo agent in its repo.
+export type Who = { agent: string; repo: string | null };
+const tier = (w: Who) => (w.agent === "you" ? "you" : isFactoryAgent(w.agent) ? "global" : "repo");
+
+// The rule, pure: a repo agent may ask a global agent or one in its own repo; anyone else, anyone.
+export function mayAsk(from: Who, to: Who) {
+  return tier(from) !== "repo" || to.repo == null || to.repo === from.repo;
+}
+
+// Everyone `from` may ask, as they're named to `factory ask`.
+export function askable(db: Database, from: Who) {
+  const repos = listRepos(db).filter((r) => mayAsk(from, { agent: "", repo: r.slug }));
+  const own = tier(from) === "repo";
+  return [...FACTORY_AGENTS, ...repos.flatMap((r) => repoAgents(r.path).map((n) => (own ? n : `${r.slug}:${n}`)))];
+}
+
+// `factory ask`'s target, checked against the rule and the factory's repos.
+export function resolveTarget(db: Database, from: Who, raw: string): Who {
+  const t = raw.trim().toLowerCase();
+  const cut = t.lastIndexOf(":");
+  const [repo, agent] = cut < 0 ? [null, t] : [t.slice(0, cut), t.slice(cut + 1)];
+  const unknown = (what: string) => new Error(`${what}; ${from.agent === "you" ? "you" : from.agent} may ask: ${askable(db, from).join(", ") || "nobody yet"}`);
+  if (!agent) throw unknown("ask whom?");
+  if (isFactoryAgent(agent)) {
+    if (repo != null) throw new Error(`${agent} is a factory agent, one for every repo: factory ask ${agent} "<text>"`);
+    return { agent, repo: null };
+  }
+  const repos = listRepos(db);
+  const named = repo ?? (tier(from) === "repo" ? from.repo : null);
+  if (named != null) {
+    if (!mayAsk(from, { agent, repo: named }))
+      throw new Error(`${from.agent} works in ${from.repo} and can't ask ${named}:${agent}: an agent in another repo is asked through a global agent. Ask overwatch instead: factory ask overwatch "<what ${named}:${agent} should do, and why>"`);
+    const r = repos.find((x) => x.slug === named);
+    if (!r) throw unknown(`no repo ${named} in this factory`);
+    if (!repoAgents(r.path).includes(agent)) throw unknown(`no agent ${agent} in ${named}`);
+    return { agent, repo: r.slug };
+  }
+  const has = repos.filter((r) => repoAgents(r.path).includes(agent));
+  if (has.length > 1) throw new Error(`${agent} is in ${has.map((r) => r.slug).join(" and ")}: say which, as ${has[0].slug}:${agent}`);
+  if (!has.length) throw unknown(`no agent ${agent}`);
+  return { agent, repo: has[0].slug };
+}
+
 export type AskResult = { kind: "request"; ask: Ask; id: number; title: string; requestKind: Kind; repo: string } | { kind: "note"; ask: Ask; delivered: boolean };
 
+// `fromRepo`: the repo a repo agent's session works in (FACTORY_REPO); the factory's lead when unset.
 export function ask(db: Database, o: {
-  to: string; text: string; why?: string | null; from: string; about?: number | null;
+  to: string; text: string; why?: string | null; from: string; fromRepo?: string | null; about?: number | null;
   slug: string; dir: string; run: Run; now: string; overwatch?: () => string | null; name?: string;
   requestKind?: Kind; target?: string; // for the maintainer: the request's kind and repo (maintainer.ts)
 }): AskResult {
-  const to = o.to.trim().toLowerCase();
   const text = o.text.trim().replace(/\s+/g, " ");
-  if (!isFactoryAgent(to)) throw new Error(`ask whom? ${FACTORY_AGENTS.join(", ")}. Repo agents work one stage of one ticket: ask overwatch to route work to one`);
-  if (!text) throw new Error(`say what you need: factory ask ${to} "<text>" [--why "<evidence>"]`);
-  if (o.from === to) throw new Error(`${to} can't ask itself`);
-  if (to === "maintainer") {
+  const from: Who = { agent: o.from, repo: isFactoryAgent(o.from) || o.from === "you" ? null : o.fromRepo || leadRepo(db)?.slug || o.slug };
+  const to = resolveTarget(db, from, o.to);
+  const name = askTarget({ to: to.agent, toRepo: to.repo });
+  if (!text) throw new Error(`say what you need: factory ask ${name} "<text>" [--why "<evidence>"]`);
+  if (from.agent === to.agent && from.repo === to.repo) throw new Error(`${to.agent} can't ask itself`);
+  if (to.agent === "maintainer") {
     const r = request(db, { text, repo: o.slug, run: o.run, now: o.now, from: o.from, evidence: o.why ?? undefined, dir: o.dir, about: o.about, kind: o.requestKind, target: o.target });
     return { kind: "request", ask: row(db.query("SELECT * FROM asks WHERE request = ?").get(r.id)), id: r.id, title: r.title, requestKind: r.kind, repo: r.repo };
   }
-  const id = Number(db.query("INSERT INTO asks (from_agent, to_agent, text, why, about, at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(o.from, to, text, o.why ?? null, o.about ?? null, o.now).lastInsertRowid);
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.about ?? null, o.from, `asked ${to}: ${text}`.slice(0, 200), o.why ?? null, o.now);
-  const delivered = to === "overwatch" && o.overwatch ? deliverToOverwatch(db, { run: o.run, now: o.now, terminal: o.overwatch, name: o.name }) > 0 : false;
-  return { kind: "note", ask: row(db.query("SELECT * FROM asks WHERE id = ?").get(id)), delivered };
+  const id = Number(db.query("INSERT INTO asks (from_agent, to_agent, to_repo, text, why, about, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(o.from, to.agent, to.repo, text, o.why ?? null, o.about ?? null, o.now).lastInsertRowid);
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.about ?? null, o.from, `asked ${name}: ${text}`.slice(0, 200), o.why ?? null, o.now);
+  if (to.repo) deliverToRepoAgents(db, { run: o.run, now: o.now, name: o.name });
+  else if (to.agent === "overwatch" && o.overwatch) deliverToOverwatch(db, { run: o.run, now: o.now, terminal: o.overwatch, name: o.name });
+  const ask = row(db.query("SELECT * FROM asks WHERE id = ?").get(id));
+  return { kind: "note", ask, delivered: !!ask.delivered_at };
 }
 
-// Open notes (not maintainer requests, which are tickets), oldest first; to one agent, or all.
+// Open notes (not maintainer requests, which are tickets), oldest first; to one agent (in any repo), or all.
 export function openAsks(db: Database, to?: string): Ask[] {
   return (db.query(`SELECT * FROM asks WHERE done_at IS NULL AND request IS NULL ${to ? "AND to_agent = ?" : ""} ORDER BY id`).all(...(to ? [to] : [])) as any[]).map(row);
 }
@@ -104,4 +160,41 @@ export function deliverToOverwatch(db: Database, o: { run: Run; now: string; ter
     n++;
   }
   return n;
+}
+
+// Notes to repo agents: each typed into a live session of its agent in its repo, once. A note
+// about a ticket goes only to that ticket's session; one about none, to the newest. A note no
+// session is live for waits for the agent's next brief in that repo (notesForBrief).
+export function deliverToRepoAgents(db: Database, o: { run: Run; now: string; name?: string }) {
+  const waiting = (db.query("SELECT * FROM asks WHERE to_repo IS NOT NULL AND request IS NULL AND delivered_at IS NULL AND done_at IS NULL ORDER BY id").all() as any[]).map(row);
+  if (!waiting.length) return 0;
+  const lead = leadRepo(db)?.slug ?? null;
+  let n = 0;
+  for (const a of waiting) {
+    const live = db.query(`SELECT s.terminal FROM sessions s JOIN ticket_lead t ON t.id = s.ticket
+      WHERE s.agent = ? AND s.ended_at IS NULL AND s.terminal IS NOT NULL AND COALESCE(t.repo, ?) = ? ${a.about != null ? "AND s.ticket = ?" : ""}
+      ORDER BY s.id DESC`).all(a.to, lead, a.toRepo, ...(a.about != null ? [a.about] : [])) as { terminal: string }[];
+    const terminal = live.map((s) => s.terminal).find((t) => alive(o.run, t));
+    if (!terminal || o.run(["hc", "send", terminal, noteText(a, o.name)]).code !== 0) continue;
+    db.query("UPDATE asks SET delivered_at = ? WHERE id = ?").run(o.now, a.id);
+    n++;
+  }
+  return n;
+}
+
+const alive = (run: Run, terminal: string) => {
+  const r = run(["hc", "get", terminal, "--json"]);
+  try { return r.code === 0 && JSON.parse(r.out).exit_code == null; } catch { return false; }
+};
+
+// The notes waiting for `agent` in `repo` that a new session of it on `ticket` takes in its
+// brief: ones about that ticket, or about none. Mark them with deliveredInBrief once it starts.
+export const notesForBrief = (db: Database, o: { agent: string; repo: string; ticket: number }): Ask[] =>
+  (db.query("SELECT * FROM asks WHERE to_agent = ? AND to_repo = ? AND request IS NULL AND delivered_at IS NULL AND done_at IS NULL AND (about IS NULL OR about = ?) ORDER BY id")
+    .all(o.agent, o.repo, o.ticket) as any[]).map(row);
+export const briefNotes = (notes: Ask[], name?: string) => notes.length
+  ? ["## Notes other agents left you", "", ...notes.map((a) => `- ${noteText(a, name)}`)].join("\n")
+  : "";
+export function deliveredInBrief(db: Database, notes: Ask[], now: string) {
+  for (const a of notes) db.query("UPDATE asks SET delivered_at = ? WHERE id = ?").run(now, a.id);
 }

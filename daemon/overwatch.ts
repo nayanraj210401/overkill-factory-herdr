@@ -31,12 +31,13 @@ export function factoriesOf(home = factoryHome()): FactoryInfo[] {
 const factoryLine = (f: FactoryInfo) =>
   `- ${f.name}: ${f.repos.length ? f.repos.map((r) => `${r.slug} (${r.path}${r.lead ? ", lead" : ""})`).join(", ") : "no repo yet"}; data ${f.dir}`;
 
-// The repos whose agents the map lists: each factory's lead, once.
-const leads = (fs: FactoryInfo[]) => [...new Map(fs.flatMap((f) => f.repos.filter((r) => r.lead)).map((r) => [r.slug, r])).values()];
+// The repos whose agents the map lists: every factory's, once each. Overwatch is a global
+// agent, so it may ask any of them (ask.ts).
+const allRepos = (fs: FactoryInfo[]) => [...new Map(fs.flatMap((f) => f.repos).map((r) => [r.slug, r])).values()];
 
 export function overwatchBrief(o: { home: string; factories: FactoryInfo[]; prompt?: string | null; neighbours?: string }) {
   return render(loadPrompt(null, "overwatch"), { // a factory agent: no repo's prompts/ apply
-    neighbours: o.neighbours ?? neighbourMap(leads(o.factories)),
+    neighbours: o.neighbours ?? neighbourMap(allRepos(o.factories), null),
     "agent.prompt": o.prompt ?? loadAgent(null, "overwatch")?.prompt ?? "",
     home: o.home,
     factories: o.factories.length ? o.factories.map(factoryLine).join("\n") : "- none yet: factory init makes one",

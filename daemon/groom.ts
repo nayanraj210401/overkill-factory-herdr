@@ -8,13 +8,14 @@ import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { BLUEPRINT } from "./maintainer.ts";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { enterStage } from "./ticket.ts";
 import { getMeta, listRepos, needLead, repoOf, type Repo } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { capsOf, readTriggers, runningByTrigger, withinCaps } from "./triggers.ts";
 import { argvFor, loadBlueprint, readFactory, startTicket, type Run } from "./runner.ts";
 import { agentRepos, factoryMap, loadAgent } from "./agents.ts";
+import { briefNotes, deliveredInBrief, notesForBrief } from "./ask.ts";
 import { mayStart } from "./away.ts";
 import { openAgent, withFactory } from "./herdr.ts";
 import { withHandoffHook } from "./handoff-hook.ts";
@@ -84,10 +85,13 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   if (existsSync(before)) renameSync(before, join(folder, "GROOMING.before.md"));
   const from = agentRepos(db, o.id, o.repo);
   const agent = loadAgent(from, g.agent);
-  const argv = giveAccess(argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
-    triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: withSkillsLine(agent?.prompt, agent), others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db) })), agent, join(folder, ".skills", g.agent), from);
+  const lead = needLead(db).slug;
+  const notes = notesForBrief(db, { agent: g.agent, repo: lead, ticket: o.id }); // notes left for the triage agent (ask.ts)
+  const argv = giveAccess(argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, [
+    triageBrief(t as any, { slug: lead, repo: o.repo, folder, blueprints: g.blueprints, prompt: withSkillsLine(agent?.prompt, agent), others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db, lead) }),
+    briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n")), agent, join(folder, ".skills", g.agent), from);
   // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
-  const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir, { agent: g.agent, ticket: o.id });
+  const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir, { agent: g.agent, ticket: o.id, repo: lead });
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
   // later), so you can watch the triage agent and answer it. No window: a background terminal.
   const made = openAgent(o.run, { folder, space: t.space ?? null, name: "groom", argv: cmd });
@@ -106,6 +110,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   enterStage(db, o.id, "Groom", `${g.agent} agent`, [], o.now);
   db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, 'groom', ?, ?, ?, ?, ?, ?)")
     .run(o.id, g.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, folder);
+  deliveredInBrief(db, notes, o.now);
   return terminal;
 }
 

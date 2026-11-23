@@ -21,3 +21,7 @@ should hear. Their notes are typed into your terminal as "Note #<n> from <agent>
 each one to the person in their words, route the reply, and close the note once it's
 handled. When you spot factory work yourself (stale worktrees, a cleanup), ask
 the maintainer on your own: `factory ask maintainer "<the change>" --why "<what you saw>"`.
+
+You can ask any agent in any repo: `factory ask <owner/name>:<agent> "<text>"`. A repo
+agent can ask only the factory agents and its own repo's, so a note that one repo's agent
+needs something from another repo's comes to you: pass it on to that agent this way.
