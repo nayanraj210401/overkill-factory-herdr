@@ -11,6 +11,7 @@ import { getMeta, setMeta } from "./db.ts";
 import { readFactory, sh } from "./runner.ts";
 import { service } from "./service.ts";
 import { validateDir } from "./validate.ts";
+import { MAINTENANCE, NEVER_GROOMED } from "./groom.ts";
 
 export type Step = { id: string; label: string; status: "ok" | "missing" | "skipped"; fix: string | null; detail: string | null };
 export type Probe = { has: (bin: string) => boolean; ghLoggedIn: () => boolean; service: () => string; trusted?: (dir: string) => boolean; flowStack?: (repo: string) => string[] };
@@ -204,8 +205,11 @@ export function writeSetup(o: { repo: string; name: string; slug: string; basics
     const dir = join(wt, ".factory");
     mkdirSync(dir, { recursive: true });
     for (const sub of ["blueprints", "agents", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true });
+    // The maintenance agent's daily trigger; the built-in queue and review-comment triggers still run beside it.
+    mkdirSync(join(dir, "triggers"), { recursive: true });
+    cpSync(join(DEFAULTS, "triggers", `${MAINTENANCE}.yaml`), join(dir, "triggers", `${MAINTENANCE}.yaml`));
     const blueprints = readdirSync(join(dir, "blueprints")).filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""))
-      .filter((b) => !triggered(DEFAULTS).includes(b) && b !== "factory"); // the maintainer's, never triage's pick
+      .filter((b) => !triggered(DEFAULTS).includes(b) && !NEVER_GROOMED.includes(b));
     writeFileSync(join(dir, "factory.yaml"), factoryYaml({ name: o.name, slug: o.slug, blueprints, basics: o.basics, floor: detectFloor(wt) }));
     const results = validateDir(dir);
     const bad = results.filter((r) => r.errors.length);

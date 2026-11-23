@@ -1,0 +1,16 @@
+# .factory/blueprints/maintenance.yaml
+# The maintenance agent's lane (PRD 7.5): triggers/maintenance.yaml starts it every day,
+# and each run makes one small, safe drift fix in the repo's code as a normal PR.
+# Grooming never picks it, and it is not the maintainer's factory blueprint.
+#
+# The merge gate is human: you approve every maintenance PR. Once you trust it (Home shows
+# this blueprint's revert rate), let ready maintenance PRs merge themselves:
+#   merge:     { gate: auto, next: [end] }
+name: maintenance
+start: maintain
+stages:
+  maintain: { agent: maintenance, next: [verify] }
+  verify:   { check: tests, next: [review], on_fail: maintain, max_retries: 2 }
+  review:   { agent: reviewer, next: [pr], on_fail: maintain }
+  pr:       { agent: pr-writer, requires: ready, output: PR.md, template: pr-readable, next: [merge] }
+  merge:    { gate: human, next: [end] }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta, setRepo } from "./db.ts";
 import { advance, answer, sh, type Run } from "./runner.ts";
-import { ask, askMidRun, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
+import { ask, askMidRun, grooming, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { recordUsage, transcriptDir } from "./usage.ts";
 
 const now = "2026-11-21T10:00:00Z";
@@ -63,6 +63,16 @@ test("triage runs in the ticket's folder with a brief naming the issue, the blue
   expect(ticket().blueprint).toBe("chore");
   expect(() => pick(db, { repo, id: 412, blueprint: "hotfix", now })).toThrow(`"hotfix" isn't a blueprint grooming may pick: address-review, bugfix, chore, feature`);
   expect(db.query("SELECT who, what FROM decisions").get()).toEqual({ who: "triager", what: "picked the chore blueprint" });
+});
+
+test("grooming never picks the maintenance blueprint, even when grooming.blueprints names it", () => {
+  const { db, repo, add } = setup("name: t\nquality_floor: [\"true\"]\ngrooming: { blueprints: [chore, maintenance, factory] }\n");
+  add(412);
+  expect(grooming(repo).blueprints).toEqual(["chore"]);
+  expect(() => pick(db, { repo, id: 412, blueprint: "maintenance", now })).toThrow(`"maintenance" isn't a blueprint grooming may pick: chore`);
+  // With no list, every blueprint but the maintainer's and the maintenance agent's.
+  writeFileSync(join(repo, ".factory/factory.yaml"), "name: t\n");
+  expect(grooming(repo).blueprints).not.toContain("maintenance");
 });
 
 test("questions go to the issue (product ones to the PO); answers in Herdr and on the issue both count, then it starts", () => {

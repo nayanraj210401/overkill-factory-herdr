@@ -1,0 +1,7 @@
+# .factory/triggers/maintenance.yaml
+# Once a day, one maintenance ticket: the maintenance agent makes one small drift fix
+# (blueprints/maintenance.yaml). One at a time, so runs never race each other.
+on: schedule
+every: 1d
+blueprint: maintenance
+concurrency: 1
