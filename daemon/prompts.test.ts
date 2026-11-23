@@ -29,6 +29,7 @@ test("the built-in templates give the briefs the code used to build", () => {
   matchBrief("stageBare", brief({ id: 1, title: "t" }, "spec", null, "/f"));
   matchBrief("stageOne", brief({ id: 1, title: "t" }, "spec", "P", "/f", undefined, [repos[0]], ["(src/**) one", "(x) two"]));
   matchBrief("stageMulti", brief({ id: 1, title: "t" }, "implement", "P", "/f", "build", repos, ["(src/**) one", "(x) two"]));
+  matchBrief("stageMemory", brief({ id: 1, title: "t" }, "implement", "P", "/f", "build", [repos[0]], [], undefined, "", {}, "", "- [merged] stage-output #4 implement: Add login → done\n- [reverted] stage-output #5 implement: Rate limit → done"));
   matchBrief("stageHoldout", brief({ id: 1, title: "t" }, "verify", "P", "/f", "verify"));
   matchBrief("stageReview", brief({ id: 1, title: "t" }, "review", "P", "/f", "review"));
   matchBrief("stageFix", brief({ id: 1, title: "t" }, "implement", "P", dir, "build", repos).split(dir).join("/f"));

@@ -19,6 +19,7 @@ import { budgetUse, roundUse, startHold } from "./budget.ts";
 import { profileText } from "./account.ts";
 import { DEFAULT_MODEL, pinModel } from "./models.ts";
 import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts";
+import { memoryBlock, remember } from "./memory.ts";
 import { recordOutcome, startExperiments } from "./experiments.ts";
 import { closeRound, latestBrief } from "./round.ts";
 import { loadPrompt, render } from "./prompts.ts";
@@ -79,7 +80,7 @@ export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").r
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
 // `share`: the claude.ai links and the publish step for the stage's output (artifacts.ts); "" when sharing is off.
 // `neighbours`: the map of the factory's agents (agents.ts), first in the brief.
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "") {
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "", memory = "") {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return render(template, {
     neighbours,
@@ -96,6 +97,7 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
       : "",
     profile: profileText(),
     lessons: lessons.map((l) => `- ${l}`).join("\n"),
+    memory,
     fix_brief: latestBrief(folder),
     slice,
     shared: share.shared,
@@ -201,13 +203,14 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const folder = join(o.dir, "tickets", String(o.id));
   const intent = existsSync(join(folder, "INTENT.md")) ? readFileSync(join(folder, "INTENT.md"), "utf8") : "";
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run }), o.now).map((l) => `(${l.area}) ${l.text}`);
+  const memory = memoryBlock(db, { agent: s.agent, repo: t.repo ?? "", query: `${t.title} ${intent.slice(0, 1000)}` });
   const use = agentSettings(t, s.agent, agent, defaults);
   const share = shareFor(db, { repo: o.repo, id: o.id, folder, output: s.output });
   // The repo the session works in (its ticket's lead): its agents are the ones this agent may ask,
   // and notes other agents left this agent there come last in the brief (ask.ts).
   const workRepo = repos[0].repo;
   const notes = notesForBrief(db, { agent: s.agent, repo: workRepo, ticket: o.id });
-  const text = [brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db, workRepo)), briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n");
+  const text = [brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db, workRepo), memory), briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n");
   // Only the skills and tools its frontmatter lists (skills.ts); the plugin sits in the ticket folder, never the repo.
   const argv = withHandoffHook(giveAccess(argvFor(use, defaults, text), agent, join(folder, ".skills", s.agent), from), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
   const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id, repo: workRepo }); // sessions keep the agent's own argv
@@ -357,6 +360,19 @@ type BlueprintStage = Stage & { on_fail?: string; max_retries?: number; gate?: s
 
 // The current stage's work is over (an agent said so, its terminal exited, or a
 // check ran): close its session, then follow the blueprint until something waits.
+// An agent stage's end, into that agent's memory: the ticket it worked on, and the stage's output
+// file (or what the stage ended with). Failed now, or merged, reverted or closed later (memory.ts).
+function rememberStage(db: Database, o: { dir: string; t: Record<string, any>; at: string; s: BlueprintStage | undefined; failed?: string; now: string }) {
+  if (!o.s?.agent) return;
+  const folder = join(o.dir, "tickets", String(o.t.id));
+  const read = (f: string) => (existsSync(join(folder, f)) ? readFileSync(join(folder, f), "utf8") : "");
+  const session = db.query("SELECT tokens_in + tokens_out AS n FROM sessions WHERE ticket = ? AND stage = ? ORDER BY id DESC LIMIT 1").get(o.t.id, o.at) as { n: number } | null;
+  const output = (o.s.output ? read(o.s.output) : "") || `${o.at} stage done${o.failed ? `: failed: ${o.failed}` : ""}`;
+  remember(db, { agent: o.s.agent, repo: o.t.repo ?? "unknown", kind: "stage-output", ticket: o.t.id, pr: o.t.pr_number ?? null, ref: o.at,
+    input: `${o.t.title}\n${read("INTENT.md").slice(0, 2000)}`, output, tokens: session?.n || null, at: o.now,
+    ...(o.failed ? { outcome: "failed", outcome_source: "stage-done" } : {}) });
+}
+
 export function advance(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string; failed?: string; opened?: boolean }) {
   const run = o.run ?? sh;
   const now = o.now ?? new Date().toISOString();
@@ -366,6 +382,7 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   const b = loadBlueprint(o.repo, t.blueprint);
   db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   const at = t.stage as string;
+  rememberStage(db, { dir: o.dir, t, at, s: b.stages[at], failed: o.failed, now });
   // Review comments the stage handled: each needs a verdict; an escalation stops for you.
   const gate = o.failed ? null : commentGate(db, o.id, now);
   // While you're away, a ticket that touched a path away.never names stops for you.

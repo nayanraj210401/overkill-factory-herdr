@@ -272,6 +272,23 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
   addColumn("lessons", "restored_at", "TEXT"),
   // A note to a repo agent (ask.ts): the repo whose agent it is; null for a global agent.
   addColumn("asks", "to_repo", "TEXT"),
+  // Agent memory (memory.ts): one row per thing an agent did, with its outcome once known, and
+  // full-text search over what it saw and what it wrote. `ref` ties a row to what it was about
+  // (a review comment's C<n>), so an outcome can find it later.
+  `CREATE TABLE memories (
+     id INTEGER PRIMARY KEY, agent TEXT NOT NULL, repo TEXT NOT NULL, kind TEXT NOT NULL,
+     ticket INTEGER, pr INTEGER, ref TEXT, input TEXT NOT NULL DEFAULT '', output TEXT NOT NULL DEFAULT '',
+     outcome TEXT, outcome_at TEXT, outcome_source TEXT, tokens INTEGER, at TEXT NOT NULL
+   );
+   CREATE INDEX memories_owner ON memories(agent, repo, at);
+   CREATE INDEX memories_kind ON memories(kind, ticket);
+   CREATE VIRTUAL TABLE memories_fts USING fts5(input, output, content = 'memories', content_rowid = 'id');
+   CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts (rowid, input, output) VALUES (new.id, new.input, new.output); END;
+   CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts (memories_fts, rowid, input, output) VALUES ('delete', old.id, old.input, old.output); END;
+   CREATE TRIGGER memories_au AFTER UPDATE OF input, output ON memories BEGIN
+     INSERT INTO memories_fts (memories_fts, rowid, input, output) VALUES ('delete', old.id, old.input, old.output);
+     INSERT INTO memories_fts (rowid, input, output) VALUES (new.id, new.input, new.output);
+   END;`,
 ];
 
 export function open(path: string): Database {

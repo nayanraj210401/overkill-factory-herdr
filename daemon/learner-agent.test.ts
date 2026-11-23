@@ -49,7 +49,7 @@ function setup(yaml = "") {
   return { db, dir, repo, calls, say, ticket, many, answer, go };
 }
 
-test("the digest: outcomes by setting value, the target's trend, reverts, lessons, repeated comments and open requests", () => {
+test("the digest: outcomes by setting value, the target's trend, reverts, lessons, repeated comments, open requests and memory counts", () => {
   const s = setup("learn:\n  target: cost_per_pr\n  tunable: [agents.builder.model]\n  review_every: 2\n");
   s.ticket({ usd: 4 });
   s.ticket({ usd: 6, reverted: true });
@@ -63,7 +63,7 @@ test("the digest: outcomes by setting value, the target's trend, reverts, lesson
     s.db.query("INSERT INTO comments (ticket, n, pr, gh_id, thread, author, body, at) VALUES (?, ?, 1, ?, 'th', 'sam', ?, ?)").run(t, n, `g${t}${n}`, n === 2 ? "Something else." : "Please add a test for this!", NOW);
 
   const d = learnerDigest(s.db, s.repo);
-  expect(Object.keys(d)).toEqual(["target", "tickets", "trend", "settings", "overrides", "lessons", "repeated_comments", "open_requests"]);
+  expect(Object.keys(d)).toEqual(["target", "tickets", "trend", "settings", "overrides", "lessons", "repeated_comments", "open_requests", "memory"]);
   expect(d.target).toBe("cost_per_pr");
   expect(d.tickets).toEqual({ finished: 5, merged: 4, reverted: 1, revert_rate: 0.25 });
   expect(d.trend).toEqual([{ tickets: "#101–#102", value: 5, n: 2 }, { tickets: `#${a}–#${b}`, value: 2, n: 2 }]);

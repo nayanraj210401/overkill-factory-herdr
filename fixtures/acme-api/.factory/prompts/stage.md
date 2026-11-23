@@ -14,6 +14,9 @@ Your person's rules and taste, for every ticket:
 Lessons for the code this ticket touches (from earlier tickets and reviews):
 {{lessons}}
 
+From your memory: your closest past work in this repo, with what came of it (`factory memory search <words>` finds more; `factory memory add` keeps something worth remembering):
+{{memory}}
+
 Read {{folder}}/STATUS.md and any INTENT.md, SLICES.md and HANDOFF.md there before you start.
 
 {{shared}}
