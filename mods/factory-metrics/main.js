@@ -148,7 +148,7 @@ export default class FactoryMetrics extends View {
     page.children(this.charts(t, "Learning", [v.state === "warmup"
       ? this.card(t, "Nothing learned yet", null, div().text_color(t.muted).child(v.message)).flex_1()
       : this.shifts(t, v.shifts).flex_1()]));
-    return page.children(this.experiments(t, v.experiments)).child(this.lessons(t, v.lessons));
+    return page.children(this.experiments(t, v.experiments)).child(this.lessons(t, v.lessons, v.upkeep));
   }
 
   experiments(t, cards) {
@@ -193,15 +193,20 @@ export default class FactoryMetrics extends View {
         : div().text_color(t.muted).child("No shift yet: a setting moves once an experiment is decided."));
   }
 
-  lessons(t, areas) {
+  // The store by area, and the daily upkeep's last run (merges and retirements) above it.
+  lessons(t, areas, upkeep) {
     const n = areas.reduce((a, x) => a + x.lessons.length, 0);
-    return this.card(t, "Lessons", n ? `${n} active · used in briefs by area` : null, areas.length
+    const head = upkeep ? h_flex().gap(12).pb(6).border_b(1).border_color(t.border)
+      .child(div().flex_none().text_size(12).text_color(t.muted).child(upkeep.line))
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(upkeep.totals)) : null;
+    const body = areas.length
       ? v_flex().gap(10).children(areas.map((a) => v_flex().gap(4)
         .child(div().text_size(12).font_semibold().text_color(t.muted).child(a.area))
         .children(a.lessons.map((x) => h_flex().gap(12).items_start()
           .child(div().flex_1().min_w(0).text_color(t.foreground).child(x.text))
           .child(div().w(70).flex_none().text_size(12).text_color(t.dim).child(x.hits))))))
-      : div().text_color(t.muted).child("No lessons yet. `factory lesson add <area> \"<text>\"` adds one; a ticket brief carries the ones whose area its files match."));
+      : div().text_color(t.muted).child("No lessons yet. `factory lesson add <area> \"<text>\"` adds one; a ticket brief carries the ones whose area its files match.");
+    return this.card(t, "Lessons", n ? `${n} active · used in briefs by area` : null, head ? v_flex().gap(8).child(head).child(body) : body);
   }
 
   // The babysitter's agreement with your past review verdicts, which gates pushbacks while you're away.
