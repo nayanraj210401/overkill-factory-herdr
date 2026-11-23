@@ -4,57 +4,46 @@ A software factory that runs inside the [Herdr app](https://herdr.dev) as its ow
 
 Everything runs on your Mac: a launchd daemon, SQLite as the store, and one Herdr window as the cockpit. Tickets can move to Claude Code cloud sessions when the laptop sleeps.
 
-## Status
+![Factory](preview.png)
 
-| Milestone | What | State |
-| --- | --- | --- |
-| M1 Layout | factory mode in Herdr: sidebar, Home, Tickets, Ticket, Config | built, proven live |
-| M2 Default blueprint | daemon, queue, stages, ready rules, PRs | built, proven live |
-| M3 Babysitter, away | review rounds, auto-resume after the plan limit, cloud hand-off | built, proven live |
-| M4 Learning, benchmarks | lessons, bandit experiments, Learning tab | built; benchmark suite not run yet |
-| M5 Auto gates, maintenance | `gate: auto`, broken checks, daily repo health, maintenance agent (off by default), lesson upkeep | built |
-| M6 Peer review | reviewing teammates' PRs | Reviews page on sample data; design in [docs/plan.md](docs/plan.md) |
-| M7 Agents with territories | Overwatch, maintainer, learner, babysitter; example agent library | built |
+## Install with your agent
 
-macOS only. Claude Code is the only agent harness.
+In a Claude Code session, paste:
 
-## Set it up
+```
+Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/nayanraj210401/overkill-factory-herdr
+```
 
-The full guide is [docs/setup.md](docs/setup.md). The short version:
+This is more than a layout: its mods share code in `lib/`, and a daemon writes the data they show. So the agent clones the repo and installs with `scripts/sync.sh` instead of copying folders, as [RECIPE.md](RECIPE.md) says. Then it follows [docs/setup.md](docs/setup.md) to point the factory at a repo.
+
+## Install by hand
+
+You need macOS, [Herdr](https://herdr.dev) with herdr-core (`hc`), Bun 1.3+, Node 22+, the GitHub CLI (logged in) and Claude Code (logged in). [docs/setup.md](docs/setup.md) has each install command and the details.
 
 ```sh
-# 1. Tools: Xcode CLT, Homebrew, Bun 1.3+, Node 22+, gh (logged in), Claude Code (logged in), Herdr app + herdr-core (hc)
-xcode-select --install
-curl -fsSL https://bun.sh/install | bash
-brew install gh node && gh auth login
-npm install -g @anthropic-ai/claude-code && claude          # sign in once
-# Herdr app and herdr-core: install from herdr.dev, then check: herdr-app --version && hc --version
+git clone https://github.com/nayanraj210401/overkill-factory-herdr
+cd overkill-factory-herdr && git checkout develop
+scripts/check.sh && scripts/sync.sh          # tests, then install the layout, mods and theme into Herdr
 
-# 2. The factory
-gh repo clone nayanraj210401/overkill-factory-herdr ~/Project/overkill-factory-herdr
-cd ~/Project/overkill-factory-herdr && git checkout develop
-scripts/check.sh && scripts/sync.sh
+# a `factory` command on your PATH
 mkdir -p ~/.local/bin
-printf '#!/bin/sh\nexec "%s" "%s/daemon/cli.ts" "$@"\n' "$(command -v bun)" "$PWD" > ~/.local/bin/factory && chmod +x ~/.local/bin/factory
+printf '#!/bin/sh\nexec "%s" "%s/daemon/cli.ts" "$@"\n' "$(command -v bun)" "$PWD" > ~/.local/bin/factory
+chmod +x ~/.local/bin/factory
+```
 
-# 3. Point it at a repo
-cd ~/code/<repo>
+Then, in the repo you want the factory to work on:
+
+```sh
 factory init && factory setup && factory setup trust
 factory setup write --budget 2M/100k --budget-day 10M/1M --merge human --max-running 1
 git merge factory/setup && factory validate
-factory service install       # launchd error 5 the first time is common: run it again
+factory service install       # the daemon, as a login item; retry once if launchctl says error 5
 factory setup                 # repeat until every line shows ✓
 ```
 
-Then open Herdr on the repo's folder and press ⌘⇧F. Press `n` for a first ticket.
+Open Herdr on that repo's folder, press ⌘⇧F, and press `n` for a first ticket.
 
-### On an office laptop
-
-- **Accounts.** Agents push branches and open PRs as whoever `gh` is logged in as, and spend the plan `claude` is logged in to. Check both are allowed on work repos. Keep `--merge human`.
-- **Start small.** `--max-running 1` and a low `--budget-day` until you know what a ticket costs. The maintenance agent ships off (`enabled: false` in `.factory/triggers/maintenance.yaml`), so nothing opens PRs on its own.
-- **Device management.** If MDM blocks LaunchAgents, `codesign` or `clang`, run the daemon in a terminal with `factory run --all`. Only sleep-to-cloud needs the helper `clang` builds.
-- **Dependencies for repo health.** The daily health run tests the default branch in a fresh worktree. If the suite needs an install step, add `setup: [npm ci]` to a `.factory/triggers/health.yaml` (see the setup guide).
-- **Nothing carries over.** `~/.factory` (database, logs, agents) is per machine.
+Start small: one ticket at a time, a low daily budget, and a human merge gate. Agents push branches and open PRs as your `gh` account and spend your Claude plan. Nothing opens PRs on its own: the maintenance agent ships off.
 
 ## Using it
 
@@ -68,12 +57,26 @@ Then open Herdr on the repo's folder and press ⌘⇧F. Press `n` for a first ti
 | `x` / `u` | send a PR back with a note / answer a parked ticket |
 | `p` / `b` / `d` | pause or resume / change the budget / diff |
 
-You change the factory by asking Overwatch ("add a blueprint for migrations", "turn on the maintenance agent"). The maintainer does the work as a reviewable PR against `.factory/`.
+You change the factory by asking Overwatch ("add a blueprint for migrations", "turn on the maintenance agent"). The maintainer agent does the work as a reviewable PR against `.factory/`.
+
+## Status
+
+| Milestone | What | State |
+| --- | --- | --- |
+| M1 Layout | factory mode in Herdr: sidebar, Home, Tickets, Ticket, Config | built |
+| M2 Default blueprint | daemon, queue, stages, ready rules, PRs | built |
+| M3 Babysitter, away | review rounds, auto-resume after the plan limit, cloud hand-off | built |
+| M4 Learning, benchmarks | lessons, bandit experiments, Learning tab | built |
+| M5 Auto gates, maintenance | `gate: auto`, broken checks, daily repo health, maintenance agent, lesson upkeep | built |
+| M6 Peer review | reviewing teammates' PRs | Reviews page on sample data; designed in [docs/plan.md](docs/plan.md) |
+| M7 Agents with territories | Overwatch, maintainer, learner, babysitter; example agent library | built |
+
+macOS only. Claude Code is the only agent harness.
 
 ## Updating
 
 ```sh
-cd ~/Project/overkill-factory-herdr && git pull --ff-only
+git pull --ff-only
 cp ~/.factory/<factory>/factory.db ~/.factory/<factory>/factory.db.bak-$(date +%s)
 scripts/check.sh && scripts/sync.sh     # sync.sh restarts the service
 ```
@@ -82,7 +85,7 @@ scripts/check.sh && scripts/sync.sh     # sync.sh restarts the service
 
 | Doc | What it is |
 | --- | --- |
-| [docs/setup.md](docs/setup.md) | Setting up on a new Mac: tools, install, pointing it at a repo, work-machine notes, troubleshooting |
+| [docs/setup.md](docs/setup.md) | Setting up on a new Mac: tools, install, pointing it at a repo, managed machines, troubleshooting |
 | [docs/plan.md](docs/plan.md) | The plan: layout and pages, agents, blueprints, ready rules, review loop, learning, budgets, away mode, peer review, milestones |
 | [docs/slices.md](docs/slices.md) | How each milestone was cut into slices |
 | [docs/prd.md](docs/prd.md) | The product requirements the plan implements |
@@ -101,3 +104,7 @@ scripts/check.sh && scripts/sync.sh     # sync.sh restarts the service
 ## Origin
 
 This repo succeeds [flow-stack](https://github.com/nayanraj210401/flow-stack) v1 as the factory. It keeps the parts of flow-stack that check finished work (evidence, review, handoff) and leaves out the hooks that interrupt agents mid-work. flow-stack itself keeps working as a Claude Code plugin.
+
+## License
+
+See [LICENSE](LICENSE).

@@ -47,6 +47,7 @@ The theme is `factory` in dark mode (`#1b1e24` background; `accent` and `working
 
 ## Watch out
 
+- **Installing from this repo:** don't copy `layouts/` and `mods/` by hand. Clone the repo and run `scripts/sync.sh`: it copies `lib/` into each mod, writes each mod's `lib/cli.js` with this checkout's path, and installs the theme and sample data. The mods also need the factory daemon for real data; [docs/setup.md](docs/setup.md) sets it up. Without it they show a "start a factory here" Home, or the sample.
 - A mod can't import outside its own folder, by relative path or by symlink. Copy `lib/` in.
 - `herdr-app check` renders once without loading `shared.json`. Shared data is null there, and a view that bails out on null tests nothing. `store.state()` returns the bundled `lib/sample.js` (written by sync.sh) while `checking()`, so checks render real data.
 - Layout ids are global: a sidebar block named `tickets` swapped places with the Tickets page.
