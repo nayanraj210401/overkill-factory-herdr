@@ -1,0 +1,99 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css">
+<style>
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 375px; gap: 12px; }
+.left { border: 2px solid var(--focus); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.vbar { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--red-bg); }
+.vbar .v { font-weight: 700; color: var(--red); font-size: 17px; } .vbar .why { color: var(--muted); font-size: 14.5px; }
+.vbar .out { margin-left: auto; font-size: 14.5px; text-align: right; color: var(--muted); line-height: 1.35; } .vbar .out b { color: var(--ink); font-weight: 600; }
+.stages { display: flex; align-items: center; gap: 0; font-size: 14px; color: var(--muted); }
+.stages span { display: flex; align-items: center; gap: 6px; } .stages span::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--green); }
+.stages i { flex: 1; height: 2px; background: #cfd5dc; margin: 0 6px; min-width: 8px; } .stages .cost { margin-left: 16px; white-space: nowrap; }
+.tabs { white-space: nowrap; display: flex; gap: 4px; border-bottom: 1px solid var(--line); font-size: 15px; } .tabs span { padding: 6px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs .on { color: var(--ink); border-color: var(--focus); font-weight: 600; } .tabs em { font-style: normal; color: var(--dim); }
+.f { display: grid; grid-template-columns: 74px 1fr auto; gap: 2px 12px; padding: 9px 10px; border-radius: 8px; }
+.f.sel { background: var(--sel); }
+.sev { font-size: 12.5px; font-weight: 700; letter-spacing: .5px; padding-top: 2px; } .sev.b { color: var(--red); } .sev.m { color: #b47300; } .sev.n { color: var(--dim); }
+.f .tx { font-size: 15.5px; } .f .loc { font-size: 13.5px; color: var(--dim); text-align: right; }
+.f .ev { grid-column: 2 / 4; font-size: 13.5px; color: var(--muted); }
+.vote { display: inline-block; font-size: 12.5px; padding: 0 6px; border-radius: 5px; margin-right: 8px; }
+.vote.k { background: var(--green-bg); color: var(--green); } .vote.s { background: var(--amber-bg); color: #9a6200; }
+.foot { font-size: 14px; color: var(--muted); padding: 2px 10px; }
+.q { border-top: 1px solid var(--line); padding-top: 10px; font-size: 15px; } .q b { font-weight: 600; }
+.right { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.code { flex: 1; border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; background: #fbfbfc; }
+.code .t { padding: 9px 14px; font-size: 14.5px; border-bottom: 1px solid var(--line); background: #fff; display: flex; } .code .t span { margin-left: auto; color: var(--dim); font-size: 13.5px; }
+.ln { white-space: pre; display: grid; grid-template-columns: 38px 1fr; font: 12.5px/1.6 "SF Mono", Menlo, monospace; padding: 0 10px 0 0; }
+.ln i { font-style: normal; color: #aab; text-align: right; padding-right: 10px; } .ln.hl { background: #fff1c9; }
+.kw { color: #a626a4; } .fn { color: #4078f2; } .st { color: #50a14f; } .cm { color: #a0a1a7; }
+.gh { white-space: normal; margin: 6px 12px 8px 40px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; padding: 9px 12px; font-size: 14px; line-height: 1.45; }
+.gh .who { color: var(--muted); font-size: 13px; margin-bottom: 4px; } .gh .who b { color: var(--ink); }
+.term { border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 14px; font: 13px/1.55 "SF Mono", Menlo, monospace; color: var(--muted); background: #f6f6f6; }
+.term b { font-family: -apple-system, sans-serif; font-size: 14px; color: var(--ink); font-weight: 600; }
+.msg { border: 1.5px solid var(--line); border-radius: 10px; padding: 9px 14px; color: var(--dim); font-size: 15px; display: flex; } .msg span { margin-left: auto; color: var(--blue); }
+.stages .cost::before { display: none; }
+</style></head><body>
+<h1>A review is a ticket: the agent's verdict, its findings and how it posts</h1>
+<div class="sub">Factory mode, review #95 (enter on Reviews), Findings tab, sample data. The right side shows the selected finding as it will read on GitHub.</div>
+<div class="win">
+  <div class="side">
+    <div class="dots"><i></i><i></i><i></i></div>
+    <div class="brand">acme-api</div><div><span class="dot g"></span>daemon on · 5h 42%</div>
+    <hr>
+    <div class="grp y">NEEDS YOU · 1</div>
+    <div class="it"><span class="dot y"></span>#421 search index<small>grooming · 2 questions</small></div>
+    <div class="grp">RUNNING · 1</div>
+    <div class="it"><span class="dot b"></span>#412 rate-limit<small>implement · 1.2M/3M in</small></div>
+    <div class="grp b" style="margin-top:8px">TO REVIEW · 6</div>
+    <div class="it" style="background:#d5dde8;margin:0 -14px 6px;padding:2px 14px;border-radius:6px"><span class="dot g"></span>#95 payments retry<small>ready · request changes</small></div>
+    <div class="it"><span class="dot g"></span>#91 fix typo<small>ready · approve</small></div>
+    <div class="it"><span class="dot b"></span>2 reviewing<small>#93 verify · #90 round 2</small></div>
+    <hr style="margin-top:auto">
+    <div class="grp">FACTORY</div>
+    <div class="menu"><div>Home</div><div>Tickets</div><div class="on">Reviews</div><div>Overwatch</div><div>Blueprint</div><div>Metrics</div><div>Config</div></div>
+  </div>
+  <div class="main">
+    <div class="hdr"><span class="crumb">acme-api › Reviews ›</span><b>#95 Payments retry on 502</b><span class="keys">o pending review ↗ · s story ↗ · e terminal · d diff</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="left">
+          <div class="vbar"><span class="v" style="white-space:nowrap">Request changes</span><span class="why">1 blocker, kept<br>by both votes</span>
+            <span class="out"><b>Pending on GitHub</b><br>high: you submit it</span></div>
+          <div class="stages"><span>intake</span><i></i><span>prep</span><i></i><span>story</span><i></i><span>review</span><i></i><span>verify</span><i></i><span>post</span><span class="cost">312k/400k</span></div>
+          <div class="tabs"><span class="on">1 Findings <em>3</em></span><span>2 Story <em>5</em></span><span>3 Checks</span><span>4 Questions <em>1</em></span><span>5 Rounds <em>1</em></span></div>
+          <div>
+            <div class="f sel"><span class="sev b">BLOCKER</span><span class="tx">charge() is retried without an idempotency key</span><span class="loc mono">retry.ts:42</span>
+              <span class="ev"><span class="vote k">✓ ✓ kept</span>ran it: a 502 after a 200 charges twice · new in this PR (git blame)</span></div>
+            <div class="f"><span class="sev m">MAJOR</span><span class="tx">No test for a 502 after a successful charge</span><span class="loc mono">retry.test.ts</span>
+              <span class="ev"><span class="vote s">✓ ✗ split</span>kept and marked: one verifier found a similar test in checkout.test.ts</span></div>
+            <div class="f"><span class="sev n">NIT</span><span class="tx">Move the backoff into the shared retry util</span><span class="loc mono">retry.ts:12</span>
+              <span class="ev">your taste: "one retry helper per service"</span></div>
+          </div>
+          <div class="foot">2 dropped by vote · 1 pre-existing, not blocking · noise stays in REVIEW-DRAFT.md · h shows them</div>
+          <div class="q"><b>Question for alex</b> <span class="muted">(from the story: a why nobody wrote down)</span><br>Why 5 retries? The PR, commits and ticket don't say.</div>
+          <div class="msg" style="margin-top:auto">Tell the reviewer: drop the nit, ask about the 5 retries…<span>↑</span></div>
+        </div>
+        <div class="right">
+          <div class="code">
+            <div class="t"><b>retry.ts</b><span>as it will read on GitHub</span></div>
+            <div style="padding:8px 0">
+              <div class="ln"><i>38</i><span><span class="kw">export async function</span> <span class="fn">charge</span>(order) {</span></div>
+              <div class="ln"><i>39</i><span>  <span class="kw">for</span> (<span class="kw">let</span> i = 0; i &lt; 5; i++) {</span></div>
+              <div class="ln"><i>40</i><span>    <span class="kw">try</span> {</span></div>
+              <div class="ln"><i>41</i><span>      <span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">pay</span>({</span></div>
+              <div class="ln hl"><i>42</i><span>        amount: order.total });</span></div>
+              <div class="gh"><div class="who"><b>you</b> · pending · blocker</div>
+                <b>blocker:</b> a 502 can come back after the charge succeeded, and this retries it without an idempotency key, so the customer is charged twice. Reproduced with the PSP sandbox. Pass <span class="mono">Idempotency-Key: order.id</span>.</div>
+              <div class="ln"><i>43</i><span>      <span class="kw">if</span> (res.status !== 502) <span class="kw">return</span> res;</span></div>
+              <div class="ln"><i>44</i><span>    } <span class="kw">catch</span> (e) { <span class="cm">// network</span></span></div>
+              <div class="ln"><i>45</i><span>      <span class="kw">await</span> <span class="fn">sleep</span>(backoff(i));</span></div>
+              <div class="ln"><i>46</i><span>    }</span></div>
+            </div>
+          </div>
+          <div class="term"><b>reviewer</b> · done 4m ago · e terminal<br>&gt; pending review: 3 comments<br>✓ verify: 2 kept · 1 split · 2 dropped</div>
+        </div>
+      </div>
+    </div>
+    <div class="status"><span class="dot g"></span>2 agents · 2 reviewing · 1 PR watched · 5h window 42% · week 18% · 0 rules failing</div>
+  </div>
+</div>
+</body></html>

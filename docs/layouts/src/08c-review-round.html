@@ -1,0 +1,113 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css">
+<style>
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 375px; gap: 12px; }
+.left { border: 2px solid var(--focus); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.vbar { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--red-bg); }
+.vbar .v { font-weight: 700; color: var(--red); font-size: 17px; } .vbar .why { color: var(--muted); font-size: 14.5px; }
+.vbar .out { margin-left: auto; font-size: 14.5px; text-align: right; color: var(--muted); line-height: 1.35; } .vbar .out b { color: var(--ink); font-weight: 600; }
+.stages { display: flex; align-items: center; gap: 0; font-size: 14px; color: var(--muted); }
+.stages span { display: flex; align-items: center; gap: 6px; } .stages span::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--green); }
+.stages i { flex: 1; height: 2px; background: #cfd5dc; margin: 0 6px; min-width: 8px; } .stages .cost { margin-left: 16px; white-space: nowrap; }
+.tabs { white-space: nowrap; display: flex; gap: 4px; border-bottom: 1px solid var(--line); font-size: 15px; } .tabs span { padding: 6px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs .on { color: var(--ink); border-color: var(--focus); font-weight: 600; } .tabs em { font-style: normal; color: var(--dim); }
+.f { display: grid; grid-template-columns: 74px 1fr auto; gap: 2px 12px; padding: 9px 10px; border-radius: 8px; }
+.f.sel { background: var(--sel); }
+.sev { font-size: 12.5px; font-weight: 700; letter-spacing: .5px; padding-top: 2px; } .sev.b { color: var(--red); } .sev.m { color: #b47300; } .sev.n { color: var(--dim); }
+.f .tx { font-size: 15.5px; } .f .loc { font-size: 13.5px; color: var(--dim); text-align: right; }
+.f .ev { grid-column: 2 / 4; font-size: 13.5px; color: var(--muted); }
+.vote { display: inline-block; font-size: 12.5px; padding: 0 6px; border-radius: 5px; margin-right: 8px; }
+.vote.k { background: var(--green-bg); color: var(--green); } .vote.s { background: var(--amber-bg); color: #9a6200; }
+.foot { font-size: 14px; color: var(--muted); padding: 2px 10px; }
+.q { border-top: 1px solid var(--line); padding-top: 10px; font-size: 15px; } .q b { font-weight: 600; }
+.right { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.code { flex: 1; border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; background: #fbfbfc; }
+.code .t { padding: 9px 14px; font-size: 14.5px; border-bottom: 1px solid var(--line); background: #fff; display: flex; } .code .t span { margin-left: auto; color: var(--dim); font-size: 13.5px; }
+.ln { white-space: pre; display: grid; grid-template-columns: 38px 1fr; font: 12.5px/1.6 "SF Mono", Menlo, monospace; padding: 0 10px 0 0; }
+.ln i { font-style: normal; color: #aab; text-align: right; padding-right: 10px; } .ln.hl { background: #fff1c9; }
+.kw { color: #a626a4; } .fn { color: #4078f2; } .st { color: #50a14f; } .cm { color: #a0a1a7; }
+.gh { white-space: normal; margin: 6px 12px 8px 40px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; padding: 9px 12px; font-size: 14px; line-height: 1.45; }
+.gh .who { color: var(--muted); font-size: 13px; margin-bottom: 4px; } .gh .who b { color: var(--ink); }
+.term { border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 14px; font: 13px/1.55 "SF Mono", Menlo, monospace; color: var(--muted); background: #f6f6f6; }
+.term b { font-family: -apple-system, sans-serif; font-size: 14px; color: var(--ink); font-weight: 600; }
+.msg { border: 1.5px solid var(--line); border-radius: 10px; padding: 9px 14px; color: var(--dim); font-size: 15px; display: flex; } .msg span { margin-left: auto; color: var(--blue); }
+
+.ch { display: grid; grid-template-columns: 26px 1fr 64px 92px; gap: 2px 10px; align-items: baseline; padding: 8px 10px; border-radius: 8px; }
+.ch.sel { background: var(--sel); } .ch .n { color: var(--dim); } .ch .tt { font-size: 15.5px; } .ch .why { grid-column: 2 / 5; font-size: 13.5px; color: var(--muted); }
+.tier { font-size: 12.5px; font-weight: 600; padding: 0 7px; border-radius: 5px; text-align: center; } .tier.read { background: var(--blue-bg); color: var(--blue); } .tier.skim { background: #eef0f3; color: var(--muted); } .tier.skip { color: var(--dim); }
+.ch .sz { text-align: right; font-size: 13.5px; color: var(--dim); }
+.rd { font-size: 14px; } .rd h4 { margin: 0 0 6px; font-size: 14.5px; font-weight: 600; } .rd div { display: grid; grid-template-columns: 100px 1fr; gap: 6px; align-items: baseline; padding: 3px 0; }
+.st.f { color: var(--green); } .st.p { color: #9a6200; } .st.o { color: var(--red); }
+.live { flex: 1; border: 2px solid var(--focus); border-radius: 12px; background: #1e1f22; color: #d6d6d6; font: 12.5px/1.65 "SF Mono", Menlo, monospace; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.live .t { background: #2a2b2f; color: #eee; padding: 8px 12px; font: 14px -apple-system, sans-serif; } .live .t span { color: #9aa; }
+.live pre { margin: 0; padding: 10px 12px; white-space: pre-wrap; } .live .g { color: #7fd18b; } .live .y { color: #f0c060; } .live .c { color: #7aa7ff; }
+.live .ft { margin-top: auto; padding: 8px 12px; color: #889; font: 13px -apple-system, sans-serif; }
+.stages .todo::before { background: #cfd5dc; }
+.stages .cost::before { display: none; }
+</style></head><body>
+<h1>A re-review shows its story and what each round's findings became</h1>
+<div class="sub">Factory mode, review #90 on round 2 (author pushed fixes), Story tab, sample data. While it runs, the right side is the live reviewer terminal.</div>
+<div class="win">
+  <div class="side">
+    <div class="dots"><i></i><i></i><i></i></div>
+    <div class="brand">acme-api</div><div><span class="dot g"></span>daemon on · 5h 42%</div>
+    <hr>
+    <div class="grp y">NEEDS YOU · 1</div>
+    <div class="it"><span class="dot y"></span>#421 search index<small>grooming · 2 questions</small></div>
+    <div class="grp">RUNNING · 1</div>
+    <div class="it"><span class="dot b"></span>#412 rate-limit<small>implement · 1.2M/3M in</small></div>
+    <div class="grp b" style="margin-top:8px">TO REVIEW · 6</div>
+    <div class="it"><span class="dot g"></span>2 ready for you<small>pending on GitHub</small></div>
+    <div class="it"><span class="dot b"></span>#93 search paging<small>verify · 210k/300k</small></div>
+    <div class="it" style="background:#d5dde8;margin:0 -14px 6px;padding:2px 14px;border-radius:6px"><span class="dot b"></span>#90 dark mode<small>round 2 · story</small></div>
+    <hr style="margin-top:auto">
+    <div class="grp">FACTORY</div>
+    <div class="menu"><div>Home</div><div>Tickets</div><div class="on">Reviews</div><div>Overwatch</div><div>Blueprint</div><div>Metrics</div><div>Config</div></div>
+  </div>
+  <div class="main">
+    <div class="hdr"><span class="crumb">acme-api › Reviews ›</span><b>#90 Dark mode tokens</b><span class="keys">s story ↗ · e terminal · p pause · d diff</span></div>
+    <div class="body">
+      <div class="split">
+        <div class="left">
+          <div class="stages"><span>intake</span><i></i><span>prep</span><i></i><span style="color:var(--blue)">story</span><i></i><span class="todo">review</span><i></i><span class="todo">verify</span><i></i><span class="todo">post</span><span class="cost">36k/120k</span></div>
+          <div class="tabs"><span>1 Findings</span><span class="on">2 Story <em>4</em></span><span>3 Checks</span><span>4 Questions</span><span>5 Rounds <em>2</em></span></div>
+          <div class="muted" style="font-size:14.5px;padding:0 10px">Read these first, in this order. Every why links to where it was written; s opens the full story ↗</div>
+          <div>
+            <div class="ch sel"><span class="n">1</span><span class="tt">Core: tokens move from hex to theme roles</span><span class="tier read">read</span><span class="sz">+140 −96</span>
+              <span class="why">why: "one source for both themes" · PR body ↗</span></div>
+            <div class="ch"><span class="n">2</span><span class="tt">What it affects: 14 components read roles</span><span class="tier skim">skim</span><span class="sz">+62 −62</span>
+              <span class="why">mechanical rename, same pattern each time</span></div>
+            <div class="ch"><span class="n">3</span><span class="tt">Glue: the theme provider picks light or dark</span><span class="tier read">read</span><span class="sz">+38 −4</span>
+              <span class="why">why: <span class="amb">nobody wrote it down</span> → becomes a question for sam</span></div>
+            <div class="ch"><span class="n">4</span><span class="tt">Tests and snapshots</span><span class="tier skip">skip</span><span class="sz">+210 −180</span>
+              <span class="why">generated snapshots; the checks re-run them here</span></div>
+          </div>
+          <div class="rd" style="border-top:1px solid var(--line);padding:10px 10px 0"><h4>Round 1 → round 2 <span class="muted" style="font-weight:400">· sam pushed 3 commits</span></h4>
+            <div><span class="st f">fixed</span><span>Contrast below 4.5:1 on muted text · in a1b2c3, checked again ✓</span></div>
+            <div><span class="st f">fixed</span><span>Hard-coded #fff in Toast · in d4e5f6</span></div>
+            <div><span class="st p">pushed back</span><span>"Keep the old names as aliases": sam says no callers remain. Verify checks that claim.</span></div>
+            <div><span class="st o">open</span><span>No dark-mode snapshot for Modal</span></div>
+          </div>
+        </div>
+        <div class="right">
+          <div class="live">
+            <div class="t">reviewer <span>· round 2 · story · ctx 18% · live Herdr terminal</span></div>
+<pre><span class="c">&gt;</span> Reading the round 1 review and 3 new commits
+<span class="c">&gt;</span> git diff round-1..HEAD -- src/theme
+<span class="g">✓</span> a1b2c3 fixes "contrast below 4.5:1"
+<span class="g">✓</span> d4e5f6 fixes "hard-coded #fff"
+<span class="c">&gt;</span> rg -n "colors\.(primary|muted)" src
+<span class="y">!</span> 0 callers left: sam's pushback holds
+<span class="c">&gt;</span> Chapter 3: why does the provider read
+  prefers-color-scheme before settings?
+  Not in the PR, commits or ticket.
+<span class="c">&gt;</span> Writing STORY.md chapter 3 …
+<span style="background:#d6d6d6"> </span></pre>
+            <div class="ft">type here to steer the reviewer</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="status"><span class="dot g"></span>2 agents · 2 reviewing · 1 PR watched · 5h window 42% · week 18% · 0 rules failing</div>
+  </div>
+</div>
+</body></html>

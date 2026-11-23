@@ -1,0 +1,76 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="mock.css">
+<style>
+.strip { white-space: nowrap; display: flex; align-items: center; gap: 18px; padding: 9px 14px; background: var(--surface); border-radius: 10px; font-size: 15px; }
+.strip .bar { width: 120px; height: 7px; border-radius: 4px; background: #dde2e8; overflow: hidden; } .strip .bar i { display: block; height: 100%; background: var(--blue); }
+.tabs { display: flex; gap: 6px; margin-left: auto; } .tabs span { padding: 2px 10px; border-radius: 6px; color: var(--muted); } .tabs .on { background: var(--sel); color: var(--ink); }
+.row { display: grid; grid-template-columns: 56px minmax(0,1fr) 190px 138px 178px 46px; align-items: center; gap: 12px; height: 40px; padding: 0 10px; border-radius: 8px; font-size: 15.5px; }
+.row.sel { background: var(--sel); }
+.row .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .row .t b { font-weight: 600; }
+.row .who, .row .what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 14.5px; }
+.row .verdict { justify-self: start; }
+.row .age { text-align: right; color: var(--dim); font-size: 14px; }
+.row .act { text-align: right; font-size: 14.5px; white-space: nowrap; }
+.prog { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--muted); }
+.prog .bar { flex: 1; height: 6px; border-radius: 3px; background: #e4e7eb; overflow: hidden; } .prog .bar i { display: block; height: 100%; background: var(--blue); }
+.warn { grid-column: 2 / 7; margin: -6px 0 4px 0; padding: 6px 10px; border-radius: 8px; background: var(--amber-bg); font-size: 14.5px; display: flex; gap: 14px; }
+.warn b { color: #9a6200; font-weight: 600; } .warn .k { margin-left: auto; color: var(--muted); } .warn .k em { font-style: normal; color: var(--blue); }
+.fold { color: var(--muted); font-size: 15px; padding: 4px 10px; }
+.peek { margin-top: auto; padding: 14px 16px; display: grid; grid-template-columns: 1fr 300px; gap: 6px 24px; }
+.peek h3 { margin: 0; font-size: 17px; font-weight: 600; grid-column: 1 / 3; display: flex; gap: 10px; align-items: center; }
+.peek h3 .r { margin-left: auto; font-weight: 400; font-size: 14.5px; color: var(--blue); }
+.peek .kv { font-size: 14.5px; color: var(--muted); line-height: 1.6; } .peek .kv b { color: var(--ink); font-weight: 500; }
+</style></head><body>
+<h1>Reviews is the queue of teammates' PRs, grouped by what each needs from you</h1>
+<div class="sub">Factory mode, Reviews page (g r), #95 selected, sample data. Enter opens the review as a ticket (next mockup).</div>
+<div class="win">
+  <div class="side">
+    <div class="dots"><i></i><i></i><i></i></div>
+    <div class="brand">acme-api</div><div><span class="dot g"></span>daemon on · 5h 42%</div>
+    <hr>
+    <div class="grp y">NEEDS YOU · 1</div>
+    <div class="it"><span class="dot y"></span>#421 search index<small>grooming · 2 questions</small></div>
+    <div class="grp">RUNNING · 1</div>
+    <div class="it"><span class="dot b"></span>#412 rate-limit<small>implement · 1.2M/3M in</small></div>
+    <div class="grp b" style="margin-top:8px">TO REVIEW · 6</div>
+    <div class="it"><span class="dot g"></span>2 ready for you<small>pending on GitHub</small></div>
+    <div class="it"><span class="dot b"></span>2 reviewing<small>#93 verify · #90 round 2</small></div>
+    <div class="it"><span class="dot y"></span>1 may not fit<small>#97 · waits for you</small></div>
+    <hr style="margin-top:auto">
+    <div class="grp">FACTORY</div>
+    <div class="menu"><div>Home</div><div>Tickets</div><div class="on">Reviews</div><div>Overwatch</div><div>Blueprint</div><div>Metrics</div><div>Config</div></div>
+  </div>
+  <div class="main">
+    <div class="hdr"><span class="crumb">acme-api ›</span><b>Reviews</b><span class="keys">enter open · o pending review ↗ · a approve low · r run</span></div>
+    <div class="body">
+      <div class="strip">
+        <span>Queue needs <b>~1.2M</b></span>
+        <span class="bar"><i style="width:42%"></i></span><span class="muted">5h window 42% · resets 14:00</span>
+        
+        <div class="tabs"><span class="on">All 7</span><span>Requested 4</span><span>Teammates 3</span></div>
+      </div>
+
+      <div class="sec"><b>Ready for you · 2</b><span>the agent's review sits on GitHub as your pending review; only you see it</span></div>
+      <div class="row sel"><span class="chip high">high</span><span class="t"><b>#95</b> Payments retry on 502</span><span class="who">alex · 410 lines · payments</span><span class="verdict rc">Request changes</span><span class="what">1 blocker · 1 major · 1 nit</span><span class="age">12m</span></div>
+      <div class="row"><span class="chip low">low</span><span class="t"><b>#91</b> Fix typo in README</span><span class="who">priya · 2 lines</span><span class="verdict ap">Approve</span><span class="act acc">a approve</span><span class="age">1h</span></div>
+
+      <div class="sec"><b>Reviewing now · 2</b><span>live reviewer terminals; enter opens one</span></div>
+      <div class="row"><span class="chip med">med</span><span class="t"><b>#93</b> Search index paging with a very long title that the table cuts so the columns stay put</span><span class="who">dana · 180 lines</span><span class="prog"><span class="dot b" style="margin:0"></span>verify</span><span class="prog"><span class="bar"><i style="width:70%"></i></span>210k/300k</span><span class="age">4m</span></div>
+      <div class="row"><span class="chip med">med</span><span class="t"><b>#90</b> Dark mode tokens <span class="muted">· round 2</span></span><span class="who">sam · author pushed 3 fixes</span><span class="prog"><span class="dot b" style="margin:0"></span>story</span><span class="prog"><span class="bar"><i style="width:30%"></i></span>36k/120k</span><span class="age">1m</span></div>
+
+      <div class="sec"><b>Waiting to start · 2</b><span>risk and cost come first, before any tokens</span></div>
+      <div class="row"><span class="chip high">high</span><span class="t"><b>#97</b> Billing export to CSV</span><span class="who">lee · 1,240 lines · new to billing</span><span class="amb" style="font-size:14.5px">⚠ may not fit</span><span class="what">est. ~620k</span><span class="age">20m</span></div>
+      <div class="warn"><span><b>~620k</b> needed, the 5h window has ~380k left. Nothing starts while this stands.</span><span class="k"><em>r</em> run anyway · <em>t</em> story only (~90k) · <em>w</em> wait for 14:00</span></div>
+      <div class="row"><span class="chip low">low</span><span class="t"><b>#98</b> Bump eslint to 9.4</span><span class="who">sam · 12 lines · checks ✓</span><span class="muted" style="font-size:14.5px">queued</span><span class="what">est. ~30k</span><span class="age">2m</span></div>
+
+      <div class="fold">▸ Submitted this week · 5 &nbsp;<span class="dimc">4 kept as written · 1 edited · 0 missed · avg 6 min of yours</span></div>
+
+      <div class="peek card">
+        <h3><span class="chip high">high</span>#95 Payments retry on 502<span class="r">enter opens the review · o pending review ↗</span></h3>
+        <div class="kv"><b>Main point:</b> retries aren't idempotent, so a 502 after a successful charge can charge the customer twice.<br><b>Story:</b> 5 chapters · read 2, skim 2, skip 1 · s opens it ↗</div>
+        <div class="kv"><b>Output:</b> pending · high never submits<br><b>Checks here:</b> tests 128/128 ✓ · scenario ✗<br><b>Cost:</b> 312k of 400k</div>
+      </div>
+    </div>
+    <div class="status"><span class="dot g"></span>2 agents · 2 reviewing · 1 PR watched · 5h window 42% · week 18% · 0 rules failing</div>
+  </div>
+</div>
+</body></html>
