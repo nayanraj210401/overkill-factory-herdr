@@ -3,6 +3,7 @@
 // through the `factory` CLI (with --name per factory). `factory overwatch`, from any
 // factory, starts it or finds the live one; which terminal it is lives in
 // <FACTORY_HOME>/overwatch.json, so every factory's Overwatch page shows the same one.
+import { giveAccess, withSkillsLine } from "./skills.ts";
 import { DEFAULT_MODEL } from "./models.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -63,7 +64,8 @@ export function overwatch(o: { run: Run; now: string; home?: string; factories?:
   if (known) return { terminal: known, started: false };
   const factories = o.factories ?? factoriesOf(home);
   const agent = loadAgent(null, "overwatch");
-  const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, overwatchBrief({ home, factories, prompt: agent?.prompt }));
+  // A factory agent's skills come from ~/.factory/skills/ only; its plugin sits in the factory home (skills.ts).
+  const argv = giveAccess(argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, overwatchBrief({ home, factories, prompt: withSkillsLine(agent?.prompt, agent) })), agent, join(home, ".skills", "overwatch"), []);
   // Auto mode, like every factory agent: it still asks before acting (its brief), never at a permission prompt.
   // skipAutoPermissionPrompt: registering the repos was the consent to auto mode (handoff-hook.ts).
   // --add-dir: it reads every repo's .factory/ too (the data folders are under its cwd), and

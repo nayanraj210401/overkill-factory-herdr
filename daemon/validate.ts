@@ -1,11 +1,12 @@
 // `factory validate`: checks every .factory/ file against its kind's shape, one
 // line per problem. Unknown keys are errors, so a typo never silently does nothing.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { whyNotTunable } from "./learn.ts";
 import { PLACEHOLDERS, templateErrors } from "./prompts.ts";
 import { featureErrors } from "./features.ts";
 import { exampleFile, FACTORY_AGENTS, isFactoryAgent } from "./agents.ts";
+import { skillErrors, skillFileErrors } from "./skills.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -125,6 +126,8 @@ const kindOf = (path: string) =>
   : /^triggers\/[^/]+\.ya?ml$/.test(path) ? "trigger"
   : /^benchmarks\/[^/]+\.ya?ml$/.test(path) ? "benchmark"
   : /^features\/[^/]+\.md$/.test(path) ? "feature"
+  : /^skills\/[^/]+\/SKILL\.md$/.test(path) ? "skill"
+  : /^skills\/[^/]+\/./.test(path) ? "skill-file" // a skill's scripts and references: Claude Code's to read
   : null;
 
 const typeName = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "a list" : typeof v === "object" ? "a map" : typeof v);
@@ -181,7 +184,9 @@ export function duplicateKeys(text: string): string[] {
 
 export function validateFile(path: string, text: string): string[] {
   const kind = kindOf(path);
-  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, prompts/, triggers/, benchmarks/, features/)`];
+  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, prompts/, triggers/, benchmarks/, features/, skills/<name>/SKILL.md)`];
+  if (kind === "skill") return skillFileErrors(text);
+  if (kind === "skill-file") return [];
   // flow-stack's feature map, copied by the migration (daemon/features.ts).
   if (kind === "feature") return featureErrors(text, path.slice("features/".length));
   if (kind === "prompt") {
@@ -299,6 +304,15 @@ function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
   return out;
 }
 
+// An agent file's listed skills that don't exist for it: in `repo`'s .factory/skills/, else
+// ~/.factory/skills/. A factory agent or an example passes no repo (skills.ts).
+export function agentSkillErrors(text: string, repo: string | null): string[] {
+  const m = text.match(/^---\n([\s\S]*?)\n---\n/);
+  let doc: any = null;
+  try { doc = m ? Bun.YAML.parse(m[1]) : null; } catch { return []; } // the schema check reports it
+  return skillErrors(doc?.skills, [repo]);
+}
+
 export function validateDir(dir: string) {
   const paths = files(dir)
     .map((p) => relative(dir, p))
@@ -307,7 +321,8 @@ export function validateDir(dir: string) {
   const dangling = danglingNames(dir, paths);
   return paths.map((path) => {
     const text = readFileSync(join(dir, path), "utf8");
-    const r: { path: string; errors: string[]; warnings?: string[]; off?: true } = { path, errors: [...validateFile(path, text), ...(dangling[path] ?? [])] };
+    const skills = kindOf(path) === "agent" ? agentSkillErrors(text, dirname(dir)) : [];
+    const r: { path: string; errors: string[]; warnings?: string[]; off?: true } = { path, errors: [...validateFile(path, text), ...(dangling[path] ?? []), ...skills] };
     if (kindOf(path) === "trigger" && triggerOff(text)) r.off = true; // `factory validate` prints it "(off)"
     const w = [warningOf(path), ...gateWarnings(path, join(dir, path))].filter((x): x is string => !!x);
     if (w.length) r.warnings = w;

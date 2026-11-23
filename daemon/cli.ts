@@ -17,8 +17,9 @@ import { validateStatus } from "../lib/status.js";
 import { parseTokens } from "../lib/model.js";
 import { service, servicePid } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
-import { validateAccount, validateDir, validateFile } from "./validate.ts";
+import { agentSkillErrors, validateAccount, validateDir, validateFile } from "./validate.ts";
 import { exampleFiles, examplesDir, factoryAgentFiles, factoryAgentsDir, installExamples, installFactoryAgents } from "./agents.ts";
+import { installSkills, skillFiles, skillFileErrors, skillsDir } from "./skills.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { applyMerged, isKind, proposeAccount, proposeExample, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
@@ -252,9 +253,13 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       : validateDir(sub ?? ".factory");
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
     // The factory agents, one set for every repo, are checked with the account config.
-    if (!sub) for (const f of factoryAgentFiles()) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`agents/${basename(f)}`, readFileSync(f, "utf8")) });
+    // Their skills: ~/.factory/skills/ only, since a factory agent is one for every repo.
+    const agentErrors = (f: string) => { const text = readFileSync(f, "utf8"); return [...validateFile(`agents/${basename(f)}`, text), ...agentSkillErrors(text, null)]; };
+    if (!sub) for (const f of factoryAgentFiles()) results.push({ path: f.replace(homedir(), "~"), errors: agentErrors(f) });
     // So is the example library (yours and the shipped ones): never run, but copied into repos.
-    if (!sub) for (const f of exampleFiles()) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`agents/${basename(f)}`, readFileSync(f, "utf8")) });
+    if (!sub) for (const f of exampleFiles()) results.push({ path: f.replace(homedir(), "~"), errors: agentErrors(f) });
+    // And the factory skills (yours and the shipped ones), which agents list by name (skills.ts).
+    if (!sub) for (const f of skillFiles()) results.push({ path: f.replace(homedir(), "~"), errors: skillFileErrors(readFileSync(f, "utf8")) });
     // Every other repo of the factory: its own repo agents, which its tickets' stages run (agents.ts).
     if (!sub && existsSync(p.db)) {
       const db = open(p.db);
@@ -294,6 +299,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (agents.length) log(`the factory agents (${agents.join(", ")}) are in ${factoryAgentsDir().replace(homedir(), "~")}/, one set for every repo`);
       const examples = installExamples();
       if (examples.length) log(`the example agents (${examples.join(", ")}) are in ${examplesDir().replace(homedir(), "~")}/, for new repo agents to start from`);
+      const skills = installSkills();
+      if (skills.length) log(`the factory skills (${skills.join(", ")}) are in ${skillsDir().replace(homedir(), "~")}/, for an agent to list in skills:`);
     } else if (cmd === "setup") {
       const lead = needLead(db);
       if (sub === "skip" || sub === "unskip") {
@@ -330,6 +337,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (agents.length && !json) log(`wrote the factory agents (${agents.join(", ")}) to ${factoryAgentsDir().replace(homedir(), "~")}/`);
         const examples = installExamples();
         if (examples.length && !json) log(`wrote the example agents (${examples.join(", ")}) to ${examplesDir().replace(homedir(), "~")}/`);
+        const skills = installSkills();
+        if (skills.length && !json) log(`wrote the factory skills (${skills.join(", ")}) to ${skillsDir().replace(homedir(), "~")}/`);
         const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db), migration: migrationRequest(db) });
         log(json ? JSON.stringify({ steps }) : showSteps(steps));
         return;

@@ -6,6 +6,7 @@
 // stopped without waiting, and the next one starts from the last commit. The PreCompact
 // hook is the backstop: a session Claude Code starts compacting (it filled up between two
 // ticks) is stopped the same way, and its snapshot (PRECOMPACT.md) joins the brief.
+import { giveAccess } from "./skills.ts";
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
@@ -261,9 +262,11 @@ function launch(db: Database, o: { dir: string; repo: string; run: Run; now: str
   const { s, run, n } = o;
   const snap = snapshotFile(o.dir, s.ticket);
   if (existsSync(snap)) renameSync(snap, join(o.folder, `PRECOMPACT.session-${n - 1}.md`));
-  const agent = s.agent ? loadAgent(agentRepos(db, s.ticket, o.repo), s.agent) : null;
+  const from = agentRepos(db, s.ticket, o.repo);
+  const agent = s.agent ? loadAgent(from, s.agent) : null;
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
-  const argv = withHandoffHook(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, o.text), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? [], [o.folder, ...ticketRepos(db, s.ticket).flatMap((r) => r.worktree ?? [])], shareFor(db, { repo: o.repo, id: s.ticket, folder: o.folder }).allow);
+  const access = (argv: string[]) => giveAccess(argv, agent, join(o.folder, ".skills", s.agent ?? "agent"), from); // the same skills and tools as the stage's first session
+  const argv = withHandoffHook(access(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, o.text)), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? [], [o.folder, ...ticketRepos(db, s.ticket).flatMap((r) => r.worktree ?? [])], shareFor(db, { repo: o.repo, id: s.ticket, folder: o.folder }).allow);
   const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: s.ticket });
   o.stop?.();
   const file = join(o.folder, "HANDOFF.md");
