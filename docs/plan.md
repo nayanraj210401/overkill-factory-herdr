@@ -432,18 +432,25 @@ Metrics gets a Reviews tab: comments kept unchanged, accepted, pushed back, miss
 
 ### Agent memory
 
-Lessons are rules the learner distilled. Learning also needs the raw examples, so every agent gets a **memory store**: one row per thing it did, in SQLite with full-text search.
+**Built** (`daemon/memory.ts`, migration 34). Lessons are rules the learner distilled. Learning also needs the raw examples, so every agent gets a **memory store**: one row per thing it did, in SQLite with full-text search.
 
 | Field | What |
 | --- | --- |
-| agent, repo | who did it, where |
-| kind | review-comment, verdict, babysitter-verdict, stage-output, … |
-| input | the context it saw (a hunk, a comment thread), trimmed |
-| output | what it wrote or decided |
-| outcome | the signal above, filled in when it arrives |
-| cost, at | tokens and time |
+| agent, repo | who did it, where (the repo's slug) |
+| kind | free text: review-comment, verdict, babysitter-verdict, stage-output, … |
+| ticket, pr, ref | what it was about; `ref` names the part (a comment's C<n>, a stage's name) |
+| input | the context it saw (a hunk, a comment thread), trimmed to 4000 characters |
+| output | what it wrote or decided, trimmed the same way |
+| outcome, outcome_at, outcome_source | the signal above, filled in when it arrives, and who said so; null until then |
+| tokens, at | what it cost and when |
 
-An agent's brief pulls the closest past rows, good and bad, as examples. The learner mines the rows for lessons and prompt changes. The babysitter's verdicts and the agreement benchmark read the same store, so one dataset serves every agent.
+`memories_fts` (FTS5) indexes input and output.
+
+- **Recall.** `recall(db, { agent, repo, query, limit, kinds })` returns the closest rows by FTS rank. Rows with an outcome come first, and the best-ranked good one (kept, accepted, merged, agreed) and bad one (any other outcome) are always among them when both exist. At most one row with no outcome comes after.
+- **Briefs.** A stage's brief gets a "From your memory" block: the top `recall` rows for its agent and the ticket's repo, matched against the ticket's title and INTENT.md, one line each with its outcome (at most 5 rows and 1.5 KB). The block is left out when there are none.
+- **Producers.** The babysitter's judge writes a `babysitter-verdict` row for every comment it pre-judges. It settles as agreed or overruled against your verdict, read the way the agreement benchmark reads it: your `factory label`, else the verdict kept at merge. An agent stage's end writes a `stage-output` row (the stage's output file, or how it ended). It is `failed` right away, or later `merged`, `reverted` (once the revert check finds one) or `closed`. The daemon fills these outcomes in every 10 minutes. The review signals above (kept, edited, accepted, pushed back, missed) land as `review-comment` and `verdict` rows once M6 records them.
+- **CLI.** Agents write and read their own store from their sessions with `factory memory add|outcome|search|list` (identity from `FACTORY_AGENT`, repo from the ticket). The learner's digest counts rows by agent, kind and outcome, and its prompt says how to search them.
+- **Retention.** The daily upkeep keeps 5000 rows per agent and repo. The oldest rows without an outcome go first.
 
 ### Who can ask whom
 

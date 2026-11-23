@@ -64,6 +64,7 @@ import { claudeConfig, MIGRATION_META, MIGRATION_REQUEST, migrationRequest, real
 import { decideSplit, followSplits, pendingParts, proposePart } from "./split.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 import { EXCLUDE_LINE, keepLocal, trackedFactory, trackedWarning } from "./local.ts";
+import { listMemories, memoryLine, pruneMemories, recall, remember, setOutcome, settleMemories, type Memory } from "./memory.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
@@ -113,6 +114,12 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   learn restore <id>                 undo the daily lesson upkeep (or lesson retire): a merged lesson takes its hits back, a retired one goes back into briefs
   lesson add <area> <text…> [--source s]  a lesson for code matching the area glob (src/auth/**); loaded when a ticket touches it
   lesson list [words…] | lesson retire <id>  the store (--json), searched by words / take one out of briefs
+  memory add --kind k [--ticket id] [--pr n] [--ref r] [--input file|-] [--output file|-] [--tokens n] [words…]
+                                     keep one thing this agent did (FACTORY_AGENT, else --agent) in its repo (the ticket's, else --repo, else the lead);
+                                     the output is --output's file (- is stdin), else the words; input and output keep 4000 characters each
+  memory outcome <id> <outcome> [--source who]  how it went: kept, edited, deleted, accepted, pushed-back, missed, merged, reverted, …
+  memory search <words…> [--agent a] [--kind k,…] [--limit n] [--json]  the closest past rows, those with an outcome first (good and bad)
+  memory list [--agent a] [--kind k,…] [--limit n] [--json]  the newest rows; the daemon fills stage and babysitter outcomes and keeps 5000 rows per agent and repo
   overwatch [--json]                 start the overwatch agent, or print the live one's terminal
   blueprints                         write blueprints.json (stages, runs in 7 days) for the Blueprint page
   dry-run <file|name> [--tickets N] [--json]  replay the last N (default 5) finished tickets through a draft blueprint, no agents; writes DRYRUN.md here
@@ -811,6 +818,41 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         change(db, () => { l = restoreLesson(db, Number(rest[0]), now()); });
         log(l.dup_of != null ? `lesson ${l.id} restored: no longer merged into ${l.dup_of}; ${l.moved_hits} hit${l.moved_hits === 1 ? "" : "s"} back` : `lesson ${l.id} restored: back in briefs`);
       } else throw new Error("usage: factory learn set|undo|list|export|suggest|digest|run|restore");
+    } else if (cmd === "memory") {
+      // An agent's memory (memory.ts): it is the agent this session runs as, in the ticket's repo.
+      const m = [...rest];
+      const text = (v: string | null) => (v == null ? undefined : readFileSync(v === "-" ? 0 : v, "utf8"));
+      const num = (v: string | null, what: string) => { if (v == null) return null; if (!Number.isInteger(Number(v))) throw new Error(`${what} takes a number`); return Number(v); };
+      const agentFlag = flag(m, "agent"), inputFlag = flag(m, "input"), outputFlag = flag(m, "output"), kindFlag = flag(m, "kind");
+      const pr = num(flag(m, "pr"), "--pr"), tokens = num(flag(m, "tokens"), "--tokens"), limit = num(flag(m, "limit"), "--limit") ?? undefined, ref = flag(m, "ref");
+      const ticket = num(aboutFlag ?? process.env.FACTORY_TICKET ?? null, "--ticket");
+      const agent = agentFlag ?? process.env.FACTORY_AGENT ?? null;
+      const ticketRepo = ticket != null ? (db.query("SELECT repo FROM ticket_lead WHERE id = ?").get(ticket) as { repo: string | null } | null)?.repo : null;
+      const where = repo !== "unknown" ? repo : ticketRepo ?? needLead(db).slug;
+      const kinds = kindFlag ? kindFlag.split(",") : undefined;
+      const show = (rows: Memory[]) => {
+        if (json) return log(JSON.stringify(rows));
+        for (const r of rows) log(`${r.id}  ${r.agent}  ${r.at.slice(0, 10)}  ${memoryLine(r).slice(2)}`);
+        if (!rows.length) log("no memories");
+      };
+      if (sub === "add") {
+        if (!agent) throw new Error("whose memory? run it from an agent's session (FACTORY_AGENT), or pass --agent <name>");
+        if (!kindFlag) throw new Error("usage: factory memory add --kind <review-comment|verdict|stage-output|…> [--input file|-] [--output file|-] [output words…]");
+        const output = text(outputFlag) ?? m.join(" ");
+        let id = 0;
+        change(db, () => { id = remember(db, { agent, repo: where, kind: kindFlag, ticket, pr, ref, input: text(inputFlag), output, tokens, at: now() }); });
+        log(`memory ${id} for ${agent} in ${where}; factory memory outcome ${id} <outcome> once you know how it went`);
+      } else if (sub === "outcome") {
+        const [id, outcome] = m;
+        if (!Number.isInteger(Number(id)) || !outcome) throw new Error("usage: factory memory outcome <id> <kept|edited|deleted|accepted|pushed-back|missed|merged|reverted|…> [--source who]");
+        change(db, () => setOutcome(db, Number(id), outcome, source ?? agent ?? "you", now()));
+        log(`memory ${id}: ${outcome}`);
+      } else if (sub === "search") {
+        if (!m.length) throw new Error("usage: factory memory search <words…> [--agent a] [--kind k] [--limit n]");
+        show(recall(db, { agent, repo: repo !== "unknown" || ticketRepo ? where : null, query: m.join(" "), kinds, limit: limit ?? 10, open: limit ?? 10 }));
+      } else if (sub === "list") {
+        show(listMemories(db, { agent, repo: repo !== "unknown" || ticketRepo ? where : null, kinds, limit: limit ?? 20 }));
+      } else throw new Error("usage: factory memory add|outcome|search|list");
     } else if (cmd === "lesson") {
       if (sub === "add") {
         const [area, ...text] = rest;
@@ -1090,6 +1132,8 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
         const u = upkeepLessons(db, { now: nowIso, retireAfter: readFactory(repoDir).learn?.retire_after });
         setMeta(db, "lessons_upkeep", JSON.stringify({ at: u.at, merged: u.merged.length, retired: u.retired.length }));
         if (u.merged.length || u.retired.length) log(`factory: lesson upkeep: ${u.merged.length} merged, ${u.retired.length} retired`);
+        const dropped = pruneMemories(db);
+        if (dropped) log(`factory: memory upkeep: ${dropped} old rows dropped`);
       });
     } catch (e) { log(`factory: lesson upkeep: ${(e as Error).message}`); }
   }
@@ -1099,6 +1143,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     setMeta(db, "reverts_checked_at", nowIso);
     try { change(db, () => { for (const id of findReverts(db, { repo: lead.slug, run, now: nowIso })) log(`factory: #${id}'s PR was reverted`); }); }
     catch (e) { log(`factory: checking reverts: ${(e as Error).message}`); }
+    // Agent memory: the outcomes the factory knows now (merged, reverted, your verdict on a comment).
+    try { change(db, () => { settleMemories(db, nowIso); }); }
+    catch (e) { log(`factory: memory outcomes: ${(e as Error).message}`); }
   }
   // Split tickets: a part goes on once the one before it is done; a parent closes after its last part.
   try { change(db, () => followSplits(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log })); }

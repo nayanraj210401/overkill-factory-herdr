@@ -59,3 +59,19 @@ How to read it:
 - A check catches a repeated review comment best (a lint rule, a test, a ready rule).
   Propose a lesson only when a check can't catch it.
 - Don't propose anything an open request already asks for.
+
+## The memory store
+
+Lessons are rules; the memory store holds the raw examples under them. Every agent has one
+row per thing it did (a babysitter verdict, a stage's output, a review comment), with what
+it saw, what it wrote, and the outcome once known (agreed or overruled, merged or reverted,
+kept, edited, pushed back, missed). The digest's `memory` counts them by agent, kind and
+outcome. To read the rows themselves:
+
+- `factory memory search <words…> [--agent a] [--kind k] [--json]`: the closest rows,
+  those with an outcome first, good and bad.
+- `factory memory list [--agent a] [--kind k] [--limit n]`: the newest.
+
+Mine them for patterns: the same kind of verdict overruled again and again, or stage
+outputs that keep getting reverted. Name the row ids in a proposal's WHY, as you would a
+lesson id.

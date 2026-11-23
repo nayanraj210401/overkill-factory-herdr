@@ -210,6 +210,8 @@ export type Digest = {
   lessons: { id: number; area: string; text: string; hits: number }[];
   repeated_comments: { text: string; times: number; tickets: number }[];
   open_requests: { id: number; title: string; from: string }[];
+  // The memory store (memory.ts), counted: the rows behind it are what `factory memory search` reads.
+  memory: { agent: string; kind: string; outcome: string | null; rows: number }[];
 };
 
 const round = (v: number | null) => (v == null ? null : +v.toFixed(3));
@@ -259,6 +261,7 @@ export function learnerDigest(db: Database, repo: string): Digest {
     target,
     tickets: { finished: t.length, merged: merged.length, reverted, revert_rate: merged.length ? round(reverted / merged.length)! : 0 },
     trend, settings, overrides, lessons, repeated_comments: repeated, open_requests: open,
+    memory: db.query("SELECT agent, kind, outcome, COUNT(*) AS rows FROM memories GROUP BY agent, kind, outcome ORDER BY rows DESC, agent, kind LIMIT 30").all() as Digest["memory"],
   };
 }
 
