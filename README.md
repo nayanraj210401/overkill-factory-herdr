@@ -36,7 +36,7 @@ Then, in the repo you want the factory to work on:
 ```sh
 factory init && factory setup && factory setup trust
 factory setup write --budget 2M/100k --budget-day 10M/1M --merge human --max-running 1
-git merge factory/setup && factory validate
+factory validate              # .factory/ stays in this checkout, never committed
 factory service install       # the daemon, as a login item; retry once if launchctl says error 5
 factory setup                 # repeat until every line shows ✓
 ```
