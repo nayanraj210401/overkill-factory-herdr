@@ -350,6 +350,52 @@ The product owner is the issue's author unless the Project has a PO field; `groo
 - The follow-up box on a ticket page messages the session running now. Your message is also appended to HANDOFF.md, so the next session sees it too.
 - Sessions for one ticket run one at a time in its worktree. The Runs view lists every one, with its cost and transcript.
 
+## Ticket memory
+
+A ticket's history used to be scattered: `sessions` rows with no link to their transcript, `asks`, decisions, and HANDOFF.md and GATES.md in the ticket folder, which each session overwrites or appends to. Claude Code's transcripts (`~/.claude/projects/<encoded cwd>/<session id>.jsonl`) hold every turn, but nothing linked or indexed them, and Claude Code deletes them after about 30 days. A resumed, sent-back or re-requested ticket saw only the last handoff. Ticket memory gives each ticket a history that lasts, in four layers. Agent memory (above) is different: it is cross-ticket learning, one row per thing an agent did, capped at 4000 characters a row.
+
+| Layer | What | State |
+| --- | --- | --- |
+| 1 | Session → transcript link, and the ticket journal | **Built** (`daemon/journal.ts`, migrations 35 and 36) |
+| 2 | Transcript chunk index, and `factory recall` | Planned |
+| 3 | A ticket digest, written by Haiku, in every brief | Planned |
+| 4 | The Ticket page's Activity feed and search | Planned |
+
+**Layer 1: link and journal (built).**
+
+- **The link.** Every Claude session the daemon starts (a stage, a handoff's next session, triage) gets `--session-id <uuid>`, placed just before the brief. Its `sessions` row keeps `claude_session` and `transcript`, the absolute path of the `.jsonl` file Claude Code writes for it (its folder is named after the real path of the cwd). The daemon never resumes a conversation (`--resume`, `--continue`): a handoff and the plan limit's reset both start a fresh session. So every session has its own id. Cloud sessions and other harnesses have no local transcript, so their rows keep none. Runs uses the stored path once the file exists. Sessions from before this keep finding theirs by birth time.
+- **The journal.** `ticket_events (id, ticket, session, kind, text, ref, at)` is append-only. `ticket_events_fts` (FTS5) indexes `text` and is kept in sync by triggers, the same pattern as `memories_fts`. `ref` points back at the source: `transcript:<path>`, `decision:<id>`, `ask:<id>`, `session:<id>`, `evidence:<id>`, `question:<n>`, `commit:<sha>`, `pr:<n>`, `issue:<n>`, `file:<path>`. `journal(db, {ticket, session?, kind, text, ref?, at})` writes one event; the code that already knows each thing calls it as it happens:
+
+  | Kind | When |
+  | --- | --- |
+  | `created` | `factory new`, the queue, a split's part, a broken check's repair, `ticket add` |
+  | `blueprint`, `groomed` | triage picks a blueprint; grooming finishes (ref: GROOMING.md) |
+  | `stage`, `stage-end`, `retry`, `parked`, `ready` | a stage starts (`enterStage`), ends with its outcome, goes back to its `on_fail`, parks, or the ticket is ready |
+  | `session-start`, `session-end` | a session starts (ref: its transcript) or ends, and why: stage done, failed, paused, handed off, plan limit, cloud |
+  | `handoff` | the daemon asks for a handoff, and session n hands off to n+1 (ref: the kept HANDOFF.session-n.md) |
+  | `question`, `answer`, `talk`, `attention`, `ask` | grooming questions and their answers, `factory talk`, an agent waiting on you in its terminal (ref: its transcript), `factory ask` about the ticket |
+  | `check`, `verdict` | each check result (the daemon's and `factory evidence`), each holdout or review verdict |
+  | `send-back`, `review` | your note on a ready PR, reviewers' comments sending it back |
+  | `pr`, `merged`, `closed` | the PR opened or updated (ref: the commit), merged or closed |
+  | `pause`, `resume`, `cloud`, `split`, `blocked`, `lifecycle` | the rest of a ticket's life |
+- **Backfill.** Migration 36 builds a journal for every ticket that has none from the rows the database kept: decisions (each mapped to a kind by its wording), stages, sessions, checks, verdicts, questions and asks. It runs once, inside the migration, and is idempotent (a ticket with events is skipped). Old sessions have no known transcript, so their ref is the session. A stage row's detail is its last one, so backfilled stage events carry only the name.
+- **CLI.** `factory journal <id> [--name <factory>] [--json]` prints the events in order; `factory journal <id> --search "<words>"` ranks them by FTS (words OR'd, as `factory memory search` does). `factory sessions <id>` shows each session's transcript.
+- **status.json.** Each ticket carries `events: [{kind, text, at}]`, its 8 newest, oldest first, each text cut to 200 characters (optional; `lib/status.js` checks it). A ticket merged or closed more than a week ago goes without, so the file doesn't grow with the factory's history. The Ticket page doesn't show them yet (layer 4).
+
+**Layer 2: transcript chunk index (planned).** The daemon splits each linked transcript into chunks (a turn, or a tool call with its result), redacts secrets before indexing (tokens, keys, `.env` values, anything the hard-stop list names), and indexes them with FTS5 in `transcript_chunks (session, ticket, line, role, text)`. `factory recall <id> "<words>"` searches one ticket's journal and chunks together and prints each hit with its `transcript:<path>#L<line>` ref. Chunks are indexed while the transcript still exists, so the 30-day cleanup can't take them.
+
+**Layer 3: ticket digest (planned).** After each stage, Haiku rewrites a short digest of the ticket from its journal and the new chunks: what was decided and why, what was tried and failed, open questions, the person's answers. It is stored on the ticket and written to TICKET-MEMORY.md in the worktree, capped in size. Every brief includes it, with a pointer to `factory recall` for the detail. A re-requested ticket gets a `parent` link, and its digest starts from the parent's.
+
+**Layer 4: Ticket page (planned).** The Ticket page's Activity feed reads `events` from status.json, and a search box runs `factory recall`.
+
+**Decisions.**
+
+- SQLite FTS5, not a vector database. The journal and chunks are short text found by words (a file name, an error, a decision), the factory already has FTS5, and there's nothing new to run.
+- Secrets are redacted when transcripts are indexed (layer 2). The journal holds only what the daemon itself wrote.
+- Journals and digests are kept forever: they are small. Transcript chunks are pruned N days after the ticket merges or closes (layer 2's setting).
+- The backfill runs in the migration, not on daemon start: it needs only rows, so it runs once wherever the database is first opened (the daemon, the CLI, or the window's CLI).
+- status.json gets a ticket's 8 newest events, not the whole journal; the CLI reads the rest.
+
 ## Watching PRs
 
 You can always tell what the factory is watching and what it has done:

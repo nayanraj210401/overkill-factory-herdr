@@ -14,6 +14,7 @@ import { LOCAL_IDS } from "./intake.ts";
 import { closeTicket, unblock } from "./lifecycle.ts";
 import { finishGrooming, startGroomed } from "./groom.ts";
 import { advance, readFactory, type Run } from "./runner.ts";
+import { decisionKind, journal } from "./journal.ts";
 
 type Part = { n: number; title: string; scope: string | null; keeps_work: number };
 type Row = Record<string, any>;
@@ -29,8 +30,10 @@ export const pendingParts = (db: Database, id: number) =>
 export const childrenOf = (db: Database, id: number) =>
   db.query("SELECT id, state FROM tickets WHERE parent = ? ORDER BY id").all(id) as { id: number; state: string }[];
 
-const note = (db: Database, id: number, who: string, what: string, why: string | null, now: string) =>
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(id, who, what, why, now);
+const note = (db: Database, id: number, who: string, what: string, why: string | null, now: string) => {
+  const d = db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(id, who, what, why, now).lastInsertRowid;
+  journal(db, { ticket: id, kind: decisionKind(what), text: `${who}: ${what}${why ? ` (${why})` : ""}`, ref: `decision:${d}`, at: now });
+};
 
 // `factory split <id> add <title…> [--scope text] [--keeps-work]`: one part, in order.
 export function proposePart(db: Database, o: { id: number; title: string; scope?: string | null; keepsWork?: boolean; now: string }) {

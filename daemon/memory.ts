@@ -40,7 +40,7 @@ export function setOutcome(db: Database, id: number, outcome: string, source: st
 }
 
 // Words of three letters or more, quoted, OR'd: the closest rows by bm25, not only rows with every word.
-const ftsQuery = (q: string) => [...new Set(q.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? [])].slice(0, 16).map((w) => `"${w}"`).join(" OR ");
+export const ftsQuery = (q: string) => [...new Set(q.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? [])].slice(0, 16).map((w) => `"${w}"`).join(" OR ");
 
 export type Recall = { agent?: string | null; repo?: string | null; query?: string; limit?: number; kinds?: string[]; open?: number };
 

@@ -5,6 +5,7 @@ import { writeIfChanged } from "./files.ts";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ticketOf } from "./status.ts";
+import { journal } from "./journal.ts";
 
 type Stage = { name: string; detail: string | null; started_at: string; ended_at: string | null };
 type Check = { check_name: string; result: "PASS" | "FAIL" | "BROKEN"; detail: string | null; at: string };
@@ -115,4 +116,5 @@ export function enterStage(db: Database, id: number, name: string, detail: strin
   db.query("DELETE FROM planned WHERE ticket = ?").run(id);
   planned.forEach((n, i) => db.query("INSERT INTO planned (ticket, pos, name) VALUES (?, ?, ?)").run(id, i, n));
   db.query("UPDATE tickets SET stage = ?, detail = ?, updated_at = ? WHERE id = ?").run(name.toLowerCase(), detail, now, id);
+  journal(db, { ticket: id, kind: "stage", text: `entered ${name}${detail ? ` · ${detail}` : ""}`, at: now });
 }

@@ -65,6 +65,7 @@ import { decideSplit, followSplits, pendingParts, proposePart } from "./split.ts
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
 import { EXCLUDE_LINE, keepLocal, trackedFactory, trackedWarning } from "./local.ts";
 import { listMemories, memoryLine, pruneMemories, recall, remember, setOutcome, settleMemories, type Memory } from "./memory.ts";
+import { eventLine, journal, ticketEvents } from "./journal.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
@@ -100,7 +101,9 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
   merge-order <id> owner/name…       the order a cross-repo ticket's PRs merge in (default: the others, then the lead)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
-  sessions <id>                      the agent sessions started for a ticket, with their tokens
+  sessions <id>                      the agent sessions started for a ticket, with their tokens and transcripts
+  journal <id> [--search "<words>"] [--json]  the ticket's history in order: created, stages, sessions (with their transcripts), questions
+                                     and answers, checks, verdicts, send-backs, the PR, the merge; --search ranks its events by full text
   cloud <id> | all                   hand a running ticket (or every one) to a Claude Code cloud session; skips what can't move, with a reason
   local <id> | all                   bring a ticket (or every one in the cloud) back and resume it here
   routine [brief]                    write ROUTINE.md, the prompt for a Claude Code scheduled task that watches PRs while you sleep, and print how to set it up
@@ -256,6 +259,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const fromFlag = flag(args, "from");
   const aboutFlag = flag(args, "ticket");
   const daysFlag = flag(args, "days");
+  const searchFlag = flag(args, "search");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -433,7 +437,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     } else if (cmd === "ticket" && sub === "add") {
       const [id, ...title] = rest;
       if (!Number.isInteger(Number(id)) || !title.length) throw new Error("usage: factory ticket add <id> <title…>");
-      change(db, () => db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (?, ?, ?, ?)").run(Number(id), title.join(" "), blueprint, now()));
+      change(db, () => {
+        db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (?, ?, ?, ?)").run(Number(id), title.join(" "), blueprint, now());
+        journal(db, { ticket: Number(id), kind: "created", text: `${title.join(" ")} (${blueprint} blueprint)`, at: now() });
+      });
     } else if (cmd === "ticket" && sub === "set") {
       const [id, ...pairs] = rest;
       const sets = pairs.map((pair) => {
@@ -465,7 +472,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (!Number.isInteger(Number(sub)) || !check || (r !== "PASS" && r !== "FAIL")) throw new Error("usage: factory evidence <id> <check> pass|fail [detail…]");
       change(db, () => {
         if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(Number(sub))) throw new Error(`no ticket ${sub}`);
-        db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now());
+        const e = db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now()).lastInsertRowid;
+        journal(db, { ticket: Number(sub), kind: "check", text: `${check} ${r}${detail.length ? `: ${detail.join(" ")}` : ""}`, ref: `evidence:${e}`, at: now() });
       });
     } else if (cmd === "comment") {
       const [c = "", verdict = "", ...why] = rest;
@@ -724,7 +732,17 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       return;
     } else if (cmd === "sessions") {
       for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
-        log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
+        log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}${r.transcript ? `  ${r.transcript}` : ""}`);
+      return;
+    } else if (cmd === "journal") {
+      // The ticket's journal (journal.ts): every event in order, or the closest to --search.
+      const id = Number(sub);
+      if (!Number.isInteger(id) || !sub) throw new Error('usage: factory journal <id> [--search "<words>"] [--json]');
+      if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`no ticket ${id}`);
+      const events = ticketEvents(db, id, searchFlag != null ? { query: searchFlag } : {});
+      if (json) return log(JSON.stringify(events));
+      for (const e of events) log(eventLine(e));
+      if (!events.length) log(searchFlag != null ? `#${id}: nothing in its journal matches "${searchFlag}"` : `#${id}: its journal is empty`);
       return;
     } else if (cmd === "cloud" || cmd === "local") {
       const repoDir = needLead(db).path;

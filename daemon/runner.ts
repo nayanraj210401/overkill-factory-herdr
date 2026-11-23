@@ -34,6 +34,7 @@ import { agentRepos, factoryMap, loadAgent, type AgentRepos } from "./agents.ts"
 import { briefNotes, deliveredInBrief, notesForBrief } from "./ask.ts";
 import { classify, EVIDENCE_OF, fileRepair, repairs, type CheckResult } from "./broken.ts";
 import { factoryChanges, LOCAL_REASON } from "./local.ts";
+import { claudeSession, endSessions, journal, journalSessionStart } from "./journal.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -213,7 +214,9 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const notes = notesForBrief(db, { agent: s.agent, repo: workRepo, ticket: o.id });
   const text = [brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db, workRepo), memory), briefNotes(notes, basename(o.dir)), o.opening].filter(Boolean).join("\n\n");
   // Only the skills and tools its frontmatter lists (skills.ts); the plugin sits in the ticket folder, never the repo.
-  const argv = withHandoffHook(giveAccess(argvFor(use, defaults, text), agent, join(folder, ".skills", s.agent), from), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
+  // A known Claude session id, so the session's row names its transcript (journal.ts).
+  const cs = claudeSession(withHandoffHook(giveAccess(argvFor(use, defaults, text), agent, join(folder, ".skills", s.agent), from), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow), t.worktree);
+  const argv = cs.argv;
   const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id, repo: workRepo }); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];
@@ -233,8 +236,9 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
     if (hc.code !== 0) throw new Error(`hc run failed: ${hc.out}`);
     terminal = (() => { try { return JSON.parse(hc.out).address ?? name; } catch { return name; } })();
   }
-  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd, slice) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, t.worktree, slice?.key ?? null);
+  const session = Number(db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd, slice, claude_session, transcript) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(o.id, o.stage, s.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, t.worktree, slice?.key ?? null, cs.id, cs.transcript).lastInsertRowid);
+  journalSessionStart(db, { ticket: o.id, session, stage: o.stage, agent: s.agent, transcript: cs.transcript, at: o.now, why: slice ? `slice ${slice.key}` : undefined });
   deliveredInBrief(db, notes, o.now);
   return terminal;
 }
@@ -288,9 +292,11 @@ function commandResult(db: Database, o: { id: number; now: string; dir?: string;
 type Record_ = (name: string, result: CheckResult | boolean, detail: string) => void;
 
 export function runCheck(db: Database, o: { id: number; repo: string; worktree: string; check: string; run: Run; now: string; dir?: string }) {
-  const record: Record_ = (name, result, detail) =>
-    db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)")
-      .run(o.id, name, EVIDENCE_OF[result === true ? "pass" : result === false ? "fail" : result], detail, o.now);
+  const record: Record_ = (name, result, detail) => {
+    const r = EVIDENCE_OF[result === true ? "pass" : result === false ? "fail" : result];
+    const id = db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(o.id, name, r, detail, o.now).lastInsertRowid;
+    journal(db, { ticket: o.id, kind: "check", text: `${name} ${r}${detail ? `: ${detail}` : ""}`, ref: `evidence:${id}`, at: o.now });
+  };
   if (o.check === "tests" || o.check === "lint") {
     const commands = readFactory(o.repo).quality_floor ?? [];
     if (!commands.length) { record(o.check, false, "factory.yaml has no quality_floor commands"); return false; }
@@ -381,8 +387,9 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   if (t?.state === "grooming") return finishGrooming(db, { dir: o.dir, repo: o.repo, id: o.id, run, now });
   if (!t || t.state !== "running") throw new Error(`#${o.id} isn't running`);
   const b = loadBlueprint(o.repo, t.blueprint);
-  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   const at = t.stage as string;
+  endSessions(db, { ticket: o.id, at: now, why: o.failed ? `failed: ${o.failed}` : o.opened ? "PR opened" : "stage done" });
+  journal(db, { ticket: o.id, kind: "stage-end", text: `${at} ${o.failed ? `failed: ${o.failed}` : "done"}`, at: now });
   rememberStage(db, { dir: o.dir, t, at, s: b.stages[at], failed: o.failed, now });
   // Review comments the stage handled: each needs a verdict; an escalation stops for you.
   const gate = o.failed ? null : commentGate(db, o.id, now);
@@ -400,6 +407,7 @@ export function advance(db: Database, o: { dir: string; repo: string; id: number
   if (stop) {
     db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(stop, now, o.id);
     db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
+    journal(db, { ticket: o.id, kind: "parked", text: `parked at ${at}: ${stop}`, at: now });
     return { parked: true, stage: at };
   }
   // The stage's agent proposed a split: it stops for you, or the parts are made now.
@@ -429,11 +437,13 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
       if (!stage.on_fail || retries > (stage.max_retries ?? 3)) {
         db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?")
           .run(`${title(at)} failed ${retries} times: ${failed}`, now, o.id);
+        journal(db, { ticket: o.id, kind: "parked", text: `parked: ${title(at)} failed ${retries} times: ${failed}`, at: now });
         db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
         return { parked: true, stage: at };
       }
       db.query("UPDATE tickets SET retries = ? WHERE id = ?").run(retries, o.id);
       to = stage.on_fail;
+      journal(db, { ticket: o.id, kind: "retry", text: `${at} failed (${failed}); back to ${to}, try ${retries}`, at: now });
     } else if (stage.requires === "ready" && stage.agent && at === o.at && !o.opened) {
       // The pr stage's agent wrote PR.md: the ready rules decide whether the PR opens now
       // (tryPr moves on once it has), or the stage waits and the daemon retries each tick.
@@ -448,6 +458,7 @@ function follow(db: Database, o: { dir: string; repo: string; id: number; run: R
     if (!to || to === "end") {
       db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
       db.query("UPDATE tickets SET state = 'ready', updated_at = ? WHERE id = ?").run(now, o.id);
+      journal(db, { ticket: o.id, kind: "ready", text: `ready after ${at}`, at: now });
       return { ready: true, stage: at };
     }
     const next = b.stages[to] as BlueprintStage;
@@ -545,6 +556,9 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   const others = prs.slice(1).map((p) => `${p.repo}#${p.pr_number}`).join(", ");
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
     .run(o.id, `${t.pr_number == null ? "opened" : "updated"} PR #${prs[0].pr_number}`, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}${others ? `; with ${others}` : ""}`, now);
+  const head = repos[0].worktree ? run(["git", "-C", repos[0].worktree, "rev-parse", "HEAD"]) : null;
+  journal(db, { ticket: o.id, kind: "pr", text: `${t.pr_number == null ? "opened" : "updated"} PR #${prs[0].pr_number}${others ? ` with ${others}` : ""}; ${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}`,
+    ref: head?.code === 0 && /^[0-9a-f]{40}$/.test(head.out.trim()) ? `commit:${head.out.trim()}` : `pr:${prs[0].pr_number}`, at: now });
   return { ...advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, opened: true }), pr: prs[0].pr_number };
 }
 
@@ -696,6 +710,7 @@ export function finishPr(db: Database, o: { repo: string; id: number; run: Run; 
   db.query("UPDATE tickets SET state = ?, detail = NULL, needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(o.state, o.now, o.id);
   setWork(db, o.id, { pr_watched: 0, merged_at: o.state === "merged" ? o.now : null });
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.who ?? "you", pr == null ? `${o.state} with no PR` : `${o.state} PR #${pr}`, o.why, o.now);
+  journal(db, { ticket: o.id, kind: o.state, text: `${pr == null ? `${o.state} with no PR` : `${o.state} PR #${pr}`} by ${o.who ?? "you"}${o.why ? ` (${o.why})` : ""}`, ref: pr == null ? null : `pr:${pr}`, at: o.now });
   recordOutcome(db, { repo: o.repo, id: o.id, state: o.state, now: o.now }); // the experiments' outcome, and any shift it makes
   // Every repo's worktree goes; one with uncommitted work stays (and so does the space's id).
   const repos = ticketRepos(db, o.id).filter((r) => r.worktree);
@@ -741,9 +756,11 @@ function withNote<T>(undo: () => void, fn: () => T): T {
   try { return fn(); } catch (e) { undo(); throw e; }
 }
 
-function restart(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; stage: string; b: Blueprint; who: string; why: string; by?: string; opening?: string }) {
+// `kind`: the journal's name for why it restarted (send-back, review, answer, talk).
+function restart(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; stage: string; b: Blueprint; who: string; why: string; by?: string; opening?: string; kind: string }) {
   db.query("UPDATE tickets SET state = 'running', needs_kind = NULL, needs_text = NULL, retries = 0, updated_at = ? WHERE id = ?").run(o.now, o.id);
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.by ?? "you", o.who, o.why, o.now);
+  const decision = db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.by ?? "you", o.who, o.why, o.now).lastInsertRowid;
+  journal(db, { ticket: o.id, kind: o.kind, text: `${o.by ?? "you"}: ${o.who}, back to ${o.stage}: ${o.why}`, ref: `decision:${decision}`, at: o.now });
   return { stage: o.stage, terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run: o.run, now: o.now, blueprint: o.b, stage: o.stage, opening: o.opening }) };
 }
 
@@ -757,7 +774,7 @@ export function sendBack(db: Database, o: { dir: string; repo: string; id: numbe
   if (!o.note.trim()) throw new Error("say what to change: factory send-back <id> <note…>");
   const b = loadBlueprint(o.repo, t.blueprint);
   const undo = note(o.dir, o.id, "REVIEW.md", `Sent back by you · ${now.slice(0, 16).replace("T", " ")} · PR #${t.pr_number}`, o.note);
-  return withNote(undo, () => restart(db, { ...o, run, now, b, stage: fixStage(b), who: `sent PR #${t.pr_number} back`, why: o.note.trim() }));
+  return withNote(undo, () => restart(db, { ...o, run, now, b, stage: fixStage(b), who: `sent PR #${t.pr_number} back`, why: o.note.trim(), kind: "send-back" }));
 }
 
 // The PR watcher: reviewers' comments on a ready PR send it back like `x` does, by the daemon.
@@ -769,9 +786,10 @@ export function reviewBack(db: Database, o: { dir: string; repo: string; id: num
   if (o.park) {
     db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
     db.query("UPDATE tickets SET state = 'parked', stage = ?, needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(fixStage(b), o.park, o.now, o.id);
+    journal(db, { ticket: o.id, kind: "review", text: `${o.heading}; parked: ${o.park}`, at: o.now });
     return { parked: true };
   }
-  return withNote(undo, () => restart(db, { ...o, b, stage: fixStage(b), who: `review comments on PR #${t.pr_number}`, why: o.heading, by: "daemon" }));
+  return withNote(undo, () => restart(db, { ...o, b, stage: fixStage(b), who: `review comments on PR #${t.pr_number}`, why: o.heading, by: "daemon", kind: "review" }));
 }
 
 // `u`: answer a parked ticket and run the stage it stopped at again.
@@ -793,8 +811,10 @@ export function answer(db: Database, o: { dir: string; repo: string; id: number;
   if (!t.worktree) throw new Error(`#${o.id} has no worktree; factory start ${o.id}`);
   const b = loadBlueprint(o.repo, t.blueprint);
   const undo = note(o.dir, o.id, "GATES.md", `Parked · ${now.slice(0, 16).replace("T", " ")}`, `${t.needs_text ?? "Stopped."}\n\n**Your answer:** ${o.text.trim()}`);
+  for (const q of db.query("SELECT n FROM questions WHERE ticket = ? AND answer IS NULL ORDER BY n").all(o.id) as { n: number }[])
+    journal(db, { ticket: o.id, kind: "answer", text: `A${q.n} from you: ${o.text.trim()}`, ref: `question:${q.n}`, at: now });
   db.query("UPDATE questions SET answer = ?, answered_by = 'you', answered_at = ? WHERE ticket = ? AND answer IS NULL").run(o.text.trim(), now, o.id);
-  return withNote(undo, () => restart(db, { ...o, run, now, b, stage: restartStage(b, t.stage), who: "answered and restarted", why: o.text.trim() }));
+  return withNote(undo, () => restart(db, { ...o, run, now, b, stage: restartStage(b, t.stage), who: "answered and restarted", why: o.text.trim(), kind: "answer" }));
 }
 
 // What a talk-it-through session does first: ask the person, in its terminal, what stopped the ticket.
@@ -823,7 +843,7 @@ export function talk(db: Database, o: { dir: string; repo: string; id: number; r
   const questions = db.query("SELECT n, kind, text FROM questions WHERE ticket = ? AND answer IS NULL ORDER BY n").all(o.id) as { n: number; kind: string; text: string }[];
   const opening = talkOpening({ stage: t.stage ?? stage, why: t.needs_text, questions, folder: join(o.dir, "tickets", String(o.id)) });
   db.query("UPDATE questions SET answer = 'asked in the terminal (GATES.md)', answered_by = 'terminal', answered_at = ? WHERE ticket = ? AND answer IS NULL").run(now, o.id);
-  return restart(db, { ...o, run, now, b, stage, opening, who: `talking it through in the ${stage} terminal`, why: t.needs_text ?? "parked" });
+  return restart(db, { ...o, run, now, b, stage, opening, who: `talking it through in the ${stage} terminal`, why: t.needs_text ?? "parked", kind: "talk" });
 }
 
 // `p` on a running ticket: its agent stops now; the stage it was in is remembered.
@@ -835,10 +855,11 @@ export function pause(db: Database, o: { id: number; run?: Run; now?: string; wh
   if (t.state !== "running") throw new Error(`#${o.id} is ${t.state}; only a running ticket pauses`);
   if ((db.query("SELECT location FROM ticket_lead WHERE id = ?").get(o.id) as any).location === "cloud") throw new Error(`#${o.id} is in the cloud; bring it back first (⇧L)`);
   const open_ = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
-  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
+  endSessions(db, { ticket: o.id, at: now, why: "paused" });
   db.query("UPDATE stages SET ended_at = ?, detail = 'paused' WHERE ticket = ? AND ended_at IS NULL").run(now, o.id);
   db.query("UPDATE tickets SET state = 'paused', detail = NULL, resume_at = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(o.id, o.who ?? "you", `paused at ${t.stage ?? "start"}`, now);
+  journal(db, { ticket: o.id, kind: "pause", text: `${o.who ?? "you"}: paused at ${t.stage ?? "start"}`, at: now });
   // Last, so a failed kill (the terminal already gone) leaves the pause recorded.
   for (const s of open_) run(["hc", "kill", s.terminal]);
   return { stage: t.stage, killed: open_.map((s) => s.terminal) };
@@ -858,11 +879,13 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
   if (!t.worktree) {
     db.query("UPDATE tickets SET state = 'queued', needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
     db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', 'kept it; back in the queue', ?)").run(o.id, now);
+    journal(db, { ticket: o.id, kind: "resume", text: "you: kept it; back in the queue", at: now });
     return { stage: null, terminal: null };
   }
   const b = loadBlueprint(o.repo, t.blueprint);
   db.query("UPDATE tickets SET state = 'running', needs_kind = NULL, needs_text = NULL, updated_at = ? WHERE id = ?").run(now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', 'resumed', ?)").run(o.id, now);
+  journal(db, { ticket: o.id, kind: "resume", text: `you: resumed at ${t.stage}`, at: now });
   // A pr stage with no agent only waits for its rules; one with an agent (it writes PR.md) reruns.
   if ((b.stages[t.stage] as BlueprintStage | undefined)?.requires === "ready" && !b.stages[t.stage]?.agent) {
     enterStage(db, o.id, title(t.stage), null, plannedPath(b, t.stage).map(title), now);

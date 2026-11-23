@@ -16,6 +16,7 @@ import { FACTORY_AGENTS, isFactoryAgent, repoAgents } from "./agents.ts";
 import { leadRepo, listRepos } from "./db.ts";
 import type { Run } from "./runner.ts";
 import type { Session } from "./globals.ts";
+import { journal } from "./journal.ts";
 
 // `to` is the agent's name; `toRepo` the repo of a repo agent, null for a global one.
 export type Ask = { id: number; from: string; to: string; toRepo: string | null; text: string; why: string | null; about: number | null; request: number | null; at: string; delivered_at: string | null; done_at: string | null };
@@ -94,6 +95,7 @@ export function ask(db: Database, o: {
   const id = Number(db.query("INSERT INTO asks (from_agent, to_agent, to_repo, text, why, about, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run(o.from, to.agent, to.repo, text, o.why ?? null, o.about ?? null, o.now).lastInsertRowid);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.about ?? null, o.from, `asked ${name}: ${text}`.slice(0, 200), o.why ?? null, o.now);
+  journal(db, { ticket: o.about, kind: "ask", text: `${o.from} asked ${name}: ${text}${o.why ? ` (${o.why})` : ""}`, ref: `ask:${id}`, at: o.now });
   if (to.repo) deliverToRepoAgents(db, { run: o.run, now: o.now, name: o.name });
   else if ((to.agent === "overwatch" || to.agent === "maintainer") && o.live) deliverToGlobal(db, to.agent, { run: o.run, now: o.now, terminal: () => o.live!(to.agent as Session), name: o.name });
   const ask = row(db.query("SELECT * FROM asks WHERE id = ?").get(id));
