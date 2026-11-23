@@ -35,6 +35,7 @@ import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from
 import { agentRepos, factoryMap, loadAgent, type AgentRepos } from "./agents.ts";
 import { briefNotes, deliveredInBrief, notesForBrief } from "./ask.ts";
 import { classify, EVIDENCE_OF, fileRepair, repairs, type CheckResult } from "./broken.ts";
+import { factoryChanges, LOCAL_REASON } from "./local.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -378,7 +379,9 @@ function featureScenarios(db: Database, o: { id: number; repo: string; worktree:
   if (!dir) return true;
   const files = changedFiles(o.run, o.repo, o.worktree);
   let ok = true;
-  for (const f of readFeatures(join(o.worktree, dir)).filter((x) => x.scenario && touched(x, files))) {
+  // A map in .factory/ is the checkout's (.factory/ stays local, local.ts); one elsewhere is the branch's.
+  const at = /^\.factory(\/|$)/.test(dir.replace(/^\.\//, "")) ? o.repo : o.worktree;
+  for (const f of readFeatures(join(at, dir)).filter((x) => x.scenario && touched(x, files))) {
     ok = commandResult(db, o, `feat:${f.id}`, o.run(["env", `PATH=${toolPath()}`, "sh", "-c", f.scenario], o.worktree), "passed", `${f.scenario}: `) && ok;
   }
   return ok;
@@ -401,6 +404,12 @@ function dryRunChanged(db: Database, o: { id: number; repo: string; worktree: st
     o.record("blueprint dry run", false, (e as Error).message.replace(/\s+/g, " ").slice(0, 200));
     return false;
   }
+}
+
+// The .factory/ files a ticket's branches committed, in every repo it works in (a repo's own
+// name first when it isn't the lead). `base`: where the lead's worktree started.
+function localChanges(run: Run, repos: { repo: string; lead: number; path: string; worktree: string | null }[], base?: string) {
+  return repos.flatMap((r) => (r.worktree ? factoryChanges(run, r.path, r.worktree, r.lead ? base : undefined).map((f) => (r.lead ? f : `${r.repo}:${f}`)) : []));
 }
 
 // Files the ticket's branch changed since it left the repo's checkout (or `from`, where
@@ -577,6 +586,16 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   }
   // One PR per repo. A cross-repo change's bodies then name each other's PRs.
   const repos = ticketRepos(db, o.id);
+  // .factory/ stays local (local.ts): a branch that commits to it never reaches a PR. The
+  // maintainer's requests are its own flow (maintainer.ts), not guarded here.
+  const local = t.blueprint === FACTORY_BLUEPRINT ? [] : localChanges(run, repos, t.base ?? undefined);
+  if (local.length) {
+    const detail = `${LOCAL_REASON}: ${local.slice(0, 3).join(", ")}${local.length > 3 ? ` and ${local.length - 3} more` : ""}; take those commits off the branch`;
+    if (t.detail !== detail) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'no PR: the branch changes .factory/', ?, ?)").run(o.id, detail, now);
+    db.query("UPDATE stages SET detail = ? WHERE ticket = ? AND ended_at IS NULL").run(detail, o.id);
+    db.query("UPDATE tickets SET detail = ? WHERE id = ?").run(detail, o.id);
+    return { waiting: true, stage: t.stage, failing: 1 };
+  }
   // A request that changes only what no repo holds (the account config, the factory agents,
   // a cleanup) has no commits to open a PR from: it waits for you at the merge gate, and `m` applies it.
   if (t.blueprint === FACTORY_BLUEPRINT && t.pr_number == null && outsidePending(o.dir, o.id) && !changedFiles(run, repos[0].path, t.worktree, t.base ?? undefined).length) {

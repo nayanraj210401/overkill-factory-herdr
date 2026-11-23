@@ -62,6 +62,7 @@ import { migrateFlowStack } from "./migrate.ts";
 import { claudeConfig, MIGRATION_META, MIGRATION_REQUEST, migrationRequest, realProbe, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
 import { decideSplit, followSplits, pendingParts, proposePart } from "./split.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
+import { EXCLUDE_LINE, keepLocal, trackedFactory, trackedWarning } from "./local.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
@@ -132,7 +133,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   setup skip|unskip <step>           set a step aside (it stays on the list; rerun setup any time)
   setup trust                        mark the factory's folders trusted in Claude Code, so its agents never stop at that prompt
   setup write [--budget 3M/150k] [--budget-day 40M/2M] [--merge human|auto] [--max-running n] [--queue owner/project]
-                                     write .factory/ on branch factory/setup (a temporary worktree; your checkout is untouched)
+                                     write .factory/ into the lead repo's checkout, never committed (it stays local: /.factory/
+                                     goes in .git/info/exclude); a file already there is kept
   migrate flow-stack [--dry-run] [--propose <id>]  import past tasks, decisions and lessons from ~/.flow-stack and .flow/ (once each); --propose writes the profile, calibration and feature map into a maintainer request
   setup migrate                      accept setup's flow-stack offer: a maintainer request that migrates it, as a PR
   health [trigger]                   run the full suite on each repo's default branch now, in a throwaway worktree; a failure files one bugfix ticket, a pass closes it
@@ -249,9 +251,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     const accountLike = sub && /(^|\/)(ACCOUNT-CONFIG|config)\.yaml$/.test(sub) && existsSync(sub) && statSync(sub).isFile();
     // A single agent file (a factory agent's FACTORY-AGENTS/<name>.md copy, say) is checked as an agent.
     const agentLike = sub && !accountLike && sub.endsWith(".md") && existsSync(sub) && statSync(sub).isFile();
+    const own = sub ?? ownFactory(p.db);
     const results = accountLike ? [{ path: sub, errors: validateAccount(readFileSync(sub, "utf8")) }]
       : agentLike ? [{ path: sub, errors: validateFile(`agents/${basename(sub)}`, readFileSync(sub, "utf8")) }]
-      : validateDir(sub ?? ".factory");
+      : validateDir(own);
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
     // The factory agents, one set for every repo, are checked with the account config.
     // Their skills: ~/.factory/skills/ only, since a factory agent is one for every repo.
@@ -264,16 +267,19 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     // And the factory skills (yours and the shipped ones), which agents list by name (skills.ts).
     if (!sub) for (const f of skillFiles()) results.push({ path: f.replace(homedir(), "~"), errors: skillFileErrors(readFileSync(f, "utf8")) });
     // Every other repo of the factory: its own repo agents, which its tickets' stages run (agents.ts).
+    // .factory/ stays local (local.ts): a repo that tracks it is told how to stop, never changed for you.
+    const tracked = (slug: string, path: string) => { const n = trackedFactory(path).length; if (n) results.push({ path: `${slug} .factory/`, errors: [], warnings: [trackedWarning(slug, n)] } as any); };
     if (!sub && existsSync(p.db)) {
       const db = open(p.db);
       try {
         for (const r of listRepos(db)) {
+          tracked(r.slug, r.path);
           const dir = join(r.path, ".factory");
-          if (!existsSync(join(dir, "agents")) || (existsSync(".factory") && realpathSync(dir) === realpathSync(".factory"))) continue;
+          if (!existsSync(join(dir, "agents")) || (existsSync(own) && realpathSync(dir) === realpathSync(own))) continue;
           for (const x of validateDir(dir)) if (x.path.startsWith("agents/")) results.push({ ...x, path: `${r.slug} .factory/${x.path}` });
         }
       } finally { db.close(); }
-    }
+    } else if (!sub && existsSync(".factory")) tracked(".", ".");
     if (json) return log(JSON.stringify(results));
     for (const r of results as { path: string; errors: string[]; warnings?: string[]; off?: true }[])
       log((r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `${r.warnings?.length ? "!" : "✓"} ${r.path}${r.off ? " (off)" : ""}`) + (r.warnings ?? []).map((w) => `\n    ${w}`).join(""));
@@ -298,6 +304,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     if (cmd === "init") {
       const path = resolve(repoPath ?? ".");
       change(db, () => { setMeta(db, "name", name); setRepo(db, { slug: repo !== "unknown" ? repo : originSlug(path) ?? repo, path, lead: true }); });
+      adopt(path, leadRepo(db)!.slug, log);
       const agents = installFactoryAgents();
       if (agents.length) log(`the factory agents (${agents.join(", ")}) are in ${factoryAgentsDir().replace(homedir(), "~")}/, one set for every repo`);
       const examples = installExamples();
@@ -318,7 +325,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       } else if (sub === "write") {
         const r = writeSetup({ repo: lead.path, name: getMeta(db, "name") ?? name, slug: lead.slug,
           basics: { budget: budgetFlag ?? undefined, budgetDay: budgetDayFlag ?? undefined, merge: mergeFlag ?? undefined, maxRunning: maxRunningFlag === null ? undefined : Number(maxRunningFlag), queue: queueFlag ?? undefined } });
-        log(`${r.committed ? `committed ${r.sha} on` : "already up to date on"} ${r.branch}: ${r.files.join(", ")}\nyour checkout (${r.from}) is untouched; review the branch, then merge it: git merge ${r.branch}`);
+        log(`${r.written.length ? `wrote ${r.written.join(", ")}` : "nothing to write"} in ${r.dir}${r.kept.length ? `; kept your ${r.kept.length} file${r.kept.length === 1 ? "" : "s"} already there` : ""}`);
+        log(r.tracked.length ? trackedWarning(lead.slug, r.tracked.length) : ".factory/ stays on this machine: it's in .git/info/exclude, never committed or pushed");
         return;
       } else if (sub === "migrate") {
         // You accepted the offer: the maintainer migrates flow-stack, and it comes back as a PR.
@@ -365,6 +373,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (!existsSync(join(resolve(repoPath), ".git"))) throw new Error(`${resolve(repoPath)} isn't a git checkout`);
         if (leadRepo(db)?.slug === slug) throw new Error(`${slug} is the lead repo; factory init --path moves its checkout`);
         change(db, () => setRepo(db, { slug, path: resolve(repoPath), lead: false }));
+        adopt(resolve(repoPath), slug, log);
       } else if (sub) throw new Error("usage: factory repo [add owner/name --path <dir>]");
       for (const r of listRepos(db)) log(`${r.lead ? "*" : " "} ${r.slug}  ${r.path}`);
       return;
@@ -852,6 +861,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       log(`${s.factory.name}: ${s.tickets.length} tickets, daemon ${s.factory.daemon ? "on" : "off"} → ${p.status}`);
       return;
     } else if (cmd === "run") {
+      for (const r of listRepos(db)) adopt(r.path, r.slug, log, true);
       // A tick that fails (a locked database, a gh hiccup) is logged; the next one tries again.
       const tick = () => {
         try { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); writeLive(liveRoster({ run: sh, now: now(), db: (n) => (n === name ? db : undefined) })); }
@@ -1186,8 +1196,27 @@ function sleepWake(open_: Record<string, Database>, factoryHome_: string, interv
   };
 }
 
+// `factory validate` with no folder: ./.factory, else the lead repo's checkout's. A ticket's
+// worktree has no .factory/ of its own: it stays local, in the checkout (local.ts).
+function ownFactory(db: string) {
+  if (existsSync(".factory") || !existsSync(db)) return ".factory";
+  const d = open(db);
+  try { const lead = leadRepo(d); return lead && existsSync(join(lead.path, ".factory")) ? join(lead.path, ".factory") : ".factory"; } finally { d.close(); }
+}
+
+// Adopting a repo: /.factory/ in its .git/info/exclude, its tracked .factory/ files skip-worktree
+// (local.ts). `quiet`: the daemon's start, which says only what it changed or warns about.
+function adopt(path: string, slug: string, log: (s: string) => void, quiet = false) {
+  try {
+    const r = keepLocal(path);
+    if (r.excluded) log(`${slug}: .factory/ stays on this machine (added ${EXCLUDE_LINE} to its .git/info/exclude)`);
+    if (r.tracked.length) log(trackedWarning(slug, r.tracked.length));
+  } catch (e) { if (!quiet) throw e; log(`${slug}: couldn't keep .factory/ local: ${(e as Error).message}`); }
+}
+
 function runAll(interval: number, log: (s: string) => void) {
   const open_: Record<string, Database> = {};
+  const adopted = new Set<string>();
   const power = sleepWake(open_, factoryHome(), interval, log);
   const tick = () => {
     for (const name of factories()) {
@@ -1195,6 +1224,8 @@ function runAll(interval: number, log: (s: string) => void) {
       const db = (open_[name] ??= open(p.db));
       try {
         setMeta(db, "heartbeat", new Date().toISOString());
+        // Once per start, for repos adopted before .factory/ stayed local (local.ts).
+        if (!adopted.has(name)) { adopted.add(name); for (const r of listRepos(db)) adopt(r.path, r.slug, log, true); }
         const lead0 = leadRepo(db);
         if (lead0) power(db, p, lead0.path);
         recordUsage(db, log);

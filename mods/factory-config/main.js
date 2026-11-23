@@ -94,7 +94,7 @@ export default class FactoryConfig extends View {
     return h_flex().id("daemon").h(40).flex_none().px(14).gap(10).items_center().rounded(10).bg(t.surface).border(1).border_color(t.border)
       .child(div().size(8).rounded_full().bg(t[v.tone]))
       .child(div().font_semibold().text_color(t.foreground).child("Daemon"))
-      .child(div().flex_1().truncate().text_color(t.muted).child(this.busy ? `${LABEL[this.busy]}…` : v.text))
+      .child(div().flex_1().min_w_0().truncate().text_color(t.muted).child(this.busy ? `${LABEL[this.busy]}…` : v.text))
       .when(v.atLogin != null || v.actions.includes("install"), (el) => {
         // Installed: the box is the service's setting, and a click changes it. Not yet: it's
         // what Install will do.
@@ -228,7 +228,7 @@ export default class FactoryConfig extends View {
         // select awaits the file; this click's cx is gone by then, so a spawned task repaints.
         .on_click((_e, cx) => cx.spawn(async (cx) => { await this.select(f); cx.notify(); }))
         .child(svg(`mods/workspace-chrome/${f.language === "markdown" ? "file-text" : "settings"}.svg`).size(13))
-        .child(div().flex_1().truncate().child(f.path))
+        .child(div().flex_1().min_w_0().truncate().child(f.path))
         .when(Boolean(this.checks[f.path]), (el) => el.child(div().text_size(11)
           .text_color(this.checks[f.path].length ? t.blocked : t.done).child(this.checks[f.path].length ? `✗ ${this.checks[f.path].length}` : "✓")));
     };
@@ -246,7 +246,7 @@ export default class FactoryConfig extends View {
         .when(Boolean(this.error), (el) => el.child(div().px(8).text_color(t.blocked).child(this.error))))
       .child(v_flex().flex_1().min_w(0).h_full().rounded(10).bg(t.background).border(1).border_color(t.border)
         .child(h_flex().h(36).px(14).gap(10).items_center().border_b(1).border_color(t.border)
-          .child(div().flex_1().font_semibold().text_color(t.foreground).truncate().child(this.selected?.path ?? "No file"))
+          .child(div().flex_1().min_w_0().font_semibold().text_color(t.foreground).truncate().child(this.selected?.path ?? "No file"))
           .child(this.schemaLabel(t))
           .child(div().id("open").px(8).py(2).rounded(6).border(1).border_color(t.border).text_size(12).text_color(t.muted).cursor_pointer()
             .hover((s) => s.bg(t.hover)).on_click(() => this.selected && exec("open", [`${this.dir}/${this.selected.path}`]))

@@ -517,7 +517,7 @@ The first time factory mode opens in a space with no `.factory/` folder, it runs
 2. **Start the daemon** as a login item (`factory service install`: a per-user launchd LaunchAgent with KeepAlive), so the babysitter and triggers keep running with the window closed.
 3. **Connect the queue:** pick the GitHub Project, its Ready column and the assignee.
 4. **Choose the basics:** budget per ticket and per day, the merge gate, `max_running`, the learning target and tunables.
-5. **Write `.factory/`** with the default blueprints and agents, show the files, and commit them to a branch when you agree.
+5. **Write `.factory/`** with the default blueprints and agents into the repo's checkout. It is never committed (below).
 6. **Migrate flow-stack**, when setup finds it (below).
 
 Each step that changes configuration is a maintainer request, not setup code: setup lists what's missing, Overwatch offers each fix, and when you agree it files the request (see Changing the factory).
@@ -609,7 +609,14 @@ The risk is a pack that sounds like you without deciding like you. The agreement
 
 ## Factory as code: .factory/
 
-The factory is defined by files in the repo it works on, so it can be branched, reviewed, rolled back and changed by a PR like any other code. The daemon reads them and hard-codes nothing. The idea comes from Warp Factories; here everything stays local.
+The factory is defined by files in the checkout of the repo it works on. The daemon reads them and hard-codes nothing. The idea comes from Warp Factories; here everything stays local.
+
+**`.factory/` stays local.** The repo is often a team's, and the factory is yours. `.factory/` lives in your checkout and is never committed, pushed or put in a PR:
+
+- Adopting a repo (`factory init`, `factory repo add`, `factory setup write`) adds `/.factory/` to its `.git/info/exclude`, once. That is the common git dir, so every worktree shares it. The factory never writes a `.gitignore` into the repo. The daemon does the same for every registered repo when it starts.
+- Ticket worktrees have no `.factory/`. Every read (blueprints, agents, prompts, skills, triggers, a feature map under `.factory/`) comes from the registered checkout. `factory validate` in a worktree checks the checkout's.
+- A repo that already tracks `.factory/` is left alone in git. `factory validate`, `factory init` and Home say so, with the command to run yourself: `git rm -r --cached .factory && git commit`. Until then its tracked files are marked skip-worktree in the checkout, so a local edit is never staged (`git update-index --no-skip-worktree <file>` undoes it).
+- A ticket branch that commits anything under `.factory/` never reaches a PR. The pr stage waits with "this ticket changed .factory/, which stays local" until those commits come off the branch. The maintainer's requests are not guarded yet: they still edit `.factory/` in a worktree (see Changing the factory).
 
 Rules for every file:
 

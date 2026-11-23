@@ -51,12 +51,13 @@ factory init            # the factory is named after this folder; the repo slug 
 factory setup           # the checklist: what is missing, and the fix for each
 factory setup trust     # Claude Code trusts the factory's folders, so agents don't stop to ask
 factory setup write --budget 2M/100k --budget-day 10M/1M --merge human --max-running 1
-git merge factory/setup # setup write commits .factory/ to this branch and leaves your checkout alone
 factory validate
 factory service install # if launchctl fails with error 5, run it again
 factory setup           # run it until every line shows ✓
 ```
 
+- `setup write` writes `.factory/` into this checkout and never commits it. `.factory/` stays on your machine: `factory init` adds `/.factory/` to the repo's `.git/info/exclude` (shared by every worktree), and the factory never writes a `.gitignore` or opens a PR that touches `.factory/`. Running `setup write` again adds only files that are missing; it keeps yours.
+- If the repo already tracks `.factory/` in git, `factory validate` and Home say so. The factory doesn't commit the removal for you. Run `git rm -r --cached .factory && git commit` yourself when you are ready. Until then the factory marks those files skip-worktree in your checkout, so your local edits never get staged.
 - `--budget` is per ticket and `--budget-day` is for the whole day, as input/output tokens. Start low until you know what a ticket costs.
 - `--queue <owner>/<project number>` connects a GitHub Project's Ready column. Leave it out to make tickets by hand with `n`.
 - If `setup write` finds no test command, add one to `.factory/factory.yaml`, for example `quality_floor: [bun test]`. The tests check and its ready rule need it.
