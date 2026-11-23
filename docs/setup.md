@@ -60,7 +60,7 @@ factory setup           # run it until every line shows ✓
 - `--budget` is per ticket and `--budget-day` is for the whole day, as input/output tokens. Start low until you know what a ticket costs.
 - `--queue <owner>/<project number>` connects a GitHub Project's Ready column. Leave it out to make tickets by hand with `n`.
 - If `setup write` finds no test command, add one to `.factory/factory.yaml`, for example `quality_floor: [bun test]`. The tests check and its ready rule need it.
-- The first `factory init` or `factory setup` writes the factory agents to `~/.factory/agents/` and the example agents to `~/.factory/examples/agents/`. It never overwrites a file that is already there, and adds examples a newer factory ships.
+- The first `factory init` or `factory setup` writes the factory agents to `~/.factory/agents/`, the example agents to `~/.factory/examples/agents/` and the factory skills to `~/.factory/skills/`. It never overwrites a file (or a skill folder) that is already there, and adds examples and skills a newer factory ships. Put your own skills in `~/.factory/skills/<name>/SKILL.md`; an agent gets one only when its `skills:` lists it (see `examples/skills/README.md`).
 - `setup write` copies into the repo's `.factory/agents/` only the agents its blueprints and grooming name, each from your own example in `~/.factory/examples/agents/` if you wrote one, else the shipped one. The examples themselves never run.
 
 ## 4. Open it
@@ -96,5 +96,5 @@ scripts/check.sh && scripts/sync.sh   # sync.sh restarts the service
 
 - `factory setup` lists every missing step with its fix.
 - `factory service status` shows whether the daemon runs. Its logs are in `~/.factory/logs/`, and `daemon.err.log` should be quiet.
-- `factory validate` checks `.factory/`, `~/.factory/config.yaml` and the factory agents.
+- `factory validate` checks `.factory/`, `~/.factory/config.yaml`, the factory agents, the example agents and the factory skills.
 - `factory claude` shows which `claude` the agents run.

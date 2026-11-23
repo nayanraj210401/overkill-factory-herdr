@@ -2,6 +2,7 @@
 // space when the app runs), enters its blueprint's first stage, and that stage's
 // agent starts in a tab there, or in a free-floating herdr-core terminal.
 import type { Database } from "bun:sqlite";
+import { giveAccess, withSkillsLine } from "./skills.ts";
 import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { validateDir, validateFile } from "./validate.ts";
@@ -198,7 +199,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const of = slice ? ` · slice ${all.findIndex((x) => x.key === slice.key) + 1} of ${all.length}` : "";
   enterStage(db, o.id, title(o.stage), s.agent ? `${s.agent} agent${of}` : s.check ? `check: ${s.check}` : null, plannedPath(o.blueprint, o.stage).map(title), o.now);
   if (!s.agent) return null; // check and gate stages are the daemon's own (D4b)
-  const agent = loadAgent(agentRepos(db, o.id, o.repo), s.agent);
+  const from = agentRepos(db, o.id, o.repo);
+  const agent = loadAgent(from, s.agent);
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
   const repos = ticketRepos(db, o.id);
   // Hard stops factory.yaml lists (all four when it lists none) are enforced by a hook on the worker's tool calls;
@@ -209,7 +211,8 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run }), o.now).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
   const share = shareFor(db, { repo: o.repo, id: o.id, folder, output: s.output });
-  const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db))), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
+  // Only the skills and tools its frontmatter lists (skills.ts); the plugin sits in the ticket folder, never the repo.
+  const argv = withHandoffHook(giveAccess(argvFor(use, defaults, brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db))), agent, join(folder, ".skills", s.agent), from), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
   const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id }); // sessions keep the agent's own argv
   const name = `f${o.id}-${o.stage}`.slice(0, 32);
   const labels = [`factory.ticket=${o.id}`, `factory.stage=${o.stage}`];

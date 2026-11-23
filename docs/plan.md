@@ -712,7 +712,9 @@ A stage's agent loads from the repo the stage works in. Each stage of a ticket r
 | `role` | `orchestrator`, `triage`, `spec`, `plan`, `build`, `review`, `verify`, `scorer` or `maintain` |
 | `harness`, `model`, `effort` | Overrides `factory.yaml`'s defaults, so each role can use a different tool or model |
 | `from` | Starts from another agent in this factory and changes only what's listed |
-| `tools`, `mcp`, `skills` | What the agent may use, on top of the defaults |
+| `skills` | The factory skills the session gets, by name: the repo's `.factory/skills/<name>/`, else `~/.factory/skills/<name>/` (a factory agent reads only the latter). None listed: none of the factory skills |
+| `tools` | The only built-in tools the session has (`claude --tools`); `Skill` is added when it lists skills. None listed: every tool, as before |
+| `mcp` | MCP servers the agent may use |
 | `context` | Files and lessons loaded on demand, never the whole history (PRD 6.4, 7.4) |
 
 ```markdown
@@ -724,6 +726,8 @@ context: [INTENT.md, EVIDENCE.md, lessons/auth.md]
 Grade the diff against INTENT.md. Block on any acceptance check
 without a PASS in EVIDENCE.md. Flag code that could be smaller.
 ```
+
+A session gets its skills through a plugin folder of its own: the factory copies exactly the listed skills into `<ticket folder>/.skills/<agent>/` (Overwatch's into `~/.factory/.skills/overwatch/`) and starts `claude --plugin-dir=<that folder>`, so they show as `factory:<name>`. The brief names them in one line. Nothing is written into the repo checkout or `~/.claude/skills/`. `factory validate` errors on a listed skill that isn't in either place, and checks each `SKILL.md` in `~/.factory/skills/`. Stage, handoff, triage and Overwatch sessions get them; the one-shot `claude -p` calls (the learner, the babysitter's judge, the orchestrator) don't. `examples/skills/README.md` has the skill format.
 
 ### triggers/\<name>.yaml: when work starts
 

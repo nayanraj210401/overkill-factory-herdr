@@ -3,6 +3,7 @@
 // owner on the issue; engineering ones come to you. An answer in Herdr (`u`) or as an
 // `A1:` comment on the issue counts. With every question answered the ticket is
 // groomed, and groomed tickets start on their own, up to max_running at once.
+import { giveAccess, withSkillsLine } from "./skills.ts";
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
@@ -81,9 +82,10 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   db.query("DELETE FROM questions WHERE ticket = ? AND answer IS NULL").run(o.id);
   const before = join(folder, "GROOMING.md");
   if (existsSync(before)) renameSync(before, join(folder, "GROOMING.before.md"));
-  const agent = loadAgent(agentRepos(db, o.id, o.repo), g.agent);
-  const argv = argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
-    triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: agent?.prompt ?? null, others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db) }));
+  const from = agentRepos(db, o.id, o.repo);
+  const agent = loadAgent(from, g.agent);
+  const argv = giveAccess(argvFor(agent, { harness: "claude", model: DEFAULT_MODEL },
+    triageBrief(t as any, { slug: needLead(db).slug, repo: o.repo, folder, blueprints: g.blueprints, prompt: withSkillsLine(agent?.prompt, agent), others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db) })), agent, join(folder, ".skills", g.agent), from);
   // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
   const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir, { agent: g.agent, ticket: o.id });
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
