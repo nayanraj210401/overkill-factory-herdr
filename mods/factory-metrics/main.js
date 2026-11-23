@@ -3,9 +3,11 @@ import { h_flex, v_flex } from "gpui-base";
 import { theme, settings, appHome, readTextFile, watchFolder, checking, props } from "herdr";
 import { validateMetrics, headlineTiles, minutes, agreementCard, chartCards, chartAsset, CHART } from "./lib/metrics.js";
 import { validateBenchmarks, variantRows, suiteNote, COLUMNS } from "./lib/benchmarks.js";
-import { root } from "./lib/store.js";
+import { learningView } from "./lib/learning.js";
+import { root, ask } from "./lib/store.js";
+import { keyAction, clamp } from "./lib/keys.js";
 
-const TABS = ["Throughput", "Cost", "Quality", "Benchmarks"];
+const TABS = ["Throughput", "Cost", "Quality", "Learning", "Benchmarks"];
 
 // Metrics: the four numbers the factory is judged by, then one tab at a time, from
 // the daemon's metrics.json (docs/layouts/06-metrics.png).
@@ -18,6 +20,8 @@ export default class FactoryMetrics extends View {
     this.tab = TABS.includes(props()?.tab) ? props().tab : "Throughput"; // a prop only smoke.sh passes
     this.days = "7";
     this.width = 0; // the page's, for the charts' height
+    this.at = 0; // the selected shift on the Learning tab
+    this.handle = cx.focus_handle();
     cx.spawn(async (cx) => {
       for (;;) {
         const dir = root();
@@ -117,7 +121,87 @@ export default class FactoryMetrics extends View {
         .child(div().w(110).text_color(q.reverted ? t.blocked : t.muted).child(`${q.reverted} reverted`))
         .child(div().w(140).text_color(t.muted).child(`${q.retries_per_ticket} retries / ticket`))))
       : div().text_color(t.muted).child("No merged PRs in range.")));
+    if (this.tab === "Learning") return this.learning(t, page);
     return page.child(this.agreement(t)).children(this.benchmarks(t));
+  }
+
+  // Learning: the target and why experiments are held, the target over time with its shifts,
+  // each experiment's values, the shifts with z to undo one, and the lesson store.
+  learning(t, page) {
+    const v = learningView(this.doc, this.days);
+    if (v.state === "none") return page.child(this.card(t, "Learning", null, div().text_color(t.muted).child(v.message)));
+    const h = v.header;
+    page.child(h_flex().gap(10)
+      .child(v_flex().flex_1().min_w(0).p(14).gap(4).rounded(10).bg(t.surface).border(1).border_color(t.border)
+        .child(div().text_color(t.muted).child(`Target: ${h.target}`))
+        .child(div().text_size(24).font_semibold().text_color(t.foreground).child(h.value))
+        .child(div().text_size(12).text_color(t.dim).child(h.trend)))
+      .child(v_flex().flex_1().min_w(0).p(14).gap(4).rounded(10).bg(t.surface).border(1).border_color(t.border)
+        .child(div().text_color(t.muted).child("Experiments"))
+        .child(div().text_size(16).font_semibold().text_color(h.held ? t.blocked : t.done).child(h.status))
+        .child(div().text_size(12).text_color(t.dim).child(h.summary)))
+      .child(v_flex().flex_1().min_w(0).p(14).gap(4).rounded(10).bg(t.surface).border(1).border_color(t.border)
+        .child(div().text_color(t.muted).child("Learning budget today"))
+        .child(div().text_size(24).font_semibold().text_color(h.budgetSpent ? t.blocked : t.foreground).child(h.budgetShare == null ? "–" : `${Math.round(h.budgetShare * 100)}%`))
+        .child(div().text_size(12).text_color(t.dim).child(h.budget))));
+    // The target chart beside the shifts it marks (or, while warming up, why there are none).
+    page.children(this.charts(t, "Learning", [v.state === "warmup"
+      ? this.card(t, "Nothing learned yet", null, div().text_color(t.muted).child(v.message)).flex_1()
+      : this.shifts(t, v.shifts).flex_1()]));
+    return page.children(this.experiments(t, v.experiments)).child(this.lessons(t, v.lessons));
+  }
+
+  experiments(t, cards) {
+    const widths = [0, 110, 90, 80, 80, 80];
+    const cell = (i, text, color) => (i === 0 ? div().flex_1().min_w(0).truncate() : div().w(widths[i]).flex_none()).text_color(color).child(text);
+    const floor = (f) => div().w(80).flex_none().text_size(12).text_color(f === "below" ? t.blocked : f === "ok" ? t.done : t.dim).child(f === "below" ? "below floor" : f === "ok" ? "floor ok" : "floor ?");
+    return cards.map((c) => this.card(t, `${c.title} · ${c.context}`, `${c.status} · ${c.epsilon} · ${c.outcomes}`, v_flex().gap(8)
+      .child(h_flex().gap(8).pb(4).border_b(1).border_color(t.border).text_size(12).text_color(t.dim)
+        .children(["Value", "Results", "Mean", "First try", "Reverts"].map((x, i) => cell(i, x, t.dim))).child(div().w(80).flex_none().child("Floor")))
+      .children(c.rows.map((r) => h_flex().gap(8).items_center()
+        .child(cell(0, `${r.value}${r.in_force ? "  · in force" : ""}${r.winner ? "  ✓ winner" : ""}`, r.winner ? t.accent : r.in_force ? t.foreground : t.muted))
+        .child(cell(1, r.n, t.muted)).child(cell(2, r.mean, t.foreground)).child(cell(3, r.first_try, t.muted)).child(cell(4, r.revert_rate, t.muted))
+        .child(floor(r.floor))))));
+  }
+
+  // Newest first; z (or a click on undo) asks before it drops the shift's override.
+  shifts(t, rows) {
+    this.at = clamp(this.at, rows.length);
+    const focused = this.handle.is_focused();
+    return v_flex().id("shifts").min_w(0).p(16).gap(6).rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus())
+      .on_key_down((e, cx) => {
+        const a = keyAction(e);
+        if (a?.kind === "move") this.at = clamp(this.at + a.delta, rows.length);
+        else if (a?.kind === "undo-override" && rows[this.at]) ask(rows[this.at].undo);
+        else return;
+        cx.stop_propagation();
+        cx.notify();
+      })
+      .child(h_flex().child(div().flex_1().font_semibold().text_color(t.foreground).child("Shifts"))
+        .child(div().text_size(12).text_color(t.dim).child(rows.length ? (focused ? "j/k select · z undo" : "click, then z to undo") : "")))
+      .child(rows.length ? v_flex().gap(2).children(rows.map((r, i) => h_flex().id(`shift-${i}`).px(8).py(4).gap(12).items_center().rounded(6).cursor_pointer()
+        .bg(focused && i === this.at ? t.selected : t.surface).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => { this.at = i; this.handle.focus(); cx.notify(); })
+        .child(div().w(120).flex_none().text_size(12).text_color(t.dim).child(r.at))
+        .child(v_flex().flex_1().min_w(0)
+          .child(div().truncate().text_color(t.foreground).child(`${r.line} · ${r.context}`))
+          .child(div().text_size(12).text_color(t.dim).child(r.why)))
+        .child(div().w(110).flex_none().text_size(12).text_color(r.state === "in force" ? t.done : t.dim).child(r.state))
+        .when(!r.undo.error, (el) => el.child(div().id(`undo-${i}`).px(10).py(2).rounded(6).border(1).border_color(t.border).text_size(12).text_color(t.muted)
+          .hover((s) => s.bg(t.hover)).on_click((_e, cx) => { this.at = i; ask(r.undo); cx.stop_propagation(); cx.notify(); }).child("Undo")))))
+        : div().text_color(t.muted).child("No shift yet: a setting moves once an experiment is decided."));
+  }
+
+  lessons(t, areas) {
+    const n = areas.reduce((a, x) => a + x.lessons.length, 0);
+    return this.card(t, "Lessons", n ? `${n} active · used in briefs by area` : null, areas.length
+      ? v_flex().gap(10).children(areas.map((a) => v_flex().gap(4)
+        .child(div().text_size(12).font_semibold().text_color(t.muted).child(a.area))
+        .children(a.lessons.map((x) => h_flex().gap(12).items_start()
+          .child(div().flex_1().min_w(0).text_color(t.foreground).child(x.text))
+          .child(div().w(70).flex_none().text_size(12).text_color(t.dim).child(x.hits))))))
+      : div().text_color(t.muted).child("No lessons yet. `factory lesson add <area> \"<text>\"` adds one; a ticket brief carries the ones whose area its files match."));
   }
 
   // The babysitter's agreement with your past review verdicts, which gates pushbacks while you're away.

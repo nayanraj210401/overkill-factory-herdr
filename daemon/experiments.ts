@@ -24,7 +24,7 @@
 // from budget.learning: its tokens count there (budget.ts learningUsage), beside the learner's and
 // the benchmarks' runs.
 import type { Database } from "bun:sqlite";
-import { activeOverrides, fileValue, setOverride, undoOverride } from "./learn.ts";
+import { activeOverrides, fileValue, setOverride, undoOverride, type Lesson } from "./learn.ts";
 import { learnerHold, learningCap, learningSpent, ticketMetric, WARMUP_TICKETS } from "./learner.ts";
 import { loadAgent } from "./agents.ts";
 import { readFactory } from "./runner.ts";
@@ -261,12 +261,14 @@ export type LearningMetrics = {
     arms: (ArmStats & { floor: Floor; in_force: boolean })[] }[];
   overrides: { id: number; key: string; value: Value; since: string; reason: string | null; from_experiment: boolean }[];
   shifts: { at: string; key: string; context: string; from: Value; to: Value; override: number | null; why: string }[];
+  lessons: { id: number; area: string; text: string; source: string; hits: number; since: string }[];
 };
 
 const tokens = (t: Tokens | null) => (t ? { input: Number.isFinite(t.input) ? Math.round(t.input) : 0, output: Number.isFinite(t.output) ? Math.round(t.output) : 0 } : null);
 
 // What the Metrics page's Learning tab reads: each experiment with its arms, counts, means and the
-// floor; the value in force; the overrides; and every shift with its time.
+// floor; the value in force; the overrides; every shift with its time; and the lesson store (the
+// active lessons, repeats left out, by area and then the most used).
 export function learningMetrics(db: Database, repo: string, now = new Date()): LearningMetrics {
   const learn = learnOf(repo);
   const target = learn.target ?? TARGET;
@@ -288,10 +290,12 @@ export function learningMetrics(db: Database, repo: string, now = new Date()): L
     .map((r) => ({ id: r.id, key: r.key, value: JSON.parse(r.value), since: r.created_at, reason: r.reason, from_experiment: String(r.reason ?? "").startsWith("experiment:") }));
   const shifts = (db.query("SELECT * FROM experiment_shifts ORDER BY id").all() as any[])
     .map((r) => ({ at: r.at, key: r.key, context: r.context, from: JSON.parse(r.from_value ?? "null"), to: JSON.parse(r.to_value), override: r.override, why: r.why }));
+  const lessons = (db.query("SELECT * FROM lessons WHERE retired_at IS NULL AND dup_of IS NULL ORDER BY area, hits DESC, id").all() as Lesson[])
+    .map((l) => ({ id: l.id, area: l.area, text: l.text, source: l.source, hits: l.hits, since: l.created_at }));
   return {
     target, hold: experimentHold(db, repo, now),
     warmup: { merged, needed: learn.warmup_tickets ?? WARMUP_TICKETS },
     budget: { spent: tokens(spent)!, cap: tokens(learningCap(repo)) },
-    experiments, overrides, shifts,
+    experiments, overrides, shifts, lessons,
   };
 }

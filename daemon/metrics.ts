@@ -7,6 +7,7 @@ import type { Run } from "./runner.ts";
 import { planFile, readPlan, usedNow } from "./planline.ts";
 import { readAccount } from "./account.ts";
 import { parseTokens } from "../lib/model.js";
+import { ticketMetric } from "./learner.ts";
 
 const HOUR = 3_600_000;
 
@@ -126,8 +127,16 @@ function spendSeries(db: Database, keyExpr: string, from: Date, dates: string[])
   return [...new Set(rows.map((r) => r.k))].sort().map((k) => ({ name: k, values: dates.map((d) => round(rows.find((r) => r.k === k && r.day === d)?.usd ?? 0)) }));
 }
 
+// The learning target's mean over merged work tickets (the factory's own requests left out),
+// null with none to measure.
+function targetMean(db: Database, target: string, merged: { ticket: number; blueprint: string }[]) {
+  const xs = merged.filter((m) => m.blueprint !== "factory").map((m) => ticketMetric(db, m.ticket, target)).filter((x): x is number => x != null);
+  return xs.length ? round(mean(xs)) : null;
+}
+
 // tokenCap: the day's input-token cap (budget.per_day), drawn as a level on the tokens chart.
-export function buildMetrics(db: Database, now = new Date(), tokenCap: number | null = null) {
+// target: learn.target, whose daily mean the Learning tab draws.
+export function buildMetrics(db: Database, now = new Date(), tokenCap: number | null = null, target = "cost_per_pr") {
   const day = 86_400_000;
   const ranges: Record<string, unknown> = {};
   for (const days of [7, 30]) {
@@ -149,6 +158,8 @@ export function buildMetrics(db: Database, now = new Date(), tokenCap: number | 
       return dates.map((d) => out.get(d) ?? 0);
     };
     const blueprints = [...new Set(cur.merged.map((m) => m.blueprint))].sort();
+    let shifts: { day: string }[] = [];
+    try { shifts = db.query("SELECT substr(at, 1, 10) AS day FROM experiment_shifts WHERE at >= ?").all(from.toISOString()) as { day: string }[]; } catch { /* an older database */ }
     ranges[String(days)] = {
       headline: {
         time_to_pr_min: [cur.time_to_pr_min, prev.time_to_pr_min], cost_per_pr_usd: [cur.cost_per_pr_usd, prev.cost_per_pr_usd],
@@ -172,6 +183,11 @@ export function buildMetrics(db: Database, now = new Date(), tokenCap: number | 
         return ms.length ? round(ms.filter((m) => !m.retries).length / ms.length, 3) : null;
       }),
       tokens_in_per_day: dates.map((d) => tokens.find((t) => t.day === d)?.n ?? 0),
+      // The Learning tab: learn.target over merged work tickets, now and the period before, per
+      // day (null with nothing merged), and the days a tuning shift happened.
+      target: { name: target, value: [targetMean(db, target, cur.merged), targetMean(db, target, prev.merged)] },
+      target_per_day: dates.map((d) => targetMean(db, target, cur.merged.filter((m) => onDay(m.at) === d))),
+      shifts_per_day: dates.map((d) => shifts.filter((x) => x.day === d).length),
       learning_tokens_in_per_day: learn("tokens_in"),
       learning_usd_per_day: learn("usd").map((n) => round(n)),
       tokens_in_cap: tokenCap && Number.isFinite(tokenCap) ? tokenCap : null,

@@ -29,11 +29,12 @@ test("charts per tab: every time series the sample has, opened vs merged togethe
   assert.deepEqual(byTab("Throughput"), ["time-to-pr:line:1", "prs:line:2", "interactions:line:1"]);
   assert.deepEqual(byTab("Cost"), ["spend:line:1", "tokens:line:1", "by-agent:stacked:3", "by-model:stacked:2"]);
   assert.deepEqual(byTab("Quality"), ["reverts:line:1", "first-try:line:1"]);
+  assert.deepEqual(byTab("Learning"), ["target:line:1"]);
   assert.deepEqual(byTab("Benchmarks"), []);
 });
 
 test("a metrics.json from before the per-day series still gets the charts it has data for", () => {
-  const { opened_per_day, time_to_pr_per_day, usd_by_agent_per_day, usd_by_model_per_day, revert_rate_per_day, first_try_per_day, tokens_in_per_day, ...old } = doc.ranges["7"];
+  const { opened_per_day, time_to_pr_per_day, usd_by_agent_per_day, usd_by_model_per_day, revert_rate_per_day, first_try_per_day, tokens_in_per_day, target_per_day, ...old } = doc.ranges["7"];
   assert.deepEqual(chartsFor(old).map((c) => c.id), ["interactions", "spend"]);
 });
 

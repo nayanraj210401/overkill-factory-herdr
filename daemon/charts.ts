@@ -17,6 +17,7 @@ export type Chart = {
   id: string; kind: "line" | "stacked"; unit: Unit; days: string[];
   series: { name: string; values: (number | null)[] }[];
   ref?: { name: string; value: number };
+  marks?: number[]; // day indices drawn as a dotted vertical rule (a tuning shift)
 };
 
 // The size the page shows a chart at (lib/metrics.js CHART); viewBox lets it scale.
@@ -85,6 +86,8 @@ export function renderChart(c: Chart, mode: Mode) {
     out.push(text(PAD.left - 8, y(t) + 4, tickLabel(t, c.unit), "end"));
   }
   for (const i of xTickDays(n)) out.push(text(x(i), H - 6, dayLabel(c.days[i]), n === 1 ? "middle" : i === 0 ? "start" : i === n - 1 ? "end" : "middle"));
+  // Shift days under the lines, so a line crossing one stays whole.
+  for (const i of c.marks ?? []) out.push(`<line x1="${f(x(i))}" x2="${f(x(i))}" y1="${PAD.top}" y2="${f(y(0))}" stroke="${k.ref}" stroke-width="1.5" stroke-dasharray="2 3"/>`);
   const color = (j: number) => k.series[j % k.series.length];
   if (c.kind === "stacked") {
     // Top layer first so each lower one paints over the band below it.

@@ -6,6 +6,7 @@ import { open, setRepo, setWork } from "./db.ts";
 import { buildStatus } from "./status.ts";
 import { buildMetrics, findReverts, setPlan } from "./metrics.ts";
 import type { Run } from "./runner.ts";
+import { validateMetrics } from "../lib/metrics.js";
 
 const db0 = () => open(join(mkdtempSync(join(tmpdir(), "metrics-")), "factory.db"));
 const use = (db: ReturnType<typeof open>, id: string, at: string, input: number, output: number) =>
@@ -79,4 +80,32 @@ test("metrics.json: medians, merges per day, spend by stage and model, quality b
   expect(r.usd_by_model_per_day).toEqual([{ name: "claude-sonnet-5-5", values: [0, 0, 0, 0, 0, 0, 3] }]);
   expect(r.tokens_in_cap).toBeNull();
   expect((buildMetrics(db, now, 4e7).ranges as any)["7"].tokens_in_cap).toBe(4e7);
+});
+
+test("metrics.json: learn.target over merged work tickets per day, against the week before, and the days a shift happened", () => {
+  const db = db0();
+  const now = new Date("2026-11-21T12:00:00Z");
+  const at = (h: number) => new Date(now.getTime() - h * 3600e3).toISOString();
+  const merged = (id: number, bp: string, usd: number, h: number) => {
+    db.query("INSERT INTO tickets (id, title, blueprint, state, updated_at) VALUES (?, 'x', ?, 'merged', ?)").run(id, bp, at(0));
+    db.query("INSERT INTO stages (ticket, name, started_at) VALUES (?, 'Spec', ?)").run(id, at(h + 2));
+    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(id, `opened PR #${id}`, at(h + 1));
+    db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, `merged PR #${id}`, at(h));
+    db.query("INSERT INTO usage (message_id, ticket, at, model, input, cache_write_5m, cache_write_1h, cache_read, output, usd) VALUES (?, ?, ?, 'm', 0, 0, 0, 0, 0, ?)").run(`u${id}`, id, at(h + 1), usd);
+  };
+  merged(1, "feature", 2, 1);     // today
+  merged(2, "feature", 4, 2);     // today: the mean is 3
+  merged(3, "factory", 50, 3);    // the factory's own request: left out
+  merged(4, "chore", 1, 30);      // yesterday
+  merged(5, "feature", 6, 200);   // the week before
+  db.query("INSERT INTO experiment_shifts (key, context, from_value, to_value, override, why, at) VALUES ('k', 'feature/m', '\"a\"', '\"b\"', 1, 'w', ?)").run(at(26));
+  db.query("INSERT INTO experiment_shifts (key, context, from_value, to_value, override, why, at) VALUES ('k', 'feature/m', '\"b\"', '\"a\"', 2, 'w', ?)").run(at(300)); // before the range
+  const r = (buildMetrics(db, now).ranges as any)["7"];
+  expect(r.target).toEqual({ name: "cost_per_pr", value: [2.33, 6] });
+  expect(r.target_per_day).toEqual([null, null, null, null, null, 1, 3]);
+  expect(r.shifts_per_day).toEqual([0, 0, 0, 0, 0, 1, 0]);
+  const t = (buildMetrics(db, now, null, "time_to_pr").ranges as any)["7"];
+  expect(t.target).toEqual({ name: "time_to_pr", value: [60, 60] });
+  expect(t.target_per_day.at(-1)).toBe(60);
+  expect(validateMetrics(buildMetrics(db, now))).toEqual([]);
 });

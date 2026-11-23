@@ -37,7 +37,7 @@ herdr-app do layout.switch '{"name":"factory-ask-test"}' >/dev/null; sleep 1.3
 herdr-app shot "$out/ask-input.png" >/dev/null
 errors
 # Metrics' other tabs, which check never reaches (it renders the first one).
-for tab in Cost Quality Benchmarks; do
+for tab in Cost Quality Learning Benchmarks; do
   echo "{\"id\":\"root\",\"type\":\"row\",\"children\":[{\"id\":\"m\",\"type\":\"block\",\"content\":{\"mod\":\"factory-metrics\",\"props\":{\"tab\":\"$tab\"}}}]}" > "$home/layouts/factory-metrics-test.json"
   herdr-app do layout.switch '{"name":"factory-metrics-test"}' >/dev/null; sleep 1.3
   herdr-app shot "$out/metrics-$tab.png" >/dev/null
