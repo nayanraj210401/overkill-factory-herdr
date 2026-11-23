@@ -10,6 +10,7 @@ Status: design. Nothing is built yet.
 
 | Doc | What it is |
 | --- | --- |
+| [docs/setup.md](docs/setup.md) | Setting up the factory on a new Mac: tools, install, pointing it at a repo, work-machine notes |
 | [docs/plan.md](docs/plan.md) | The plan: decisions, layout and pages, autonomy and ready rules, `.factory/` files, review loop, learning loop, budgets, away mode, setup and migration, technical design, milestones |
 | [docs/prd.md](docs/prd.md) | The product requirements this plan implements (written for a desktop app; the plan changes that to a Herdr mode) |
 | [docs/research-software-factories.md](docs/research-software-factories.md) | Background research on AI software factories: StrongDM, OpenAI, Uber, Warp, autonomy levels, verification, risks |
