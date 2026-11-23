@@ -12,6 +12,7 @@ import { service } from "./service.ts";
 import { validateDir } from "./validate.ts";
 import { MAINTENANCE, NEVER_GROOMED } from "./groom.ts";
 import { exampleFile, neededAgents } from "./agents.ts";
+import { exampleStepFile, neededSteps, stepFile } from "./steps.ts";
 import { keepLocal } from "./local.ts";
 
 export type Step = { id: string; label: string; status: "ok" | "missing" | "skipped"; fix: string | null; detail: string | null };
@@ -186,7 +187,7 @@ const triggered = (dir: string) => existsSync(join(dir, "triggers"))
   ? readdirSync(join(dir, "triggers")).flatMap((f) => [...readFileSync(join(dir, "triggers", f), "utf8").matchAll(/^blueprint:\s*(\S+)/gm)].map((m) => m[1]))
   : [];
 
-// factory.yaml plus the default blueprints, the agents they name and prompt templates, written
+// factory.yaml plus the default blueprints, the steps and agents they name and prompt templates, written
 // into the checkout's .factory/, which stays local (local.ts): never committed, and /.factory/
 // goes in the repo's .git/info/exclude. Built and checked in a temporary folder first; a file
 // already in .factory/ is yours and is never overwritten, so running it again adds only what's missing.
@@ -206,6 +207,15 @@ export function writeSetup(o: { repo: string; name: string; slug: string; basics
     const blueprints = readdirSync(join(dir, "blueprints")).filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""))
       .filter((b) => !triggered(DEFAULTS).includes(b) && !NEVER_GROOMED.includes(b));
     writeFileSync(join(dir, "factory.yaml"), factoryYaml({ name: o.name, slug: o.slug, blueprints, basics: o.basics, floor: detectFloor(o.repo) }));
+    // The shared steps the blueprints name, from the example library like the agents below
+    // (steps.ts). One the account's ~/.factory/steps/ already has stays shared: no repo copy.
+    for (const name of neededSteps(dir)) {
+      if (stepFile(null, name)) continue;
+      const from = exampleStepFile(name);
+      if (!from) throw new Error(`a blueprint names the step ${name}, and the example library has no ${name}.yaml`);
+      mkdirSync(join(dir, "steps"), { recursive: true });
+      cpSync(from.file, join(dir, "steps", `${name}.yaml`));
+    }
     // The repo gets only the agents its blueprints and grooming name, each from the example
     // library: yours in ~/.factory/examples/agents/ first, then the shipped one.
     mkdirSync(join(dir, "agents"), { recursive: true });

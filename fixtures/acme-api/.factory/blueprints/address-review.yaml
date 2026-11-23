@@ -3,5 +3,5 @@ name: address-review
 orchestrator: foreman
 start: fix
 stages:
-  fix:    { agent: builder, next: [verify] }
-  verify: { check: tests, next: [end], on_fail: fix, max_retries: 2 }
+  fix:    { step: build, next: [verify] }
+  verify: { step: run-tests, next: [end], on_fail: fix }

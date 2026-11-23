@@ -1,0 +1,5 @@
+description: Once the ready rules pass, the PR writer opens the PR from PR.md, in the pr-readable template.
+agent: pr-writer
+requires: ready
+output: PR.md
+template: pr-readable

@@ -1,0 +1,3 @@
+description: The daemon checks the evidence the builder left against the spec; a failure goes back along on_fail.
+check: evidence
+max_retries: 3

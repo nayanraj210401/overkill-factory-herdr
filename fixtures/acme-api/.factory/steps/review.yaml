@@ -1,0 +1,2 @@
+description: The reviewer reads the diff and records a verdict; only a blocker fails it.
+agent: reviewer

@@ -22,6 +22,7 @@ import { lessonsFor, settingOf, snapshotSettings, ticketPaths } from "./learn.ts
 import { recordOutcome, startExperiments } from "./experiments.ts";
 import { closeRound, latestBrief } from "./round.ts";
 import { loadPrompt, render } from "./prompts.ts";
+import { applySteps } from "./steps.ts";
 import { finishSlice, readSlices, sliceInHand } from "./slices.ts";
 import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
 import { chooseNext } from "./orchestrate.ts";
@@ -47,7 +48,7 @@ export const sh: Run = (argv, cwd) => {
   return { code: r.exitCode, out: (r.stdout.toString() + r.stderr.toString()).trim() };
 };
 
-type Stage = { agent?: string; check?: string; next?: string[]; output?: string; prompt?: string; per?: "ticket" | "slice" };
+type Stage = { step?: string; agent?: string; check?: string; next?: string[]; output?: string; prompt?: string; per?: "ticket" | "slice" };
 type Blueprint = { name: string; orchestrator?: string; start: string; stages: Record<string, Stage> };
 
 // The maintainer's blueprint ships with the factory (setup copies it too): a factory
@@ -70,6 +71,8 @@ export function loadBlueprint(repo: string, name: string): Blueprint {
   const text = readYaml(repo, `blueprints/${name}.yaml`) ?? (name === "default" ? readYaml(repo, "blueprint.yaml") : null);
   if (!text) throw new Error(`no blueprint "${name}" in ${repo}/.factory/blueprints/`);
   const b = Bun.YAML.parse(text) as Blueprint;
+  // A stage naming a shared step gets the step's fields under its own (steps.ts).
+  try { b.stages = applySteps(b.stages, repo); } catch (e) { throw new Error(`blueprint "${name}": ${(e as Error).message}`); }
   // A maintainer's PR merges as factory.yaml's maintainer.gate says: human unless you chose auto.
   const gate = name === "factory" ? readFactory(repo).maintainer?.gate : undefined;
   if (gate && b.stages.merge) (b.stages.merge as BlueprintStage).gate = gate;
@@ -392,7 +395,7 @@ function dryRunChanged(db: Database, o: { id: number; repo: string; worktree: st
   const drafts = files.filter((f) => existsSync(join(o.worktree, f)));
   if (!drafts.length) { if (existsSync(out)) unlinkSync(out); return true; }
   try {
-    const parts = drafts.map((f) => dryRunMarkdown(dryRun(db, loadDraft(readFileSync(join(o.worktree, f), "utf8"), f.slice(".factory/".length)), 5)));
+    const parts = drafts.map((f) => dryRunMarkdown(dryRun(db, loadDraft(readFileSync(join(o.worktree, f), "utf8"), f.slice(".factory/".length), o.worktree), 5)));
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, parts.join("\n"));
     o.record("blueprint dry run", true, `${drafts.length} blueprint${drafts.length === 1 ? "" : "s"} replayed; DRYRUN.md goes on the PR`);

@@ -1,0 +1,3 @@
+description: The checker writes hidden checks the builder never sees and runs them against the worktree.
+agent: checker
+max_retries: 3

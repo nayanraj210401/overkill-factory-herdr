@@ -18,6 +18,7 @@ import { parseTokens } from "../lib/model.js";
 import { service, servicePid } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { agentSkillErrors, validateAccount, validateDir, validateFile } from "./validate.ts";
+import { exampleStepFiles, exampleStepsDir, installExampleSteps, stepFiles } from "./steps.ts";
 import { exampleFiles, examplesDir, factoryAgentFiles, factoryAgentsDir, installExamples, installFactoryAgents } from "./agents.ts";
 import { installSkills, skillFiles, skillFileErrors, skillsDir } from "./skills.ts";
 import { accountFile } from "./account.ts";
@@ -261,6 +262,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     if (!sub) for (const f of factoryAgentFiles()) results.push({ path: f.replace(homedir(), "~"), errors: agentErrors(f) });
     // So is the example library (yours and the shipped ones): never run, but copied into repos.
     if (!sub) for (const f of exampleFiles()) results.push({ path: f.replace(homedir(), "~"), errors: agentErrors(f) });
+    // The shared steps every repo's blueprints may name, and the example steps (steps.ts).
+    if (!sub) for (const f of [...stepFiles(), ...exampleStepFiles()]) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`steps/${basename(f)}`, readFileSync(f, "utf8")) });
     // And the factory skills (yours and the shipped ones), which agents list by name (skills.ts).
     if (!sub) for (const f of skillFiles()) results.push({ path: f.replace(homedir(), "~"), errors: skillFileErrors(readFileSync(f, "utf8")) });
     // Every other repo of the factory: its own repo agents, which its tickets' stages run (agents.ts).
@@ -306,6 +309,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (agents.length) log(`the factory agents (${agents.join(", ")}) are in ${factoryAgentsDir().replace(homedir(), "~")}/, one set for every repo`);
       const examples = installExamples();
       if (examples.length) log(`the example agents (${examples.join(", ")}) are in ${examplesDir().replace(homedir(), "~")}/, for new repo agents to start from`);
+      const steps = installExampleSteps();
+      if (steps.length) log(`the example steps (${steps.join(", ")}) are in ${exampleStepsDir().replace(homedir(), "~")}/, for blueprints to share`);
       const skills = installSkills();
       if (skills.length) log(`the factory skills (${skills.join(", ")}) are in ${skillsDir().replace(homedir(), "~")}/, for an agent to list in skills:`);
     } else if (cmd === "setup") {
@@ -345,6 +350,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (agents.length && !json) log(`wrote the factory agents (${agents.join(", ")}) to ${factoryAgentsDir().replace(homedir(), "~")}/`);
         const examples = installExamples();
         if (examples.length && !json) log(`wrote the example agents (${examples.join(", ")}) to ${examplesDir().replace(homedir(), "~")}/`);
+        const exampleSteps = installExampleSteps();
+        if (exampleSteps.length && !json) log(`wrote the example steps (${exampleSteps.join(", ")}) to ${exampleStepsDir().replace(homedir(), "~")}/`);
         const skills = installSkills();
         if (skills.length && !json) log(`wrote the factory skills (${skills.join(", ")}) to ${skillsDir().replace(homedir(), "~")}/`);
         const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db), migration: migrationRequest(db) });
@@ -814,7 +821,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (!sub) throw new Error("usage: factory dry-run <blueprint file or name> [--tickets N] [--json]");
       const n = ticketsFlag === null ? 5 : Number(ticketsFlag);
       if (!Number.isInteger(n) || n < 1) throw new Error("--tickets takes a whole number of tickets, like --tickets 5");
-      const d = replayDraft(db, loadDraft(draftSource(needLead(db).path, sub)), n);
+      const d = replayDraft(db, loadDraft(draftSource(needLead(db).path, sub), undefined, needLead(db).path), n);
       writeFileSync("DRYRUN.md", dryRunMarkdown(d));
       log(json ? JSON.stringify(d) : `${dryRunMarkdown(d)}\n→ DRYRUN.md`);
       return;

@@ -1,10 +1,12 @@
 # .factory/blueprints/bugfix.yaml
+# Each stage names a shared step (.factory/steps/<name>.yaml, else ~/.factory/steps/):
+# the step says what runs, the blueprint says where it goes next.
 name: bugfix
 orchestrator: foreman
 start: implement
 stages:
-  implement: { agent: builder, next: [verify] }
-  verify:    { check: tests, next: [review], on_fail: implement, max_retries: 2 }
-  review:    { agent: reviewer, next: [pr], on_fail: implement }
-  pr:        { agent: pr-writer, requires: ready, output: PR.md, template: pr-readable, next: [merge] }
-  merge:     { gate: human, next: [end] }
+  implement: { step: build, next: [verify] }
+  verify:    { step: run-tests, next: [review], on_fail: implement }
+  review:    { step: review, next: [pr], on_fail: implement }
+  pr:        { step: write-pr, next: [merge] }
+  merge:     { step: merge, next: [end] }

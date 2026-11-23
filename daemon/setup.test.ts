@@ -10,6 +10,7 @@ import { migrateFlowStack, errRatio, parseProfile } from "./migrate.ts";
 import { validateStatus } from "../lib/status.js";
 import { validateDir } from "./validate.ts";
 import { neededAgents, SHIPPED_EXAMPLES } from "./agents.ts";
+import { neededSteps, SHIPPED_STEPS } from "./steps.ts";
 
 const git = (cwd: string, ...a: string[]) => {
   const r = Bun.spawnSync(["git", "-C", cwd, ...a]);
@@ -115,6 +116,23 @@ test("setup write copies only the agents the blueprints name, from your examples
     expect(agents).not.toContain("migrator");
     expect(readFileSync(join(repo, ".factory/agents/reviewer.md"), "utf8")).toContain("Review our way.");
     expect(readFileSync(join(repo, ".factory/agents/builder.md"), "utf8")).toBe(readFileSync(join(SHIPPED_EXAMPLES, "builder.md"), "utf8"));
+  } finally { process.env.FACTORY_HOME = before; }
+});
+
+test("setup write copies the steps the blueprints name from the example library; one in your account's steps/ stays shared", () => {
+  const repo = repoWithCommit();
+  const before = process.env.FACTORY_HOME;
+  const home = (process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "setup-home-")));
+  try {
+    mkdirSync(join(home, "examples", "steps"), { recursive: true });
+    writeFileSync(join(home, "examples", "steps", "review.yaml"), "description: Our review.\nagent: reviewer\n");
+    mkdirSync(join(home, "steps"), { recursive: true });
+    writeFileSync(join(home, "steps", "merge.yaml"), "description: Ours.\ngate: human\n");
+    writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: {} });
+    const steps = readdirSync(join(repo, ".factory/steps")).map((f) => f.slice(0, -5)).sort();
+    expect(steps).toEqual(neededSteps(join(import.meta.dir, "../fixtures/acme-api/.factory")).filter((n) => n !== "merge"));
+    expect(readFileSync(join(repo, ".factory/steps/review.yaml"), "utf8")).toContain("Our review.");
+    expect(readFileSync(join(repo, ".factory/steps/write-spec.yaml"), "utf8")).toBe(readFileSync(join(SHIPPED_STEPS, "write-spec.yaml"), "utf8"));
   } finally { process.env.FACTORY_HOME = before; }
 });
 

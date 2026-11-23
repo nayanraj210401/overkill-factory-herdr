@@ -1,0 +1,2 @@
+description: The builder makes the change in the worktree; a blueprint that plans slices sets per slice on its stage.
+agent: builder

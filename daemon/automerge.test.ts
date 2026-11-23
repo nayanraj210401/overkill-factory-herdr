@@ -22,7 +22,7 @@ function setup(gate = "auto", factoryYaml = 'name: t\nquality_floor: ["true"]\nr
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"], ["remote", "add", "origin", origin]]) sh(["git", "-C", repo, ...c]);
   cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true }); agentlessPr(join(repo, ".factory"));
   const bp = join(repo, ".factory/blueprints/chore.yaml");
-  writeFileSync(bp, readFileSync(bp, "utf8").replace("gate: human", `gate: ${gate}`));
+  writeFileSync(bp, readFileSync(bp, "utf8").replace("step: merge,", `step: merge, gate: ${gate},`));
   rmSync(join(repo, ".factory/blueprints/factory.yaml"));
   writeFileSync(join(repo, ".factory/factory.yaml"), factoryYaml);
   sh(["git", "-C", repo, "add", "."]);
