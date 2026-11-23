@@ -80,7 +80,7 @@ Each page is drawn below the table. All share one sidebar.
 | Config | The `.factory/` files: a list, a readable view of the one selected, its schema check, and `o` to open it in your editor |
 | Reviews | Teammates' PRs waiting on you, by risk, fast lane on top. Opening one shows what the factory found, the independent check results, and a link to your pending review on GitHub, where you finish and submit it |
 
-**Metrics.** Throughput: time to PR, human interactions per PR, PRs merged, and cycle time split into pickup to PR, PR to your first review, and review to merge. Cost: cost per PR, spend per day against budget, spend by agent and model. Quality: revert rate per blueprint, ready rules passing on the first try, retries per ticket. Learning: the target over time, each tuning shift with an undo, experiments, the lesson store. Benchmarks: the latest report per stage and per blueprint.
+**Metrics.** Throughput: time to PR, human interactions per PR, PRs merged, and cycle time split into pickup to PR, PR to your first review, and review to merge. Cost: cost per PR, spend per day against budget, spend by agent and model. Quality: revert rate per blueprint, ready rules passing on the first try, retries per ticket. Learning: the target over time, each tuning shift with an undo, experiments, the lesson store. Benchmarks: the latest report per stage and per blueprint. An All factories toggle (⇧A, or the chip in the tab row; remembered across reloads) combines every factory on the machine: counts, tokens and spend summed per day, rates recomputed from their counts, medians and the Learning and Benchmarks tabs shown per factory.
 
 #### Home
 

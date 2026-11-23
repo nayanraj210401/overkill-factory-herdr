@@ -1,13 +1,17 @@
 import { View, div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, settings, appHome, readTextFile, watchFolder, checking, props } from "herdr";
-import { validateMetrics, headlineTiles, minutes, agreementCard, chartCards, chartAsset, CHART } from "./lib/metrics.js";
+import { theme, settings, appHome, home, readTextFile, watchFolder, checking, props, shared, setShared } from "herdr";
+import { validateMetrics, headlineTiles, minutes, agreementCard, chartCards, chartAsset, CHART, PALETTE } from "./lib/metrics.js";
 import { validateBenchmarks, variantRows, suiteNote, COLUMNS } from "./lib/benchmarks.js";
 import { learningView } from "./lib/learning.js";
+import { liveFactories, parseDoc, combineMetrics, combinedTiles, columnRows, ALL_NOTE } from "./lib/combine.js";
 import { root, ask } from "./lib/store.js";
 import { keyAction, clamp } from "./lib/keys.js";
 
 const TABS = ["Throughput", "Cost", "Quality", "Learning", "Benchmarks"];
+// The "All factories" toggle (A): a preference that outlives a reload.
+const ALL_KEY = "factory.metrics.all";
+const allOn = () => !checking() && !!shared(ALL_KEY);
 
 // Metrics: the four numbers the factory is judged by, then one tab at a time, from
 // the daemon's metrics.json (docs/layouts/06-metrics.png).
@@ -22,36 +26,49 @@ export default class FactoryMetrics extends View {
     this.width = 0; // the page's, for the charts' height
     this.at = 0; // the selected shift on the Learning tab
     this.handle = cx.focus_handle();
+    this.pageHandle = cx.focus_handle(); // the page's own keys (A)
+    this.all = null; // with the toggle on: {factories: [{name, dir, doc, error, bench, benchError}], doc, error}
+    this.wake = () => {};
     cx.spawn(async (cx) => {
       for (;;) {
-        const dir = root();
-        const text = await readTextFile(`${dir}/metrics.json`);
-        if (text == null) [this.doc, this.error] = [null, "No metrics.json yet: the daemon writes it (factory run)."];
+        const dir = allOn() ? `${home()}/.factory` : root();
+        if (allOn()) this.all = await this.loadAll(dir);
         else {
-          try {
-            const doc = JSON.parse(text);
-            const errors = validateMetrics(doc);
-            [this.doc, this.error] = errors.length ? [null, `metrics.json: ${errors[0]}`] : [doc, null];
-          } catch (e) { [this.doc, this.error] = [null, `metrics.json: ${e.message}`]; }
-        }
-        // The Benchmarks tab's file: absent until a suite has run.
-        const btext = await readTextFile(`${dir}/benchmarks.json`);
-        [this.bench, this.benchError] = [null, null];
-        if (btext != null) {
-          try {
-            const b = JSON.parse(btext);
-            const errors = validateBenchmarks(b);
-            if (errors.length) this.benchError = `benchmarks.json: ${errors[0]}`;
-            else this.bench = b;
-          } catch (e) { this.benchError = `benchmarks.json: ${e.message}`; }
+          this.all = null;
+          ({ doc: this.doc, error: this.error } = parseDoc(await readTextFile(`${dir}/metrics.json`), validateMetrics, "metrics.json"));
+          if (!this.doc && !this.error) this.error = "No metrics.json yet: the daemon writes it (factory run).";
+          // The Benchmarks tab's file: absent until a suite has run.
+          ({ doc: this.bench, error: this.benchError } = parseDoc(await readTextFile(`${dir}/benchmarks.json`), validateBenchmarks, "benchmarks.json"));
         }
         cx.notify();
         if (checking()) return;
         const watch = watchFolder(dir);
-        await Promise.race([watch, new Promise((done) => cx.timer.after(5000, done))]);
+        await Promise.race([watch.catch(() => new Promise(() => {})), new Promise((done) => cx.timer.after(5000, done)), new Promise((done) => { this.wake = done; })]);
         watch.cancel();
       }
     });
+  }
+
+  // Every factory agents-live.json lists, each with its own metrics.json and benchmarks.json.
+  async loadAll(dir) {
+    const text = await readTextFile(`${dir}/agents-live.json`);
+    let list = [];
+    try { list = liveFactories(JSON.parse(text ?? "null")); } catch { /* read as none */ }
+    if (!list.length) return { factories: [], doc: null, error: "No factory listed in ~/.factory/agents-live.json: the daemon writes it." };
+    const factories = [];
+    for (const f of list) {
+      const m = parseDoc(await readTextFile(`${f.dir}/metrics.json`), validateMetrics, `${f.name}/metrics.json`);
+      const b = parseDoc(await readTextFile(`${f.dir}/benchmarks.json`), validateBenchmarks, `${f.name}/benchmarks.json`);
+      factories.push({ ...f, doc: m.doc, error: m.error ?? (m.doc ? null : "no metrics.json yet"), bench: b.doc, benchError: b.error });
+    }
+    const have = factories.filter((f) => f.doc);
+    return { factories, doc: have.length ? combineMetrics(have) : null, error: have.length ? null : "No factory has a metrics.json yet." };
+  }
+
+  toggleAll(cx) {
+    setShared(ALL_KEY, allOn() ? null : true);
+    this.wake();
+    cx.notify();
   }
 
   chip(t, id, label, on, click) {
@@ -80,13 +97,24 @@ export default class FactoryMetrics extends View {
       .when(c.legend.length > 0, (el) => el.child(legend))
       .child(c.image
         ? image(c.image).w_full().h(inner > 0 ? Math.round((inner * CHART.h) / CHART.w) : 150)
+        : this.all ? this.columns(t, c.series)
         : div().h(150).text_color(t.dim).child("The daemon draws this chart with the next metrics.json."));
   }
 
+  // A combined chart, which the daemon doesn't draw: a row of day columns per series.
+  columns(t, series) {
+    const palette = PALETTE[settings().dark ? "dark" : "light"];
+    const h = series.length > 1 ? 60 : 120;
+    return v_flex().gap(8).children(columnRows(series).map((s, i) => h_flex().h(h).gap(2).items_end()
+      .children(s.cols.map((c) => (c == null ? div().flex_1().h(1).bg(t.border) : div().flex_1().h(Math.max(1, Math.round(c * h))).rounded(2).bg(palette[i % palette.length]))))))
+      .child(div().text_size(12).text_color(t.dim).child("Summed over every factory, each day as a column."));
+  }
+
   // A tab's charts, two to a row; extra cards (not charts) fill the last row.
-  charts(t, tab, extra = []) {
+  // doc and dir: whose charts (a factory's own on the all-factories Learning tab).
+  charts(t, tab, extra = [], doc = this.all?.doc ?? this.doc, dir = root()) {
     const mode = settings().dark ? "dark" : "light";
-    const cards = chartCards(this.doc, this.days, tab, mode, (file) => chartAsset(root(), appHome(), file)).map((c) => this.chart(t, c)).concat(extra);
+    const cards = chartCards(doc, this.days, tab, mode, (file) => chartAsset(dir, appHome(), file)).map((c) => this.chart(t, c)).concat(extra);
     const rows = [];
     for (let i = 0; i < cards.length; i += 2) rows.push(h_flex().gap(10).items_start().child(cards[i]).child(cards[i + 1] ?? div().flex_1()));
     return rows;
@@ -98,21 +126,37 @@ export default class FactoryMetrics extends View {
 
   render() {
     const t = theme();
-    const r = this.doc?.ranges?.[this.days];
-    const head = h_flex().gap(8)
+    const all = this.all;
+    const r = (all?.doc ?? (all ? null : this.doc))?.ranges?.[this.days];
+    const head = h_flex().gap(8).items_center()
       .children(TABS.map((x) => this.chip(t, `tab-${x}`, x, x === this.tab, (_e, cx) => { this.tab = x; cx.notify(); })))
       .child(div().flex_1())
+      .when(!!all, (el) => el.child(div().font_semibold().text_color(t.foreground).child(`All factories (${all.factories.length})`)))
+      .child(this.chip(t, "all-factories", "All factories · A", !!all, (_e, cx) => this.toggleAll(cx)))
       .children(["7", "30"].map((d) => this.chip(t, `days-${d}`, `Last ${d} days`, d === this.days, (_e, cx) => { this.days = d; cx.notify(); })));
-    const page = v_flex().id("root").on_size_change((size, cx) => { this.width = size.width; cx.notify(); }).size_full().p(16).gap(12).text_size(13).bg(t.background).overflow_y_scroll().child(head);
-    if (!r) return page.child(div().text_color(t.muted).child(this.error ?? "Loading…"));
-    const tiles = h_flex().gap(10).children(headlineTiles(r, this.days).map((x) => v_flex().flex_1().p(14).gap(4).rounded(10).bg(t.surface).border(1).border_color(t.border)
+    const page = v_flex().id("root").track_focus(this.pageHandle)
+      .on_mouse_down("left", () => { if (!this.handle.is_focused()) this.pageHandle.focus(); })
+      .on_key_down((e, cx) => { if (keyAction(e)?.kind === "all-factories") { this.toggleAll(cx); cx.stop_propagation(); } })
+      .on_size_change((size, cx) => { this.width = size.width; cx.notify(); }).size_full().p(16).gap(12).text_size(13).bg(t.background).overflow_y_scroll().child(head);
+    // Learning and Benchmarks with the toggle on: each factory's own, labelled.
+    if (all && this.tab === "Learning") return this.allLearning(t, page);
+    if (all && this.tab === "Benchmarks") return page.children(all.factories.flatMap((f) => [this.agreement(t, f.doc, f.name), ...this.benchmarks(t, f.bench, f.benchError, f.name)]));
+    if (!r) return page.child(div().text_color(t.muted).child((all ? all.error : this.error) ?? "Loading…"));
+    const tiles = h_flex().gap(10).children((all ? combinedTiles(r) : headlineTiles(r, this.days)).map((x) => v_flex().flex_1().min_w(0).p(14).gap(4).rounded(10).bg(t.surface).border(1).border_color(t.border)
       .child(div().text_color(t.muted).child(x.label))
       .child(div().text_size(24).font_semibold().text_color(t.foreground).child(x.value))
       .child(div().text_size(12).text_color(t.dim).child(x.sub))));
     page.child(tiles);
-    if (this.tab === "Throughput") return page.children(this.charts(t, "Throughput", [
-      this.card(t, "Cycle time, median", `${r.prs_merged} merged`, this.rows(t, [
-        ["Pickup → PR", minutes(r.cycle.pickup_to_pr_min)], ["PR → merge", minutes(r.cycle.pr_to_merge_min)], ["Pickup → merge", minutes(r.cycle.pickup_to_merge_min)]])).flex_1()]));
+    if (all) {
+      const missing = all.factories.filter((f) => !f.doc).map((f) => `${f.name}: ${f.error}`);
+      page.child(div().text_size(12).text_color(t.dim).child(ALL_NOTE + (missing.length ? ` Left out: ${missing.join("; ")}.` : "")));
+    }
+    const cycle = (c) => [["Pickup → PR", minutes(c.pickup_to_pr_min)], ["PR → merge", minutes(c.pr_to_merge_min)], ["Pickup → merge", minutes(c.pickup_to_merge_min)]];
+    if (this.tab === "Throughput") return page.children(this.charts(t, "Throughput", [all
+      ? this.card(t, "Cycle time, median, per factory", "medians don't add up", v_flex().gap(10).children(r.per_factory.map((f) => v_flex().gap(4)
+        .child(div().text_size(12).font_semibold().text_color(t.muted).child(`${f.name} · ${f.merged} merged`))
+        .child(f.cycle ? this.rows(t, cycle(f.cycle)) : div().text_color(t.dim).child("no cycle times in this metrics.json"))))).flex_1()
+      : this.card(t, "Cycle time, median", `${r.prs_merged} merged`, this.rows(t, cycle(r.cycle))).flex_1()]));
     if (this.tab === "Cost") return page.children(this.charts(t, "Cost"));
     if (this.tab === "Quality") return page.children(this.charts(t, "Quality")).child(this.card(t, "By blueprint", "merged PRs in range", r.quality.length
       ? v_flex().gap(8).children(r.quality.map((q) => h_flex().gap(16)
@@ -127,8 +171,10 @@ export default class FactoryMetrics extends View {
 
   // Learning: the target and why experiments are held, the target over time with its shifts,
   // each experiment's values, the shifts with z to undo one, and the lesson store.
-  learning(t, page) {
-    const v = learningView(this.doc, this.days);
+  // doc and dir: whose learning; ro: no undo (the all-factories view, where z would act on
+  // the space's factory, not the one shown).
+  learning(t, page, doc = this.doc, dir = root(), ro = false) {
+    const v = learningView(doc, this.days);
     if (v.state === "none") return page.child(this.card(t, "Learning", null, div().text_color(t.muted).child(v.message)));
     const h = v.header;
     page.child(h_flex().gap(10)
@@ -147,7 +193,7 @@ export default class FactoryMetrics extends View {
     // The target chart beside the shifts it marks (or, while warming up, why there are none).
     page.children(this.charts(t, "Learning", [v.state === "warmup"
       ? this.card(t, "Nothing learned yet", null, div().text_color(t.muted).child(v.message)).flex_1()
-      : this.shifts(t, v.shifts).flex_1()]));
+      : this.shifts(t, v.shifts, ro).flex_1()], doc, dir));
     return page.children(this.experiments(t, v.experiments)).child(this.lessons(t, v.lessons, v.upkeep));
   }
 
@@ -165,7 +211,13 @@ export default class FactoryMetrics extends View {
   }
 
   // Newest first; z (or a click on undo) asks before it drops the shift's override.
-  shifts(t, rows) {
+  shifts(t, rows, ro = false) {
+    if (ro) return this.card(t, "Shifts", "undo from this factory's own Metrics", rows.length
+      ? v_flex().gap(4).children(rows.map((r) => h_flex().gap(12).items_center()
+        .child(div().w(120).flex_none().text_size(12).text_color(t.dim).child(r.at))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(`${r.line} · ${r.context}`))
+        .child(div().w(110).flex_none().text_size(12).text_color(r.state === "in force" ? t.done : t.dim).child(r.state))))
+      : div().text_color(t.muted).child("No shift yet."));
     this.at = clamp(this.at, rows.length);
     const focused = this.handle.is_focused();
     return v_flex().id("shifts").min_w(0).p(16).gap(6).rounded(10).bg(t.surface).border(1).border_color(t.border)
@@ -209,11 +261,23 @@ export default class FactoryMetrics extends View {
     return this.card(t, "Lessons", n ? `${n} active · used in briefs by area` : null, head ? v_flex().gap(8).child(head).child(body) : body);
   }
 
+  // Each factory's Learning tab in turn, under its name.
+  allLearning(t, page) {
+    if (!this.all.factories.length) return page.child(div().text_color(t.muted).child(this.all.error));
+    for (const f of this.all.factories) {
+      page.child(div().pt(8).text_size(16).font_semibold().text_color(t.foreground).child(f.name));
+      if (f.doc) this.learning(t, page, f.doc, f.dir, true);
+      else page.child(div().text_color(t.muted).child(f.error));
+    }
+    return page;
+  }
+
   // The babysitter's agreement with your past review verdicts, which gates pushbacks while you're away.
-  agreement(t) {
-    const a = this.doc?.agreement;
+  // name: the factory's, on the all-factories view.
+  agreement(t, doc = this.doc, name = null) {
+    const a = doc?.agreement;
     const c = agreementCard(a);
-    return this.card(t, "Babysitter agreement", a ? (a.ok ? "pushbacks allowed while away" : "no pushbacks while away") : null, v_flex().gap(8)
+    return this.card(t, name ? `Babysitter agreement · ${name}` : "Babysitter agreement", a ? (a.ok ? "pushbacks allowed while away" : "no pushbacks while away") : null, v_flex().gap(8)
       .child(h_flex().gap(12).items_center()
         .child(div().text_size(24).font_semibold().text_color(a?.rate != null && !a.ok ? t.blocked : t.foreground).child(c.value))
         .child(div().flex_1().min_w(0).text_size(12).text_color(t.dim).child(c.sub)))
@@ -221,14 +285,15 @@ export default class FactoryMetrics extends View {
   }
 
   // One card per suite: its latest report, a row per variant, the winner marked as a recommendation.
-  benchmarks(t) {
-    const suites = this.bench?.suites ?? [];
-    if (!suites.length) return [this.card(t, "Benchmarks", null, div().text_color(t.muted)
-      .child(this.benchError ?? "No benchmark has run yet. `factory bench <name>` replays your past merged PRs under each variant of a suite in .factory/benchmarks/."))];
+  benchmarks(t, bench = this.bench, benchError = this.benchError, name = null) {
+    const suites = bench?.suites ?? [];
+    const label = (x) => (name ? `${name} · ${x}` : x);
+    if (!suites.length) return [this.card(t, label("Benchmarks"), null, div().text_color(t.muted)
+      .child(benchError ?? "No benchmark has run yet. `factory bench <name>` replays your past merged PRs under each variant of a suite in .factory/benchmarks/."))];
     const widths = [0, 170, 130, 70, 80, 110];
     const cell = (i, text, color, bold) => (i === 0 ? div().flex_1().min_w(0).truncate() : div().w(widths[i]).flex_none())
       .text_color(color).when(bold, (el) => el.font_semibold()).child(text);
-    return suites.map((s) => this.card(t, s.name, `${s.target} · latest run ${s.ended_at.slice(0, 10)}`, v_flex().gap(8)
+    return suites.map((s) => this.card(t, label(s.name), `${s.target} · latest run ${s.ended_at.slice(0, 10)}`, v_flex().gap(8)
       .child(div().text_size(12).text_color(t.dim).child(suiteNote(s)))
       .child(h_flex().gap(8).pb(4).border_b(1).border_color(t.border).text_size(12).text_color(t.dim).children(COLUMNS.map((c, i) => cell(i, c, t.dim, false))))
       .children(variantRows(s).map((r) => h_flex().gap(8).items_center()
