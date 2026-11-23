@@ -40,7 +40,7 @@ export function layout() {
         background: "chrome",
         resizable: false,
         children: [
-          block("brand", "factory-chrome", null, { size: { px: 84 }, window_drag: true }),
+          block("brand", "factory-chrome", null, { size: { px: 112 }, window_drag: true }),
           block("sidebar-tickets", "factory-tickets", null, { size: { weight: 1 }, min: 90 }),
           block("sidebar-menu", "factory-menu", null, { size: { px: 40 + 30 * PAGES.filter((p) => p.key).length } }),
           block("sidebar-budget", "factory-chrome", { footer: true }, { size: { px: 44 } }),
@@ -66,11 +66,18 @@ export function layout() {
   };
 }
 
+export const FACTORY_KEYS = { "g f": "mod.open:factory-picker", "]": "factory-chrome.needs-next", "[": "factory-chrome.needs-prev" };
+
 export function keys() {
   const factory = { "cmd-shift-f": "layout.switch:main", "cmd-o": "factory-config.open" };
   for (const n of ["1", "2", "3", "4"]) factory[`cmd-alt-${n}`] = `factory-ticket.tab-${n}`;
   for (const p of PAGES) if (p.key) factory[`cmd-${p.key}`] = { command: "layout.select", args: { stack: STACK, child: p.id } };
-  return { global: { "cmd-shift-f": "layout.switch:factory" }, "layout:factory": factory };
+  // The factory picker, and the next / previous other factory that needs you (factory-chrome).
+  Object.assign(factory, FACTORY_KEYS);
+  // Bare keys bound for the layout would be taken from the terminals in it (Overwatch, a
+  // ticket's agent): the terminal section wins, so these go to the program there.
+  const terminal = Object.fromEntries(["g", "[", "]"].map((k) => [k, "terminal"]));
+  return { global: { "cmd-shift-f": "layout.switch:factory" }, terminal, "layout:factory": factory };
 }
 
 const files = { "layouts/factory.json": layout(), "keys.json": keys() };

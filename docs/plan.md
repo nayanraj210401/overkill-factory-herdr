@@ -51,7 +51,8 @@ The factory is one Herdr app layout, `layouts/factory.json`, and it replaces the
 Factory mode has its own shape and its own words. Warp's app was a reference for ideas (a stage timeline per ticket, a metrics page), not a template. What makes it a Herdr mode:
 
 - **It's a mode.** `cmd-shift-f` switches between factory mode and Herdr's normal window. Both show the same spaces, agents and terminals, so nothing is lost by switching.
-- **One factory per window.** The factory is the repo of the space you're in; switching spaces with Herdr's own picker switches factories. There is no list of factories.
+- **One factory per window.** The window shows the factory of the space you're in (any of its repos' checkouts, or a ticket's folder). Factory mode hides Herdr's spaces sidebar, so the brand row at the top of the sidebar is the switcher: `<factory> ▾` over the lead repo, the branch and "· N repos". A click on it, or `g f`, opens the factory picker, a Herdr popup with one row per factory on this machine: its repos (lead first), Herdr's status dot, and its running, needs-you and to-review counts read from that factory's own `status.json`. Picking one switches the Herdr space: Herdr focuses a space in that factory's lead repo, or makes one there, and the window and its terminals follow the space as they always do. Switching spaces with Herdr's own keys switches factories the same way.
+- **Another factory needing you shows.** When another factory has something in its Needs you, a line under the brand says so (`⚠ shop: 1 needs you`, with "+N" when there are more). A click goes to that factory; `]` and `[` go to the next and previous one.
 - **Agents are live, not transcripts.** A ticket's page splits to show its real agent terminal, and you can type into it. Overwatch is a Herdr terminal too.
 - **Herdr's agent status stays.** Every ticket row carries Herdr's working, blocked, idle or done dot.
 - **Keys first.** Every page and action has a key in the layout's own section of `keys.json`, and the layout ships its own theme.
@@ -59,7 +60,7 @@ Factory mode has its own shape and its own words. Warp's app was a reference for
 
 The window has four parts:
 
-- **Sidebar.** At the top, the factory's name, whether the daemon is running, and today's spend. In the middle, the live tickets grouped as Needs you, Running, Ready for review and Queue, then To review (teammates' PRs waiting on you), each row with its title, stage, cost and agent dot. At the bottom, the factory menu: Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Config. At the foot, the day's budget bar.
+- **Sidebar.** At the top, the factory switcher (name, lead repo, branch), the other-factory line when one needs you, whether the daemon is running, and today's spend. In the middle, the live tickets grouped as Needs you, Running, Ready for review and Queue, then To review (teammates' PRs waiting on you), each row with its title, stage, cost and agent dot. At the bottom, the factory menu: Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Config. At the foot, the day's budget bar.
 - **Header bar.** Where you are (`acme-api › Blueprint`) and the page's keys.
 - **Main area.** A `stack` block that shows one page, switched with `layout.select`.
 - **Status bar.** Running agents, PRs ready, spend against budget, and ready rules failing now.
@@ -127,7 +128,8 @@ All mods carry a `factory-` prefix, since a mod folder's name is its identity in
 
 | Mod | Starts from | What it does |
 | --- | --- | --- |
-| `factory-chrome` | Herdr's `workspace-chrome` | Brand row (factory, daemon status, spend) and the budget bar |
+| `factory-chrome` | Herdr's `workspace-chrome` | Brand row (the factory switcher, another factory needing you, daemon status, spend) and the budget bar |
+| `factory-picker` | Herdr's `picker` | The factory picker popup: every factory, its repos and counts; picking one switches the space |
 | `factory-tickets` | Herdr's `spaces` | The sidebar's ticket groups |
 | `factory-menu` | new | The factory menu at the bottom of the sidebar |
 | `factory-header` | Herdr's `tabs` | Breadcrumb and page keys |
@@ -150,6 +152,8 @@ Every action is a click or a key, and each one is a single call to the daemon. T
 | Key | Does |
 | --- | --- |
 | `cmd-shift-f` | Switch to factory mode and back |
+| `g f` | The factory picker: every factory on this machine; pick one to switch to its space |
+| `]` / `[` | The next / previous other factory that needs you |
 | `g h`, `g t`, `g o`, `g b`, `g m`, `g c` | Home, Tickets, Overwatch, Blueprint, Metrics, Config |
 | `j` / `k`, `enter` | Move through tickets, open one |
 | `e` | The ticket's live agent terminal |
