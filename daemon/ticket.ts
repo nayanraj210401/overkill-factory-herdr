@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { ticketOf } from "./status.ts";
 
 type Stage = { name: string; detail: string | null; started_at: string; ended_at: string | null };
-type Check = { check_name: string; result: "PASS" | "FAIL"; detail: string | null; at: string };
+type Check = { check_name: string; result: "PASS" | "FAIL" | "BROKEN"; detail: string | null; at: string };
 
 // One plain sentence first (PRD 6.3), so the main point is never buried.
 export function summary(t: ReturnType<typeof ticketOf>) {
@@ -68,7 +68,7 @@ type Verdict = { kind: string; voter: string; result: string; detail: string | n
 
 export function evidenceMd(checks: Check[], verdicts: Verdict[] = []) {
   const cell = (s: string) => s.replace(/\|/g, "\\|");
-  const result = (r: string) => (r === "PASS" ? "✓ PASS" : "✗ FAIL");
+  const result = (r: string) => (r === "PASS" ? "✓ PASS" : r === "BROKEN" ? "⚠ BROKEN" : "✗ FAIL");
   const when = (at: string) => at.slice(0, 16).replace("T", " ");
   return [
     "# Evidence",

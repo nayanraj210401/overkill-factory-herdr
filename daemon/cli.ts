@@ -6,7 +6,7 @@ import { claudeChoice } from "./claude-bin.ts";
 import { homedir } from "node:os";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { recordVerdict } from "./ready.ts";
+import { recordVerdict, RULE_MARK } from "./ready.ts";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
@@ -630,7 +630,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     } else if (cmd === "ready") {
       const repoDir = needLead(db).path;
       const rules = checkReady(db, { dir: p.dir, repo: repoDir, id: Number(sub), run: sh });
-      for (const r of rules) log(`${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`);
+      for (const r of rules) log(`${RULE_MARK[r.result]} ${r.rule}: ${r.detail}`);
       return;
     } else if (cmd === "sessions") {
       for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])

@@ -31,6 +31,7 @@ import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
 import { artifactPolicy, publishGap, publishStep, sharedLine, sharedLinks } from "./artifacts.ts";
 import { agentRepos, factoryMap, loadAgent, type AgentRepos } from "./agents.ts";
+import { classify, EVIDENCE_OF, fileRepair, repairs, type CheckResult } from "./broken.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -262,21 +263,35 @@ export function checkReady(db: Database, o: { dir: string; repo: string; id: num
 }
 
 // A check stage the daemon runs itself. Returns whether it passed, after recording evidence.
+// A command check's result: pass, fail, or broken (broken.ts). Returns false only on a fail:
+// a broken check doesn't send the ticket back to implement, it files one repair chore.
+function commandResult(db: Database, o: { id: number; now: string; dir?: string; record: Record_ }, name: string, r: { code: number; out: string }, passed = "passed", prefix = "") {
+  // Agents see the first failing lines; full logs stay out of the prompt (PRD 6.10).
+  const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
+  let result = classify(r.code, r.out);
+  if (result === "broken" && repairs(db, o.id, name)) result = "fail"; // the repair ticket's own work
+  const detail = `${prefix}${result === "pass" ? passed : `exit ${r.code}: ${tail}`}`;
+  if (result === "broken") {
+    const fix = fileRepair(db, { dir: o.dir, check: name, detail, from: o.id, now: o.now });
+    o.record(name, "broken", `check broken: ${detail} · repair #${fix.id}`);
+    db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
+      .run(o.id, `check broken: ${name}`, `${detail}; it can't run, so it doesn't send the work back. ${fix.filed ? "Filed" : "Repair already filed:"} #${fix.id}`, o.now);
+  } else o.record(name, result, detail);
+  return result !== "fail";
+}
+
+type Record_ = (name: string, result: CheckResult | boolean, detail: string) => void;
+
 export function runCheck(db: Database, o: { id: number; repo: string; worktree: string; check: string; run: Run; now: string; dir?: string }) {
-  const record = (name: string, ok: boolean, detail: string) =>
-    db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(o.id, name, ok ? "PASS" : "FAIL", detail, o.now);
+  const record: Record_ = (name, result, detail) =>
+    db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)")
+      .run(o.id, name, EVIDENCE_OF[result === true ? "pass" : result === false ? "fail" : result], detail, o.now);
   if (o.check === "tests" || o.check === "lint") {
     const commands = readFactory(o.repo).quality_floor ?? [];
     if (!commands.length) { record(o.check, false, "factory.yaml has no quality_floor commands"); return false; }
     let ok = true;
-    for (const c of commands) {
-      const r = o.run(["env", `PATH=${toolPath()}`, "sh", "-c", c], o.worktree);
-      // Agents see the first failing lines; full logs stay out of the prompt (PRD 6.10).
-      const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
-      record(c, r.code === 0, r.code === 0 ? "passed" : `exit ${r.code}: ${tail}`);
-      ok &&= r.code === 0;
-    }
-    const features = o.check === "tests" ? featureScenarios({ ...o, record }) : true;
+    for (const c of commands) ok = commandResult(db, { ...o, record }, c, o.run(["env", `PATH=${toolPath()}`, "sh", "-c", c], o.worktree)) && ok;
+    const features = o.check === "tests" ? featureScenarios(db, { ...o, record }) : true;
     return crossCheck(db, { ...o, record }) && features && ok;
   }
   if (o.check === "evidence") {
@@ -285,8 +300,11 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
     // PASS, and there must be at least one. The evidence check's own rows don't count.
     runCheck(db, { ...o, check: "tests" });
     const latest = db.query(`SELECT check_name, result FROM evidence e WHERE ticket = ? AND check_name != 'evidence' AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { result: string }[];
-    const ok = latest.length > 0 && latest.every((r) => r.result === "PASS");
-    record("evidence", ok, ok ? `${latest.length} checks pass` : latest.length ? `${latest.filter((r) => r.result !== "PASS").length} failing` : "no checks recorded");
+    // A broken check doesn't fail it: implement can't fix what can't run (broken.ts).
+    const failing = latest.filter((r) => r.result === "FAIL").length;
+    const broken = latest.filter((r) => r.result === "BROKEN").length;
+    const ok = latest.length > 0 && !failing;
+    record("evidence", ok, ok ? `${latest.length - broken} checks pass${broken ? `, ${broken} broken` : ""}` : latest.length ? `${failing} failing` : "no checks recorded");
     return ok;
   }
   if (o.check === "factory") return factoryCheck(db, { ...o, record });
@@ -295,7 +313,7 @@ export function runCheck(db: Database, o: { id: number; repo: string; worktree: 
 
 // A maintainer's change (maintainer.ts), checked by its request's kind, in the repo its
 // worktree is in (the request's repo: the lead, another of the factory's, or the app).
-function factoryCheck(db: Database, o: { id: number; repo: string; worktree: string; run: Run; now: string; dir?: string; record: (name: string, ok: boolean, detail: string) => void }) {
+function factoryCheck(db: Database, o: { id: number; repo: string; worktree: string; run: Run; now: string; dir?: string; record: Record_ }) {
   const kind = requestKind(db, o.id);
   const own = ticketRepos(db, o.id)[0];
   const base = (db.query("SELECT base FROM tickets WHERE id = ?").get(o.id) as { base: string | null } | null)?.base ?? undefined;
@@ -340,16 +358,13 @@ function factoryCheck(db: Database, o: { id: number; repo: string; worktree: str
 
 // verify.features (flow-stack's feature map): the scenario of each feature the ticket's
 // changes touch runs in its worktree, as `feat:<id>` (features.ts).
-function featureScenarios(o: { repo: string; worktree: string; run: Run; record: (name: string, ok: boolean, detail: string) => void }) {
+function featureScenarios(db: Database, o: { id: number; repo: string; worktree: string; run: Run; now: string; dir?: string; record: Record_ }) {
   const dir = readFactory(o.repo).verify?.features;
   if (!dir) return true;
   const files = changedFiles(o.run, o.repo, o.worktree);
   let ok = true;
   for (const f of readFeatures(join(o.worktree, dir)).filter((x) => x.scenario && touched(x, files))) {
-    const r = o.run(["env", `PATH=${toolPath()}`, "sh", "-c", f.scenario], o.worktree);
-    const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
-    o.record(`feat:${f.id}`, r.code === 0, r.code === 0 ? `${f.scenario}: passed` : `${f.scenario}: exit ${r.code}: ${tail}`);
-    ok &&= r.code === 0;
+    ok = commandResult(db, o, `feat:${f.id}`, o.run(["env", `PATH=${toolPath()}`, "sh", "-c", f.scenario], o.worktree), "passed", `${f.scenario}: `) && ok;
   }
   return ok;
 }
@@ -385,16 +400,13 @@ function changedFiles(run: Run, repo: string, worktree: string, from?: string) {
 
 // A cross-repo ticket's tests check also runs factory.yaml's cross_check, in the lead's
 // worktree, with each repo's worktree in FACTORY_REPO_<NAME> (acme/web → FACTORY_REPO_WEB).
-function crossCheck(db: Database, o: { id: number; repo: string; worktree: string; run: Run; record: (name: string, ok: boolean, detail: string) => void }) {
+function crossCheck(db: Database, o: { id: number; repo: string; worktree: string; run: Run; now: string; dir?: string; record: Record_ }) {
   const repos = ticketRepos(db, o.id);
   if (repos.length < 2) return true;
   const cmd = readFactory(o.repo).cross_check;
   if (!cmd) { o.record("cross_check", false, "factory.yaml has no cross_check command for cross-repo tickets"); return false; }
   const env = repos.map((r) => `FACTORY_REPO_${r.repo.slice(r.repo.indexOf("/") + 1).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}=${r.worktree}`);
-  const r = o.run(["env", ...env, "sh", "-c", cmd], o.worktree);
-  const tail = r.out.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 200);
-  o.record("cross_check", r.code === 0, r.code === 0 ? `passed across ${repos.map((x) => x.repo).join(", ")}` : `exit ${r.code}: ${tail}`);
-  return r.code === 0;
+  return commandResult(db, o, "cross_check", o.run(["env", ...env, "sh", "-c", cmd], o.worktree), `passed across ${repos.map((x) => x.repo).join(", ")}`);
 }
 
 type BlueprintStage = Stage & { on_fail?: string; max_retries?: number; gate?: string; requires?: string };
@@ -655,6 +667,9 @@ export function autoBlock(db: Database, o: { dir: string; repo: string; id: numb
   try { rules = checkReady(db, o); } catch (e) { return (e as Error).message; }
   const failing = rules.find((r) => r.result === "fail");
   if (failing) return `ready rule ${failing.rule} fails: ${failing.detail}`;
+  // A broken check proves nothing, so nothing vouches for the change: a person merges it.
+  const broken = rules.find((r) => r.result === "broken");
+  if (broken) return `⚠ check broken (${broken.rule}): ${broken.detail}`;
   if (db.query("SELECT 1 FROM review_rounds WHERE ticket = ? AND closed_at IS NULL").get(o.id)) return "a review round is open";
   const use = budgetUse(t as any, budgetCap(db, o.repo));
   if (use.frac >= 1) return `over budget (${use.text})`;

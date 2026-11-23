@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
-import { advance, autoMerge, startTicket, sh, tryPr, type Run } from "./runner.ts";
+import { advance, autoMerge, mergeTicket, runCheck, startTicket, sh, tryPr, type Run } from "./runner.ts";
 import { request, proposeAccount, applyMerged } from "./maintainer.ts";
 import { buildStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
@@ -164,4 +164,24 @@ test("status lists a blueprint on auto with its revert rate for Home, and a huma
   expect(after.auto_gates).toEqual([{ blueprint: "chore", merged: 4, reverted: 1, revert_rate: 0.25 }]);
   expect(validateStatus(after)).toEqual([]);
   expect(buildStatus(setup("human").db).auto_gates).toBeUndefined();
+});
+
+test("a broken check doesn't send the work back: the PR opens saying so, auto won't merge it, one repair chore is filed", () => {
+  const s = setup("auto", 'name: t\nquality_floor: ["true", "no-such-test-runner"]\nready: [evidence, quality_floor, template, budget]\n');
+  s.toGate();
+  expect(s.ticket()).toMatchObject({ state: "ready", stage: "merge", pr_number: 42 }); // not back at implement
+  expect(readFileSync(join(s.dir, "tickets/7/.pr-body.md"), "utf8")).toContain("⚠ check broken");
+  expect(s.db.query("SELECT result FROM evidence WHERE ticket = 7 AND check_name = 'no-such-test-runner'").get()).toEqual({ result: "BROKEN" });
+  expect(s.auto()).toEqual([]);
+  expect(s.ticket().detail).toMatch(/^auto merge waits for you: ⚠ check broken \(evidence\): .*no-such-test-runner \(repair #10000\)/);
+  expect(s.merges()).toHaveLength(0);
+  // It breaks again on the next run: still one repair ticket.
+  runCheck(s.db, { id: 7, repo: s.repo, worktree: s.ticket().worktree, check: "tests", run: s.run, now: new Date().toISOString(), dir: s.dir });
+  expect(s.db.query("SELECT id, title FROM tickets WHERE trigger_name = 'broken-check'").all()).toEqual([{ id: 10000, title: "Repair check: no-such-test-runner" }]);
+  // On the repair ticket itself, the broken check is the work: it fails and goes back to implement.
+  s.db.query("UPDATE tickets SET state = 'running', stage = 'implement' WHERE id = 10000").run();
+  s.db.query("INSERT INTO ticket_repos (ticket, repo, lead, worktree) VALUES (10000, 'acme/api', 1, ?)").run(s.ticket().worktree);
+  expect(runCheck(s.db, { id: 10000, repo: s.repo, worktree: s.ticket().worktree, check: "tests", run: s.run, now: new Date().toISOString(), dir: s.dir })).toBe(false);
+  // A person's `m` still merges the ticket with the broken check.
+  expect(mergeTicket(s.db, { repo: s.repo, id: 7, run: s.run })).toMatchObject({ pr: 42 });
 });

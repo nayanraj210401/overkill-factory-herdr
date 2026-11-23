@@ -6,8 +6,11 @@ import { join } from "node:path";
 import type { Run } from "./runner.ts";
 import { needLead } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
+import { repairFor } from "./broken.ts";
 
-export type Rule = { rule: string; result: "pass" | "fail" | "skipped"; detail: string };
+// "broken": a check the rule counts can't run (broken.ts). It doesn't block the PR, which
+// says so; gate: auto won't merge it.
+export type Rule = { rule: string; result: "pass" | "fail" | "skipped" | "broken"; detail: string };
 
 // PRD 6.3: one plain sentence first, then the fields a reviewer needs.
 const PR_FIELDS = ["What changed", "Why", "How it was verified", "Risk"];
@@ -64,18 +67,25 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktrees
   const latest = db.query(`SELECT check_name, result, at FROM evidence e WHERE ticket = ? AND id = (SELECT MAX(id) FROM evidence WHERE ticket = e.ticket AND check_name = e.check_name)`).all(o.id) as { check_name: string; result: string; at: string }[];
   const lastCommit = o.worktrees.map((w) => o.run(["git", "-C", w, "log", "-1", "--format=%cI"]).out.trim())
     .filter((c) => !Number.isNaN(Date.parse(c))).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? "";
+  // Each broken check, with its repair ticket.
+  const brokenOf = (rows: typeof latest) => rows.filter((c) => c.result === "BROKEN").map((c) => { const fix = repairFor(db, c.check_name); return `${c.check_name}${fix ? ` (repair #${fix})` : ""}`; });
   const out: Rule[] = [];
   for (const rule of o.rules) {
     if (rule === "evidence") {
-      const failing = latest.filter((c) => c.result !== "PASS").map((c) => c.check_name);
+      const failing = latest.filter((c) => c.result === "FAIL").map((c) => c.check_name);
       const stale = latest.filter((c) => lastCommit && Date.parse(c.at) < Date.parse(lastCommit)).map((c) => c.check_name);
+      const broken = brokenOf(latest);
       out.push(!latest.length ? { rule, result: "fail", detail: "no checks recorded" }
         : failing.length ? { rule, result: "fail", detail: `failing: ${failing.join(", ")}` }
         : stale.length ? { rule, result: "fail", detail: `older than the last commit: ${stale.join(", ")}` }
+        : broken.length ? { rule, result: "broken", detail: `${latest.length - broken.length} checks pass after the last commit; check broken: ${broken.join(", ")}` }
         : { rule, result: "pass", detail: `${latest.length} checks pass after the last commit` });
     } else if (rule === "quality_floor") {
       const ran = latest.filter((c) => c.check_name !== "evidence");
-      out.push(ran.some((c) => c.result !== "PASS") ? { rule, result: "fail", detail: "a check fails" } : { rule, result: "pass", detail: "no check fails" });
+      const broken = brokenOf(ran);
+      out.push(ran.some((c) => c.result === "FAIL") ? { rule, result: "fail", detail: "a check fails" }
+        : broken.length ? { rule, result: "broken", detail: `no check fails; check broken: ${broken.join(", ")}` }
+        : { rule, result: "pass", detail: "no check fails" });
     } else if (rule === "budget") {
       const bin = Math.min(t.budget_in, o.cap?.input ?? Infinity);
       const bout = Math.min(t.budget_out, o.cap?.output ?? Infinity);
@@ -89,8 +99,9 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktrees
       // Added for cross-repo tickets: the check across every repo's branch, run by the tests check.
       const c = latest.find((x) => x.check_name === "cross_check");
       out.push(!c ? { rule, result: "fail", detail: "the cross check hasn't run" }
-        : c.result !== "PASS" ? { rule, result: "fail", detail: "the cross check fails" }
+        : c.result === "FAIL" ? { rule, result: "fail", detail: "the cross check fails" }
         : lastCommit && Date.parse(c.at) < Date.parse(lastCommit) ? { rule, result: "fail", detail: "the cross check is older than the last commit" }
+        : c.result === "BROKEN" ? { rule, result: "broken", detail: `check broken: ${brokenOf([c])[0]}` }
         : { rule, result: "pass", detail: "the cross check passes on every repo's branch" });
     } else if (rule === "holdout" || rule === "review") {
       out.push(verdictRule(db, o.id, rule, lastCommit, o.expects?.includes(rule) ?? false));
@@ -110,12 +121,16 @@ export function prText(dir: string, id: number) {
   return [readFileSync(join(folder, "PR.md"), "utf8"), ...extra.map((f) => readFileSync(f, "utf8"))].map((s) => s.trim()).join("\n\n");
 }
 
+export const RULE_MARK: Record<Rule["result"], string> = { pass: "✓", skipped: "–", broken: "⚠", fail: "✗" };
+
 // The PR body: PR.md, the other repos' PRs of a cross-repo change, the issue it closes,
-// and the rule results.
+// and the rule results. A broken check is said up front: the PR isn't proven by it.
 export function prBody(md: string, rules: Rule[], others: { repo: string; pr: number | null }[] = [], closes: string | null = null) {
-  const table = rules.map((r) => `- ${r.result === "pass" ? "✓" : r.result === "skipped" ? "–" : "✗"} ${r.rule}: ${r.detail}`).join("\n");
+  const table = rules.map((r) => `- ${RULE_MARK[r.result]} ${r.rule}: ${r.detail}`).join("\n");
   const part = others.length ? `\n\n**Part of one change across repos:** ${others.map((x) => (x.pr ? `${x.repo}#${x.pr}` : x.repo)).join(", ")}` : "";
-  return `${md.trim()}${part}${closes ? `\n\n${closes}` : ""}\n\n**Ready rules**\n${table}\n`;
+  const broken = rules.filter((r) => r.result === "broken");
+  const warn = broken.length ? `\n\n> **⚠ check broken.** A check couldn't run, so it proves nothing about this change; a repair ticket is filed. This PR waits for a person even under \`gate: auto\`.\n> ${broken.map((r) => `${r.rule}: ${r.detail}`).join("\n> ")}` : "";
+  return `${md.trim()}${part}${closes ? `\n\n${closes}` : ""}${warn}\n\n**Ready rules**\n${table}\n`;
 }
 
 // A ticket from an issue closes it when its PR merges, so tickets blocked by that issue

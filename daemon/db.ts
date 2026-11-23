@@ -254,6 +254,15 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
    CREATE VIEW experiment_spend AS
      SELECT u.at AS started_at, u.input + u.cache_write_5m + u.cache_write_1h AS tokens_in, u.output AS tokens_out FROM usage u
      WHERE u.ticket IN (SELECT ticket FROM experiment_pulls WHERE explored = 1);`,
+  // Broken checks (broken.ts): a check that couldn't run is BROKEN, not FAIL. SQLite can't
+  // change a CHECK, so the table is rebuilt with its rows; nothing references it.
+  `CREATE TABLE evidence_new (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL REFERENCES tickets(id),
+     check_name TEXT NOT NULL, result TEXT NOT NULL CHECK (result IN ('PASS', 'FAIL', 'BROKEN')), detail TEXT, at TEXT NOT NULL
+   );
+   INSERT INTO evidence_new (id, ticket, check_name, result, detail, at) SELECT id, ticket, check_name, result, detail, at FROM evidence;
+   DROP TABLE evidence;
+   ALTER TABLE evidence_new RENAME TO evidence;`,
 ];
 
 export function open(path: string): Database {
