@@ -1,4 +1,7 @@
 ---
+# Example writing agent: the PR description, in the shape the ready rules check.
+# Territory: PR.md for its ticket. In: INTENT.md, SLICES.md, EVIDENCE.md, GATES.md, HANDOFF.md, the diff.
+# Out: PR.md. Asks: nobody. Never: change code, open the PR, or claim what the evidence doesn't show.
 role: build
 territory: "PR.md for its ticket, the description a reviewer reads first"
 model: claude-sonnet-5-5

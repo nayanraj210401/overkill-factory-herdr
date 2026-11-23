@@ -12,6 +12,7 @@ import { readFactory, sh } from "./runner.ts";
 import { service } from "./service.ts";
 import { validateDir } from "./validate.ts";
 import { MAINTENANCE, NEVER_GROOMED } from "./groom.ts";
+import { exampleFile, neededAgents } from "./agents.ts";
 
 export type Step = { id: string; label: string; status: "ok" | "missing" | "skipped"; fix: string | null; detail: string | null };
 export type Probe = { has: (bin: string) => boolean; ghLoggedIn: () => boolean; service: () => string; trusted?: (dir: string) => boolean; flowStack?: (repo: string) => string[] };
@@ -187,7 +188,7 @@ const triggered = (dir: string) => existsSync(join(dir, "triggers"))
   ? readdirSync(join(dir, "triggers")).flatMap((f) => [...readFileSync(join(dir, "triggers", f), "utf8").matchAll(/^blueprint:\s*(\S+)/gm)].map((m) => m[1]))
   : [];
 
-// factory.yaml plus the default blueprints, agents and prompt templates, committed on factory/setup from a
+// factory.yaml plus the default blueprints, the agents they name and prompt templates, committed on factory/setup from a
 // temporary worktree. Run again, it adds one more commit if anything changed.
 export function writeSetup(o: { repo: string; name: string; slug: string; basics: Basics }) {
   const git = (...a: string[]) => sh(["git", "-C", o.repo, ...a]);
@@ -204,7 +205,7 @@ export function writeSetup(o: { repo: string; name: string; slug: string; basics
   try {
     const dir = join(wt, ".factory");
     mkdirSync(dir, { recursive: true });
-    for (const sub of ["blueprints", "agents", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true });
+    for (const sub of ["blueprints", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true });
     // The maintenance agent's daily trigger, shipped with enabled: false so it stays off until you turn it on;
     // the built-in queue and review-comment triggers still run beside it.
     mkdirSync(join(dir, "triggers"), { recursive: true });
@@ -212,6 +213,14 @@ export function writeSetup(o: { repo: string; name: string; slug: string; basics
     const blueprints = readdirSync(join(dir, "blueprints")).filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""))
       .filter((b) => !triggered(DEFAULTS).includes(b) && !NEVER_GROOMED.includes(b));
     writeFileSync(join(dir, "factory.yaml"), factoryYaml({ name: o.name, slug: o.slug, blueprints, basics: o.basics, floor: detectFloor(wt) }));
+    // The repo gets only the agents its blueprints and grooming name, each from the example
+    // library: yours in ~/.factory/examples/agents/ first, then the shipped one.
+    mkdirSync(join(dir, "agents"), { recursive: true });
+    for (const name of neededAgents(dir)) {
+      const from = exampleFile(name);
+      if (!from) throw new Error(`a blueprint names the agent ${name}, and the example library has no ${name}.md`);
+      cpSync(from.file, join(dir, "agents", `${name}.md`));
+    }
     const results = validateDir(dir);
     const bad = results.filter((r) => r.errors.length);
     if (bad.length) throw new Error(`the files fail the schema check:\n${bad.map((r) => `${r.path}: ${r.errors.join("; ")}`).join("\n")}`);

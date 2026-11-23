@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Writes layouts/factory.json and keys.json from lib/pages.js, so the stack,
-// the keys and the menu can't drift apart. `--check` fails if either is stale.
-import { readFileSync, writeFileSync } from "node:fs";
+// the keys and the menu can't drift apart, and the sample repo's agents
+// (fixtures/acme-api/.factory/agents/) from the example library (examples/agents/),
+// so the two never drift either. `--check` fails if any is stale.
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { PAGES, STACK } from "../lib/pages.js";
 
 const root = new URL("..", import.meta.url);
@@ -73,11 +75,22 @@ export function keys() {
 
 const files = { "layouts/factory.json": layout(), "keys.json": keys() };
 
+// The sample repo's agents are the example library's, byte for byte.
+const EXAMPLES = new URL("examples/agents/", root), FIXTURE = new URL("fixtures/acme-api/.factory/agents/", root);
+const mds = (url) => { try { return readdirSync(url).filter((f) => f.endsWith(".md")).sort(); } catch { return []; } };
+const copies = Object.fromEntries(mds(EXAMPLES).map((f) => [`fixtures/acme-api/.factory/agents/${f}`, readFileSync(new URL(f, EXAMPLES), "utf8")]));
+const extra = mds(FIXTURE).filter((f) => !(`fixtures/acme-api/.factory/agents/${f}` in copies));
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const check = process.argv.includes("--check");
   let stale = 0;
-  for (const [path, value] of Object.entries(files)) {
-    const text = JSON.stringify(value, null, 2) + "\n";
+  const texts = { ...Object.fromEntries(Object.entries(files).map(([p, v]) => [p, JSON.stringify(v, null, 2) + "\n"])), ...copies };
+  if (!check) mkdirSync(FIXTURE, { recursive: true });
+  for (const f of extra) {
+    if (!check) rmSync(new URL(f, FIXTURE));
+    else { console.error(`fixtures/acme-api/.factory/agents/${f} isn't in examples/agents/: run scripts/gen.mjs`); stale++; }
+  }
+  for (const [path, text] of Object.entries(texts)) {
     const url = new URL(path, root);
     if (!check) writeFileSync(url, text);
     else if ((() => { try { return readFileSync(url, "utf8"); } catch { return ""; } })() !== text) {

@@ -25,7 +25,7 @@ import { finishSlice, readSlices, sliceInHand } from "./slices.ts";
 import { childrenOf, decideSplit, pendingParts, splitGate } from "./split.ts";
 import { chooseNext } from "./orchestrate.ts";
 import { dryRun, dryRunMarkdown, loadDraft } from "./dryrun.ts";
-import { APP_BRANCH, appPath, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount, checkFactoryAgents, outsidePending, requestKind, unreachableBlueprints } from "./maintainer.ts";
+import { APP_BRANCH, appPath, BLUEPRINT as FACTORY_BLUEPRINT, checkAccount, checkExamples, checkFactoryAgents, outsidePending, requestKind, unreachableBlueprints } from "./maintainer.ts";
 import { checkCleanup } from "./cleanup.ts";
 import { readFeatures, touched } from "./features.ts";
 import { resolveClaude } from "./claude-bin.ts";
@@ -353,7 +353,9 @@ function factoryCheck(db: Database, o: { id: number; repo: string; worktree: str
   if (account) o.record("account config", account.ok, account.detail);
   const agents = o.dir ? checkFactoryAgents(o.dir, o.id) : null;
   if (agents) o.record("factory agents", agents.ok, agents.detail);
-  return !bad.length && !outside.length && dry && !stranded.length && (account?.ok ?? true) && (agents?.ok ?? true);
+  const examples = o.dir ? checkExamples(o.dir, o.id) : null;
+  if (examples) o.record("example library", examples.ok, examples.detail);
+  return !bad.length && !outside.length && dry && !stranded.length && (account?.ok ?? true) && (agents?.ok ?? true) && (examples?.ok ?? true);
 }
 
 // verify.features (flow-stack's feature map): the scenario of each feature the ticket's
@@ -566,7 +568,7 @@ export function tryPr(db: Database, o: { dir: string; repo: string; id: number; 
   // a cleanup) has no commits to open a PR from: it waits for you at the merge gate, and `m` applies it.
   if (t.blueprint === FACTORY_BLUEPRINT && t.pr_number == null && outsidePending(o.dir, o.id) && !changedFiles(run, repos[0].path, t.worktree, t.base ?? undefined).length) {
     db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'no PR: nothing in a repo changes', ?, ?)")
-      .run(o.id, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}; the ticket's folder shows what changes (ACCOUNT-CONFIG.md, FACTORY-AGENTS.md, CLEANUP.md)`, now);
+      .run(o.id, `${rules.map((r) => `${r.rule} ${r.result}`).join(", ")}; the ticket's folder shows what changes (ACCOUNT-CONFIG.md, FACTORY-AGENTS.md, EXAMPLES.md, CLEANUP.md)`, now);
     return advance(db, { dir: o.dir, repo: o.repo, id: o.id, run, now, opened: true });
   }
   const prs = repos.map((r) => {

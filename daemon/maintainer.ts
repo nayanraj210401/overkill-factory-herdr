@@ -5,13 +5,15 @@
 //   config     .factory/ in any of the factory's repos (budgets, gates, rules, prompts), and the
 //              account config, ~/.factory/config.yaml
 //   blueprint  a new blueprint from a description, or an edit to one, with a dry run
-//   agents     a repo agent in any of the factory's repos, or a factory agent (~/.factory/agents/)
+//   agents     a repo agent in any of the factory's repos, a factory agent (~/.factory/agents/),
+//              or an example in the library (~/.factory/examples/agents/)
 //   cleanup    housekeeping: old tickets' worktrees, spaces and merged branches, orphaned
 //              worktrees, old backups, a VACUUM (cleanup.ts)
 //   look       the factory's pages and colours: a PR against the factory app's own repo
 //
 // The maintainer works in its own worktree of the request's repo. Files no repo holds (the
-// account config, the factory agents) are edited as proposed copies in the ticket's folder.
+// account config, the factory agents, the example library) are edited as proposed copies in
+// the ticket's folder.
 // The factory check proves the change, and it comes back as a PR you merge (maintainer.gate);
 // what lives outside a repo (proposals, a cleanup) is applied by the daemon only then.
 // A request skips grooming: whoever asked already agreed, or brought the evidence.
@@ -19,7 +21,7 @@ import type { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { accountFile } from "./account.ts";
-import { factoryAgentsDir, FACTORY_AGENTS, isFactoryAgent, SHIPPED_AGENTS } from "./agents.ts";
+import { exampleFile, examplesDir, factoryAgentsDir, FACTORY_AGENTS, isFactoryAgent, SHIPPED_AGENTS } from "./agents.ts";
 import { listRepos, setMeta, type Repo } from "./db.ts";
 import { newTicket } from "./intake.ts";
 import type { Run } from "./runner.ts";
@@ -99,7 +101,8 @@ export const KIND_GUIDE: Record<Kind, string> = {
   blueprint: [
     "Draft or edit `.factory/blueprints/<name>.yaml`. A blueprint is `name`, `start` (a stage) and `stages`, a map",
     `of stage ids to one of: an agent stage, a check stage or a gate. A stage's keys: ${STAGE_KEYS}.`,
-    "- agent: names `.factory/agents/<agent>.md`; add any new agent it needs in the same PR.",
+    "- agent: names `.factory/agents/<agent>.md`; an agent the repo doesn't have yet comes from the example library:",
+    "  copy the closest `~/.factory/examples/agents/<example>.md` into `.factory/agents/` in the same PR and adapt it.",
     "- check: `tests` (the quality floor), `lint`, `evidence`, or `factory`; give it `on_fail` (the stage that fixes it) and `max_retries`.",
     "- gate: `human` (waits for a person) or `auto`. A gate before a risky step is a stage like `approve: { gate: human, next: [migrate] }`.",
     "- `next` lists where it goes (`end` finishes); more than one makes the blueprint's `orchestrator` agent choose.",
@@ -129,6 +132,11 @@ export const KIND_GUIDE: Record<Kind, string> = {
     "A repo agent is `.factory/agents/<name>.md` in this worktree (the request's repo): a YAML header (`role`, and",
     "`model`, `effort`, `context`, `tools` as needed) between `---` lines, then the prompt. Make a stricter or",
     "different agent by editing its prompt or model in place; a new one needs a blueprint stage that names it.",
+    "Start a new one from the closest example in `~/.factory/examples/agents/` (yours and the shipped ones): copy it",
+    "into `.factory/agents/<name>.md`, adapt it, and say in PR.md which example it started from and what changed.",
+    "Delete one only when nothing names it (`factory validate` refuses a blueprint that names a missing agent).",
+    "An example in the library itself: `factory examples propose <this ticket's id> <name>` (`--from <example>` for a new",
+    "one) copies it into this ticket's folder as EXAMPLES/<name>.md; edit it, or empty it to remove the example.",
     "A factory agent (Overwatch, babysitter, maintainer, learner) isn't in any repo: run",
     "`factory agents propose <this ticket's id> <name>`, which copies `~/.factory/agents/<name>.md` (or the shipped",
     "default) into this ticket's folder as FACTORY-AGENTS/<name>.md, and edit that copy. The factory check validates",
@@ -221,25 +229,31 @@ export const ACCOUNT_PROPOSAL = "ACCOUNT-CONFIG.yaml";
 export const ACCOUNT_DIFF = "ACCOUNT-CONFIG.md";
 export const AGENTS_PROPOSAL = "FACTORY-AGENTS";
 export const AGENTS_DIFF = "FACTORY-AGENTS.md";
+export const EXAMPLES_PROPOSAL = "EXAMPLES";
+export const EXAMPLES_DIFF = "EXAMPLES.md";
 
-type Outside = { label: string; target: string; proposal: string; checked: string; base: string; applied: string; stale: string; validate: (text: string) => string[] };
+// `removable`: an empty proposal deletes the file (an example taken out of the library).
+type Outside = { label: string; target: string; proposal: string; checked: string; base: string; applied: string; stale: string; validate: (text: string) => string[]; removable?: boolean };
 
 const accountOf = (folder: string, file: string): Outside => ({
   label: "the account config", target: file, proposal: join(folder, ACCOUNT_PROPOSAL), checked: join(folder, ".account-checked.yaml"),
   base: join(folder, ".account-base.yaml"), applied: join(folder, "ACCOUNT-CONFIG.applied.yaml"), stale: join(folder, ".account-stale.yaml"), validate: validateAccount,
 });
 
-// Every factory agent the request proposes, or has a checked copy of.
-function agentsOf(folder: string, dir: string): Outside[] {
+// Every agent file the request proposes, or has a checked copy of, in one folder outside the
+// repos: the factory agents (FACTORY-AGENTS/, .agents-*) or the example library (EXAMPLES/, .examples-*).
+function agentFilesOf(folder: string, dir: string, o: { proposal: string; hidden: string; label: string; removable?: boolean }): Outside[] {
   const names = new Set<string>();
-  for (const d of [join(folder, AGENTS_PROPOSAL), join(folder, ".agents-checked")])
+  for (const d of [join(folder, o.proposal), join(folder, `.${o.hidden}-checked`)])
     if (existsSync(d)) for (const f of readdirSync(d)) if (f.endsWith(".md")) names.add(f);
   return [...names].sort().map((f) => ({
-    label: `the factory agent ${f.slice(0, -3)}`, target: join(dir, f), proposal: join(folder, AGENTS_PROPOSAL, f),
-    checked: join(folder, ".agents-checked", f), base: join(folder, ".agents-base", f), applied: join(folder, "FACTORY-AGENTS.applied", f),
-    stale: join(folder, ".agents-stale", f), validate: (text) => validateFile(`agents/${f}`, text),
+    label: `${o.label} ${f.slice(0, -3)}`, target: join(dir, f), proposal: join(folder, o.proposal, f),
+    checked: join(folder, `.${o.hidden}-checked`, f), base: join(folder, `.${o.hidden}-base`, f), applied: join(folder, `${o.proposal}.applied`, f),
+    stale: join(folder, `.${o.hidden}-stale`, f), validate: (text) => validateFile(`agents/${f}`, text), removable: o.removable,
   }));
 }
+const agentsOf = (folder: string, dir: string) => agentFilesOf(folder, dir, { proposal: AGENTS_PROPOSAL, hidden: "agents", label: "the factory agent" });
+const examplesOf = (folder: string, dir: string) => agentFilesOf(folder, dir, { proposal: EXAMPLES_PROPOSAL, hidden: "examples", label: "the example", removable: true });
 
 const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : "");
 const write = (p: string, text: string) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text); };
@@ -265,13 +279,14 @@ function checkOutside(f: Outside): { ok: boolean; detail: string; diff?: string 
   const clear = () => { for (const p of [f.checked, f.base]) rmSync(p, { force: true }); };
   if (!existsSync(f.proposal)) { clear(); return null; }
   const text = readFileSync(f.proposal, "utf8");
-  const errors = f.validate(text);
+  const remove = !!f.removable && !text.trim();
+  const errors = remove ? [] : f.validate(text);
   if (errors.length) { clear(); return { ok: false, detail: `${basename(f.proposal)}: ${errors[0]}`.slice(0, 200) }; }
   const current = read(f.target);
   if (current === text) { clear(); return { ok: true, detail: `the proposal matches ${f.label}: nothing to apply` }; }
   write(f.base, current);
-  write(f.checked, text);
-  return { ok: true, detail: `${basename(f.proposal)} passes`, diff: unifiedDiff(current, text, f.target) };
+  write(f.checked, remove ? "" : text);
+  return { ok: true, detail: `${basename(f.proposal)} ${remove ? "removes it" : "passes"}`, diff: unifiedDiff(current, remove ? "" : text, f.target) };
 }
 
 // Merged: write the checked copy over the file, keeping a backup.
@@ -290,9 +305,12 @@ function applyOutside(db: Database, f: Outside, id: number, now: string): { appl
   mkdirSync(dirname(f.target), { recursive: true });
   const backup = existsSync(f.target) ? `${f.target}.bak-${now.replace(/[^0-9]/g, "").slice(0, 14)}-${id}` : null;
   if (backup) copyFileSync(f.target, backup);
-  const tmp = `${f.target}.factory-${process.pid}`;
-  writeFileSync(tmp, text);
-  renameSync(tmp, f.target); // whole or not at all: every factory reads this file
+  if (f.removable && !text) rmSync(f.target, { force: true }); // an empty proposal takes the example out
+  else {
+    const tmp = `${f.target}.factory-${process.pid}`;
+    writeFileSync(tmp, text);
+    renameSync(tmp, f.target); // whole or not at all: every factory reads this file
+  }
   mkdirSync(dirname(f.applied), { recursive: true });
   renameSync(f.checked, f.applied);
   rmSync(f.base, { force: true });
@@ -321,6 +339,19 @@ export function proposeFactoryAgent(dir: string, id: number, name: string, agent
   return out;
 }
 
+// `factory examples propose <id> <name>`: an example in the library as it is (yours, else the
+// shipped one), to edit. A new example: name one to start from (`from`). Emptied, it removes the example.
+export function proposeExample(dir: string, id: number, name: string, from?: string, home?: string) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new Error(`an example's name is lowercase words with dashes, like spec-writer, not "${name}"`);
+  if (isFactoryAgent(name)) throw new Error(`${name} is a factory agent, not an example; use factory agents propose`);
+  const out = join(folderOf(dir, id), EXAMPLES_PROPOSAL, `${name}.md`);
+  if (existsSync(out)) return out;
+  const src = exampleFile(name, home) ?? (from ? exampleFile(from, home) : null);
+  if (!src) throw new Error(from ? `no example ${from} to start from` : `no example ${name} yet; to add one, name the closest to start from: factory examples propose ${id} ${name} --from <example>`);
+  write(out, readFileSync(src.file, "utf8"));
+  return out;
+}
+
 // The factory check's account part; null when the request doesn't touch the account config.
 export function checkAccount(dir: string, id: number, file = accountFile()): { ok: boolean; detail: string } | null {
   const folder = folderOf(dir, id);
@@ -335,28 +366,39 @@ export function checkAccount(dir: string, id: number, file = accountFile()): { o
   return { ok: true, detail: `${ACCOUNT_PROPOSAL} passes; its diff goes on the PR and it applies when the PR merges` };
 }
 
-// The factory check's factory-agents part; null when the request proposes none.
-export function checkFactoryAgents(dir: string, id: number, agents = factoryAgentsDir()): { ok: boolean; detail: string } | null {
-  const folder = folderOf(dir, id);
-  const results = agentsOf(folder, agents).map((f) => ({ f, r: checkOutside(f) })).filter((x) => x.r);
+// The factory check's part for one folder of agent files outside the repos; null when the request proposes none.
+function checkAgentFiles(files: Outside[], o: { folder: string; diff: string; heading: string; target: string; what: string }): { ok: boolean; detail: string } | null {
+  const results = files.map((f) => ({ f, r: checkOutside(f) })).filter((x) => x.r);
   const diffs = results.filter((x) => x.r!.diff);
-  if (!diffs.length) rmSync(join(folder, AGENTS_DIFF), { force: true });
+  if (!diffs.length) rmSync(join(o.folder, o.diff), { force: true });
   if (!results.length) return null;
   const bad = results.find((x) => !x.r!.ok);
   if (bad) return { ok: false, detail: bad.r!.detail };
-  if (diffs.length) writeFileSync(join(folder, AGENTS_DIFF), [
-    "## The factory agents (~/.factory/agents/)", "",
-    `Applied to \`${agents}\` only after this merges, each with a backup beside it. Not part of the repo.`, "",
+  if (diffs.length) writeFileSync(join(o.folder, o.diff), [
+    o.heading, "",
+    `Applied to \`${o.target}\` only after this merges, each with a backup beside it. Not part of the repo.`, "",
     ...diffs.flatMap((x) => ["```diff", x.r!.diff!, "```", ""]),
   ].join("\n"));
-  return { ok: true, detail: diffs.length ? `${diffs.map((x) => basename(x.f.target, ".md")).join(", ")} pass; the diff goes on the PR and applies when it merges` : "the proposals match the factory agents: nothing to apply" };
+  return { ok: true, detail: diffs.length ? `${diffs.map((x) => basename(x.f.target, ".md")).join(", ")} pass; the diff goes on the PR and applies when it merges` : `the proposals match ${o.what}: nothing to apply` };
+}
+
+// The factory check's factory-agents part; null when the request proposes none.
+export function checkFactoryAgents(dir: string, id: number, agents = factoryAgentsDir()) {
+  const folder = folderOf(dir, id);
+  return checkAgentFiles(agentsOf(folder, agents), { folder, diff: AGENTS_DIFF, heading: "## The factory agents (~/.factory/agents/)", target: agents, what: "the factory agents" });
+}
+
+// The factory check's example-library part; null when the request proposes none.
+export function checkExamples(dir: string, id: number, examples = examplesDir()) {
+  const folder = folderOf(dir, id);
+  return checkAgentFiles(examplesOf(folder, examples), { folder, diff: EXAMPLES_DIFF, heading: "## The example library (~/.factory/examples/agents/)", target: examples, what: "the example library" });
 }
 
 // A checked change outside the repo waits to be applied: a request with nothing else
 // to merge needs no PR (the account config, the factory agents, a cleanup).
 export const accountPending = (dir: string, id: number) => existsSync(accountOf(folderOf(dir, id), accountFile()).checked);
 export const outsidePending = (dir: string, id: number) =>
-  accountPending(dir, id) || agentsOf(folderOf(dir, id), factoryAgentsDir()).some((f) => existsSync(f.checked)) || cleanupPending(dir, id);
+  accountPending(dir, id) || [...agentsOf(folderOf(dir, id), factoryAgentsDir()), ...examplesOf(folderOf(dir, id), examplesDir())].some((f) => existsSync(f.checked)) || cleanupPending(dir, id);
 
 // Merged: write the checked copy over the account config, keeping a backup.
 export function applyAccount(db: Database, o: { dir: string; id: number; now: string; file?: string }) {
@@ -364,14 +406,14 @@ export function applyAccount(db: Database, o: { dir: string; id: number; now: st
 }
 
 // Every tick: what a merged request changes outside its repo is applied, once each (the
-// checked copy moves aside): the account config, the factory agents, then a cleanup.
+// checked copy moves aside): the account config, the factory agents, the examples, then a cleanup.
 // `vacuum`: a cleanup asked for one, which the caller runs outside its transaction.
-export function applyMerged(db: Database, o: { dir: string; now: string; run: Run; file?: string; agents?: string; log?: (s: string) => void }) {
+export function applyMerged(db: Database, o: { dir: string; now: string; run: Run; file?: string; agents?: string; examples?: string; log?: (s: string) => void }) {
   const ids = (db.query("SELECT id FROM tickets WHERE blueprint = ? AND state = 'merged' ORDER BY id").all(BLUEPRINT) as { id: number }[]).map((r) => r.id);
   let vacuum = false;
   for (const id of ids.filter((i) => outsidePending(o.dir, i))) {
     const folder = folderOf(o.dir, id);
-    for (const f of [accountOf(folder, o.file ?? accountFile()), ...agentsOf(folder, o.agents ?? factoryAgentsDir())]) {
+    for (const f of [accountOf(folder, o.file ?? accountFile()), ...agentsOf(folder, o.agents ?? factoryAgentsDir()), ...examplesOf(folder, o.examples ?? examplesDir())]) {
       const r = applyOutside(db, f, id, o.now);
       if (r) o.log?.(`factory: #${id}: ${r.applied ? `applied ${f.label} (${r.detail})` : r.detail}`);
     }

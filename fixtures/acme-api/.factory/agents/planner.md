@@ -1,4 +1,7 @@
 ---
+# Example plan agent: turns INTENT.md into verifiable steps.
+# Territory: SLICES.md for its ticket. In: INTENT.md and the code. Out: SLICES.md.
+# Asks: nobody; every acceptance check must land in some slice. Never: write code.
 role: plan
 territory: "SLICES.md for its ticket: the work in verifiable steps"
 model: claude-opus-5-5

@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import { whyNotTunable } from "./learn.ts";
 import { PLACEHOLDERS, templateErrors } from "./prompts.ts";
 import { featureErrors } from "./features.ts";
-import { FACTORY_AGENTS, isFactoryAgent } from "./agents.ts";
+import { exampleFile, FACTORY_AGENTS, isFactoryAgent } from "./agents.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -272,19 +272,24 @@ function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
   const parse = (p: string) => { try { return Bun.YAML.parse(readFileSync(join(dir, p), "utf8")) as any; } catch { return null; } };
   const out: Record<string, string[]> = {};
   const add = (p: string, e: string) => (out[p] ??= []).push(e);
+  // A missing agent the example library has: say where to copy it from (agents.ts).
+  const noAgent = (n: string) => {
+    const ex = exampleFile(n);
+    return `no file agents/${n}.md${ex ? `; the example library has one: copy it from ${ex.label.replace(/ \(shipped\)$/, "")}${ex.label.startsWith("~") ? "" : " in the factory's repo"}, or ask Overwatch` : ""}`;
+  };
   for (const p of paths) {
     if (kindOf(p) === "blueprint") {
       const b = parse(p);
-      if (typeof b?.orchestrator === "string" && !agents.has(b.orchestrator)) add(p, `orchestrator: no file agents/${b.orchestrator}.md`);
+      if (typeof b?.orchestrator === "string" && !agents.has(b.orchestrator)) add(p, `orchestrator: ${noAgent(b.orchestrator)}`);
       for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
-        if (typeof s?.agent === "string" && !agents.has(s.agent)) add(p, `stages.${id}.agent: no file agents/${s.agent}.md`);
+        if (typeof s?.agent === "string" && !agents.has(s.agent)) add(p, `stages.${id}.agent: ${noAgent(s.agent)}`);
       for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
         if (typeof s?.prompt !== "string") continue;
         else if (s.prompt !== "stage" && s.prompt in PLACEHOLDERS) add(p, `stages.${id}.prompt: ${s.prompt} is not a stage template (it is for ${s.prompt === "groom" ? "grooming" : s.prompt === "handoff" ? "handoffs" : "overwatch"})`);
         else if (!prompts.has(s.prompt)) add(p, `stages.${id}.prompt: no file prompts/${s.prompt}.md`);
     } else if (p === "factory.yaml") {
       const g = parse(p)?.grooming;
-      if (typeof g?.agent === "string" && !agents.has(g.agent)) add(p, `grooming.agent: no file agents/${g.agent}.md`);
+      if (typeof g?.agent === "string" && !agents.has(g.agent)) add(p, `grooming.agent: ${noAgent(g.agent)}`);
       for (const n of Array.isArray(g?.blueprints) ? g.blueprints : []) if (!blueprints.has(n)) add(p, `grooming.blueprints: no file blueprints/${n}.yaml`);
     } else if (kindOf(p) === "trigger") {
       const n = parse(p)?.blueprint;

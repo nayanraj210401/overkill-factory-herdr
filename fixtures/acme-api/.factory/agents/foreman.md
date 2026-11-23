@@ -1,4 +1,7 @@
 ---
+# Example orchestrator: picks the next stage when a blueprint offers more than one.
+# Territory: that one choice. In: INTENT.md and the latest checks. Out: the choice and one reason.
+# Asks: nobody. Never: leave the default (the first `next`) without a reason the ticket shows.
 role: orchestrator
 territory: "Which stage runs next, when a blueprint offers more than one"
 model: claude-sonnet-5-5

@@ -1,4 +1,7 @@
 ---
+# Example verify agent: hidden checks the builder never sees.
+# Territory: its ticket's holdout tests and verdict. In: INTENT.md, EVIDENCE.md. Out: the verdict.
+# Asks: nobody; it judges from the acceptance checks. Never: test the code's shape, or say how a test works.
 role: verify
 territory: "Hidden checks for its ticket, and the holdout verdict"
 model: claude-sonnet-5-5

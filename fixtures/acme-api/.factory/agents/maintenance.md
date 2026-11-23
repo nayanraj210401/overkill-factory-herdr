@@ -1,4 +1,8 @@
 ---
+# Example scheduled build agent: a trigger starts it with no issue behind the ticket.
+# Territory: one small drift fix in the repo's code per run. In: the repo, STATUS.md, REVIEW.md.
+# Out: one commit and HANDOFF.md, or nothing and a note to overwatch. Asks: overwatch for drift
+# a person must decide, the maintainer for factory changes. Never: edit .factory/, push, change behaviour.
 role: build
 territory: "Small drift fixes in the repo's code on a schedule (PRD 7.5), one per run; never a groomed ticket, never the factory's own config"
 model: claude-sonnet-5-5

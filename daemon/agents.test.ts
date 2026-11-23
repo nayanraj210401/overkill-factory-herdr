@@ -2,7 +2,7 @@ import { afterEach, test, expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FACTORY_AGENTS, SHIPPED_AGENTS, SHIPPED_REPO_AGENTS, agentFile, agentRepos, installFactoryAgents, loadAgent } from "./agents.ts";
+import { FACTORY_AGENTS, SHIPPED_AGENTS, SHIPPED_EXAMPLES, agentFile, agentRepos, exampleFile, installExamples, installFactoryAgents, loadAgent, neededAgents } from "./agents.ts";
 import { validateDir, validateFile } from "./validate.ts";
 import { main, paths } from "./cli.ts";
 import { open, setRepo } from "./db.ts";
@@ -44,8 +44,8 @@ test("a repo agent loads from the repo's .factory/agents, and differs per repo",
   expect(loadAgent(a, "reviewer")?.prompt).toContain("Grade the diff against INTENT.md");
   expect(loadAgent(b, "reviewer")).toMatchObject({ role: "review", territory: "Payments diffs", prompt: "Be strict about payments." });
   expect(loadAgent(a, "ghost")).toBeNull();
-  // No repo has it: the default shipped with the factory (what setup copies into a repo).
-  expect(loadAgent(null, "reviewer")?.prompt).toBe(loadAgent(SHIPPED_REPO_AGENTS.replace(/\/\.factory\/agents$/, ""), "reviewer")?.prompt);
+  // No repo has it: nothing. The shipped examples are never run for a stage.
+  expect(loadAgent(null, "reviewer")).toBeNull();
   // ~/.factory/agents holds factory agents only: a reviewer there is not read.
   const h = process.env.FACTORY_HOME!;
   mkdirSync(join(h, "agents"));
@@ -55,14 +55,18 @@ test("a repo agent loads from the repo's .factory/agents, and differs per repo",
 
 test("every shipped agent passes the schema check and names its territory", () => {
   expect(readdirSync(SHIPPED_AGENTS).sort()).toEqual([...FACTORY_AGENTS].map((n) => `${n}.md`).sort());
-  for (const dir of [SHIPPED_AGENTS, join(FIXTURE, "agents")])
+  for (const dir of [SHIPPED_AGENTS, SHIPPED_EXAMPLES, join(FIXTURE, "agents")])
     for (const f of readdirSync(dir)) {
       const text = readFileSync(join(dir, f), "utf8");
       expect([f, validateFile(`agents/${f}`, text)]).toEqual([f, []]);
       expect([f, typeof loadAgentText(text).territory]).toEqual([f, "string"]);
     }
-  // The repo fixture (what setup copies into a repo) holds no factory agent.
-  for (const n of FACTORY_AGENTS) expect(existsSync(join(FIXTURE, "agents", `${n}.md`))).toBe(false);
+  // The example library holds no factory agent, and the sample repo's agents are its copies (scripts/gen.mjs).
+  for (const n of FACTORY_AGENTS) expect(existsSync(join(SHIPPED_EXAMPLES, `${n}.md`))).toBe(false);
+  expect(readdirSync(join(FIXTURE, "agents")).sort()).toEqual(readdirSync(SHIPPED_EXAMPLES).sort());
+  for (const f of readdirSync(SHIPPED_EXAMPLES)) expect(readFileSync(join(FIXTURE, "agents", f), "utf8")).toBe(readFileSync(join(SHIPPED_EXAMPLES, f), "utf8"));
+  // Each example says, in a comment atop its header, what makes it a good one.
+  for (const f of readdirSync(SHIPPED_EXAMPLES)) expect([f, readFileSync(join(SHIPPED_EXAMPLES, f), "utf8")]).toEqual([f, expect.stringMatching(/^---\n# Example [^\n]+\n(# [^\n]+\n)*# [^\n]*Never: /)]);
   expect(validateFile("agents/x.md", agentText("review", "p", "territory: [a]\n"))).toEqual(["territory: expected text, got a list"]);
 });
 const loadAgentText = (text: string) => Bun.YAML.parse(text.split("\n---\n")[0].slice(4)) as Record<string, unknown>;
@@ -80,12 +84,43 @@ test("setup writes the factory agents once, and never overwrites one", () => {
   expect(installFactoryAgents()).toEqual(["babysitter"]);
 });
 
+test("setup installs the example library once each, never overwriting one, and adds new shipped ones", () => {
+  const h = home();
+  const shipped = readdirSync(SHIPPED_EXAMPLES).map((f) => f.slice(0, -3)).sort();
+  expect(installExamples()).toEqual(shipped);
+  const lib = join(h, "examples", "agents");
+  for (const n of shipped) expect(readFileSync(join(lib, `${n}.md`), "utf8")).toBe(readFileSync(join(SHIPPED_EXAMPLES, `${n}.md`), "utf8"));
+  // Yours: an edited shipped one and one of your own. Neither is touched; a removed one comes back alone.
+  writeFileSync(join(lib, "reviewer.md"), agentText("review", "MY REVIEWER"));
+  writeFileSync(join(lib, "migrator.md"), agentText("build", "MY MIGRATOR"));
+  rmSync(join(lib, "planner.md"));
+  expect(installExamples()).toEqual(["planner"]);
+  expect(readFileSync(join(lib, "reviewer.md"), "utf8")).toContain("MY REVIEWER");
+  expect(readFileSync(join(lib, "migrator.md"), "utf8")).toContain("MY MIGRATOR");
+  // Looked up yours first, then the shipped one.
+  expect(exampleFile("reviewer")).toEqual({ file: join(lib, "reviewer.md"), label: "~/.factory/examples/agents/reviewer.md" });
+  rmSync(join(lib, "builder.md"));
+  expect(exampleFile("builder")).toEqual({ file: join(SHIPPED_EXAMPLES, "builder.md"), label: "examples/agents/builder.md (shipped)" });
+  expect(exampleFile("ghost")).toBeNull();
+});
+
+test("a repo needs only the agents its blueprints and grooming name", () => {
+  const d = mkdtempSync(join(tmpdir(), "needed-"));
+  mkdirSync(join(d, "blueprints"));
+  writeFileSync(join(d, "factory.yaml"), "name: t\ngrooming: { agent: triager, blueprints: [tiny] }\n");
+  writeFileSync(join(d, "blueprints/tiny.yaml"), "name: tiny\norchestrator: foreman\nstart: a\nstages:\n  a: { agent: builder, next: [b] }\n  b: { agent: maintainer, next: [end] }\n");
+  expect(neededAgents(d)).toEqual(["builder", "foreman", "triager"]); // the maintainer is a factory agent
+  expect(neededAgents(FIXTURE)).toEqual(readdirSync(SHIPPED_EXAMPLES).map((f) => f.slice(0, -3)).sort());
+});
+
 test("factory init writes the factory agents; factory validate checks them and warns about a repo's copy", () => {
   const h = home(), r = repo();
   const out: string[] = [];
   main(["init", "--repo", "acme/api", "--path", r, "--name", "acme-api"], (s) => out.push(s));
   expect(out.join("\n")).toContain("the factory agents (overwatch, babysitter, maintainer, learner) are in");
   expect(readdirSync(join(h, "agents")).sort()).toEqual(["babysitter.md", "learner.md", "maintainer.md", "overwatch.md"]);
+  expect(out.join("\n")).toContain("the example agents (");
+  expect(readdirSync(join(h, "examples", "agents")).sort()).toEqual(readdirSync(SHIPPED_EXAMPLES).sort());
   // The shipped factory blueprint names the maintainer, which has no file in the repo: not dangling.
   expect(validateDir(join(r, ".factory")).filter((x) => x.errors.length)).toEqual([]);
   writeFileSync(join(r, ".factory/agents/overwatch.md"), agentText("overwatch", "mine"));
@@ -99,10 +134,16 @@ test("factory init writes the factory agents; factory validate checks them and w
     const text = out.join("\n");
     expect(text).toContain("! agents/overwatch.md\n    ignored: overwatch is a factory agent");
     expect(text).toContain(`✓ ${join(h, "agents/maintainer.md")}`);
+    expect(text).toContain(`✓ ${join(h, "examples/agents/builder.md")}`); // the example library is checked too
     writeFileSync(join(h, "agents/learner.md"), agentText("learn", "x", "nope: 1\n"));
     out.length = 0;
     expect(() => main(["validate", "--name", "acme-api"], (s) => out.push(s))).toThrow("files have problems");
     expect(out.join("\n")).toContain("learner.md\n    nope: unknown key");
+    writeFileSync(join(h, "agents/learner.md"), readFileSync(join(SHIPPED_AGENTS, "learner.md"), "utf8"));
+    writeFileSync(join(h, "examples/agents/migrator.md"), agentText("build", "x", "nope: 1\n"));
+    out.length = 0;
+    expect(() => main(["validate", "--name", "acme-api"], (s) => out.push(s))).toThrow("1 of");
+    expect(out.join("\n")).toContain("examples/agents/migrator.md\n    nope: unknown key");
   } finally { process.chdir(cwd); }
 });
 
@@ -120,7 +161,7 @@ function twoRepos() {
   return { db, api, web };
 }
 
-test("a stage's agent loads from the repo its ticket works in, then the lead repo, then the shipped default", () => {
+test("a stage's agent loads from the repo its ticket works in, then the lead repo, and never from the examples", () => {
   const { db, api, web } = twoRepos();
   writeFileSync(join(web, ".factory/agents/reviewer.md"), agentText("review", "Review the web way."));
   writeFileSync(join(api, ".factory/agents/reviewer.md"), agentText("review", "Review the api way."));
@@ -133,10 +174,12 @@ test("a stage's agent loads from the repo its ticket works in, then the lead rep
   rmSync(join(web, ".factory/agents/reviewer.md"));
   expect(loadAgent(agentRepos(db, 1, api), "reviewer")?.prompt).toBe("Review the api way.");
   expect(agentFile(agentRepos(db, 1, api), "reviewer")?.label).toBe(`${join(api, ".factory/agents/reviewer.md")} (the lead repo's)`);
-  // Neither has one: the shipped default.
+  // Neither has one: none, even with the example library installed (examples are never run).
   rmSync(join(api, ".factory/agents/reviewer.md"));
-  expect(agentFile(agentRepos(db, 1, api), "reviewer")).toEqual({ file: join(SHIPPED_REPO_AGENTS, "reviewer.md"), label: ".factory/agents/reviewer.md (shipped)" });
-  expect(loadAgent(agentRepos(db, 1, api), "reviewer")?.prompt).toContain("Grade the diff against INTENT.md");
+  installExamples();
+  expect(exampleFile("reviewer")).not.toBeNull();
+  expect(agentFile(agentRepos(db, 1, api), "reviewer")).toBeNull();
+  expect(loadAgent(agentRepos(db, 1, api), "reviewer")).toBeNull();
   // A bad file in the repo the stage works in fails loudly; it doesn't fall back.
   writeFileSync(join(web, ".factory/agents/reviewer.md"), agentText("review", "x", "colour: blue\n"));
   expect(() => loadAgent(agentRepos(db, 1, api), "reviewer")).toThrow(".factory/agents/reviewer.md: colour: unknown key");
@@ -195,7 +238,7 @@ test("factory validate checks every repo's .factory/agents/", () => {
     expect(() => main(["validate", "--name", "two"], (s) => out.push(s))).toThrow("1 of");
     const text = out.join("\n");
     expect(text).toContain("✗ acme/web .factory/agents/reviewer.md\n    nope: unknown key");
-    expect(text.match(/agents\/builder\.md/g)).toHaveLength(1); // the lead's own, once
+    expect(text.match(/^. agents\/builder\.md$/gm)).toHaveLength(1); // the lead's own, once (and the example's, apart)
     writeFileSync(join(web, ".factory/agents/reviewer.md"), agentText("review", "fine", 'territory: "Web diffs"\n'));
     out.length = 0;
     main(["validate", "--name", "two"], (s) => out.push(s));

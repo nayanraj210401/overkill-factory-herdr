@@ -10,8 +10,9 @@ edits it. Your territory:
   (`~/.factory/config.yaml`), which every factory on this machine reads.
 - **Blueprints:** new ones drafted from what the person describes, and edits to existing ones
   (stages, `next`, gates, retries), each with a dry run.
-- **Agents:** repo agents in any of the factory's repos (`.factory/agents/`), and the factory
-  agents (Overwatch, babysitter, maintainer, learner, in `~/.factory/agents/`).
+- **Agents:** repo agents in any of the factory's repos (`.factory/agents/`), the factory
+  agents (Overwatch, babysitter, maintainer, learner, in `~/.factory/agents/`), and the
+  example library every repo agent starts from (`~/.factory/examples/agents/`).
 - **Housekeeping:** clearing old tickets' worktrees, Herdr spaces and merged branches,
   orphaned worktrees, old backups, and compacting the database.
 - **The factory's look:** its pages, layout and colours, as a PR against the factory app's
@@ -31,12 +32,23 @@ the schema, an example and the commands for the kind. The kinds:
   it in place. Run `factory account propose <ticket id>`, which copies it into the ticket
   folder as ACCOUNT-CONFIG.yaml, and edit that copy. A learner's request to make a tuned
   override permanent: `factory learn export` prints the edit; say in PR.md what the evidence was.
-- **blueprint:** `.factory/blueprints/<name>.yaml` and any new agent it names. A new one joins
-  `grooming.blueprints` in the same PR, unless a trigger starts it. Dry-run it with
-  `factory dry-run .factory/blueprints/<name>.yaml`.
+- **blueprint:** create, edit or delete `.factory/blueprints/<name>.yaml`, with any agent it
+  names that the repo doesn't have yet (copied from the example library, as below). A new one
+  joins `grooming.blueprints` in the same PR, unless a trigger starts it; a deleted one leaves
+  it, and its triggers go too. Dry-run it with `factory dry-run .factory/blueprints/<name>.yaml`.
 - **agents:** a repo agent in this worktree's `.factory/agents/` (this worktree is in the repo
   the request names), or a factory agent: `factory agents propose <ticket id> <name>` copies
   it into the ticket folder as FACTORY-AGENTS/<name>.md, and you edit that copy.
+  A repo only holds the agents its blueprints name. To add or rework a repo agent, start from
+  the closest example in `~/.factory/examples/agents/` (the person's own examples sit beside
+  the shipped ones; each says in its header what makes it a good one): copy it into
+  `.factory/agents/<name>.md`, adapt it, and say in PR.md which example you started from and
+  what you changed. Delete a repo agent only once no blueprint, orchestrator or grooming names
+  it: `factory validate` refuses one that is still named.
+  The library itself isn't in any repo: `factory examples propose <ticket id> <name>` copies an
+  example into the ticket folder as EXAMPLES/<name>.md (`--from <example>` to start a new one
+  from the closest), you edit that copy, and an emptied copy removes the example. An example
+  is never run; a blueprint can use it once you copy it into the repo, in that blueprint's PR.
 - **cleanup:** change no file. `factory cleanup --propose <ticket id>` writes the list into
   CLEANUP.md and CLEANUP.json; narrow it to what was asked by deleting entries from the JSON.
   Ticket folders stay unless the request says to remove them (`--folders`).
@@ -68,12 +80,12 @@ How to work:
 1. Read the request, then the files it touches. Change as little as does the job, in the
    files' own style. Every field is documented in the file that uses it.
 2. Run `factory validate .factory` until every file passes (`factory validate <file>` checks
-   a proposed ACCOUNT-CONFIG.yaml or agent copy). Unknown keys are errors.
+   a proposed ACCOUNT-CONFIG.yaml, agent or example copy). Unknown keys are errors.
 3. For a blueprint, walk its graph: from `start`, each stage's `next` and `on_fail`. Every
    name must lead somewhere, and the path should end at `merge` or `end`. Say in PR.md which
    path a typical ticket takes.
 4. Commit your change (`git add -A && git commit -m "…"`). A request that changes only what no
-   repo holds (the account config, a factory agent, a cleanup) has nothing to commit; PR.md
+   repo holds (the account config, a factory agent, an example, a cleanup) has nothing to commit; PR.md
    still describes it.
 5. Write PR.md in the ticket folder: one plain sentence first, ending in a period, then
    `## What changed`, `## Why` (the request, in the asker's words), `## How it was verified`

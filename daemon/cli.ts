@@ -18,10 +18,10 @@ import { parseTokens } from "../lib/model.js";
 import { service, servicePid } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { validateAccount, validateDir, validateFile } from "./validate.ts";
-import { factoryAgentFiles, factoryAgentsDir, installFactoryAgents } from "./agents.ts";
+import { exampleFiles, examplesDir, factoryAgentFiles, factoryAgentsDir, installExamples, installFactoryAgents } from "./agents.ts";
 import { accountFile } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
-import { applyMerged, isKind, proposeAccount, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
+import { applyMerged, isKind, proposeAccount, proposeExample, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
 import { cleanupPlan, planMarkdown, proposeCleanup } from "./cleanup.ts";
 import { learnerDigest, learnerDue, learnerHold, learningHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
 import { noteAttention, waiting } from "./attention.ts";
@@ -71,6 +71,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
                                      cleanup (housekeeping), look (the factory app's pages and colours, a PR to its develop); guessed from the words
   account propose <id>               the maintainer's copy of ~/.factory/config.yaml to edit, in the request's folder (applied when the request merges)
   agents propose <id> <name>         the maintainer's copy of a factory agent (~/.factory/agents/<name>.md) to edit, in the request's folder (applied when it merges)
+  examples propose <id> <name> [--from <example>]  the maintainer's copy of an example agent (~/.factory/examples/agents/<name>.md) to edit; a new one starts
+                                     from --from; emptied, it removes the example (applied when it merges)
   cleanup [--dry-run] [--days N] [--folders] [--propose <id>]  housekeeping: --dry-run lists what would go (tickets finished N days ago, default 14);
                                      --propose writes CLEANUP.md into a cleanup request; with neither, it files the request ("clean up")
   groom <id>                         the triage agent grooms a ticket that hasn't started
@@ -244,6 +246,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
     // The factory agents, one set for every repo, are checked with the account config.
     if (!sub) for (const f of factoryAgentFiles()) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`agents/${basename(f)}`, readFileSync(f, "utf8")) });
+    // So is the example library (yours and the shipped ones): never run, but copied into repos.
+    if (!sub) for (const f of exampleFiles()) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`agents/${basename(f)}`, readFileSync(f, "utf8")) });
     // Every other repo of the factory: its own repo agents, which its tickets' stages run (agents.ts).
     if (!sub && existsSync(p.db)) {
       const db = open(p.db);
@@ -281,6 +285,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       change(db, () => { setMeta(db, "name", name); setRepo(db, { slug: repo !== "unknown" ? repo : originSlug(path) ?? repo, path, lead: true }); });
       const agents = installFactoryAgents();
       if (agents.length) log(`the factory agents (${agents.join(", ")}) are in ${factoryAgentsDir().replace(homedir(), "~")}/, one set for every repo`);
+      const examples = installExamples();
+      if (examples.length) log(`the example agents (${examples.join(", ")}) are in ${examplesDir().replace(homedir(), "~")}/, for new repo agents to start from`);
     } else if (cmd === "setup") {
       const lead = needLead(db);
       if (sub === "skip" || sub === "unskip") {
@@ -315,6 +321,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         // The factory agents, once: a file already there is never overwritten.
         const agents = installFactoryAgents();
         if (agents.length && !json) log(`wrote the factory agents (${agents.join(", ")}) to ${factoryAgentsDir().replace(homedir(), "~")}/`);
+        const examples = installExamples();
+        if (examples.length && !json) log(`wrote the example agents (${examples.join(", ")}) to ${examplesDir().replace(homedir(), "~")}/`);
         const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db), migration: migrationRequest(db) });
         log(json ? JSON.stringify({ steps }) : showSteps(steps));
         return;
@@ -468,6 +476,13 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
       if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
       log(`${proposeFactoryAgent(p.dir, Number(rest[0]), rest[1])}: edit this copy; the factory check validates it and the PR shows the diff. It applies when the request merges.`);
+      return;
+    } else if (cmd === "examples") {
+      // The example library isn't in any repo either: the same, in EXAMPLES/ in the request's folder.
+      if (sub !== "propose" || !Number.isInteger(Number(rest[0])) || !rest[1]) throw new Error("usage: factory examples propose <request id> <example name> [--from <example>]");
+      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
+      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
+      log(`${proposeExample(p.dir, Number(rest[0]), rest[1], fromFlag ?? undefined)}: edit this copy (empty it to remove the example); the factory check validates it and the PR shows the diff. It applies when the request merges.`);
       return;
     } else if (cmd === "cleanup") {
       const days = daysFlag === null ? undefined : Number(daysFlag);
