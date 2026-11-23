@@ -588,11 +588,11 @@ Maintainer work counts against the daily budget and shows as its own line on the
 
 Everything runs locally by default, so a sleeping laptop stops running tickets and the babysitter. Claude Code can also run sessions in the cloud, so the factory can hand a ticket over and take it back.
 
-- **Move to cloud.** On a ticket page, `shift-c` commits the work in progress to the ticket's branch, pushes that branch (never main), and starts a Claude Code cloud session from it with HANDOFF.md as its brief. The ticket shows a cloud badge.
+- **Move to cloud.** On a ticket page, `shift-c` commits the work in progress to the ticket's branch, pushes that branch (never main), and starts a Claude Code cloud session from it. The session's brief is its starting prompt: where the ticket stands, the rules, what to report, and each remaining stage's agent prompt, read from the checkout's `.factory/` and inlined, since `.factory/` isn't on the branch. The ticket shows a cloud badge.
 - **Bring back.** `shift-l` waits for the cloud session to stop at a step boundary, fetches the branch into the ticket's worktree, imports what the session wrote, and resumes locally with a fresh session.
 - **Everything at once.** On Home, "Move running tickets to cloud" does it for every running ticket, for when you close the laptop. An optional setting does it automatically when the machine is about to sleep, and brings tickets back when it wakes.
 - **Watching while asleep.** A scheduled cloud agent can watch factory PRs and handle review rounds while the laptop sleeps, using the same verdict rules.
-- **What travels.** The branch, HANDOFF.md and the ticket's .md files, committed under `.factory-run/<ticket>/` on the branch and removed before the PR is marked ready. SQLite stays local: on return, the daemon reads that folder back into rows, including cost.
+- **What travels.** The branch and the ticket's .md files, committed under `.factory-run/<ticket>/` on the branch and removed before the PR is marked ready. Nothing from `.factory/` travels: not in the pack, not in the push. A branch that committed to `.factory/` stays local; `shift-c` refuses it. SQLite stays local: on return, the daemon reads that folder back into rows, including cost.
 
 Cloud runs keep the same gates, ready rules and hard stops.
 
@@ -609,7 +609,7 @@ artifacts:
 
 - **Who publishes.** Only an agent: the Artifact tool and the Claude Docs connector exist inside an interactive Claude Code session signed in to claude.ai, and no command or API publishes from outside one. A stage whose `output:` is listed ends with publishing it, as is (Markdown renders as a page), then `factory artifact <id> <file> <url>`. A handoff's next session publishes the handoff it starts from as HANDOFF.md.
 - **One link per file.** The daemon keeps each link in SQLite (`ticket_artifacts`). Every later session (a new stage run, a slice, a review round, a handoff) is given the link and republishes to it, so it never changes. Links start private; the person shares one from the page if they want.
-- **Who reads.** Every brief that points at the files also gives the links: stage and handoff briefs, CLOUD.md for `⇧C`, and ROUTINE.md beside each watched PR. A cloud session reads the plan with its own Artifact tool; the pack's copies still travel.
+- **Who reads.** Every brief that points at the files also gives the links: stage and handoff briefs, the cloud brief for `⇧C`, and ROUTINE.md beside each watched PR. A cloud session reads the plan with its own Artifact tool; the pack's copies still travel.
 - **Best-effort.** The local files stay the source of truth, and no ready rule reads a link. A failed publish (`factory artifact <id> <file> --fail <why>`), or a stage that ends with no new link, adds one line to the decision log and nothing else.
 - **What you see.** The Ticket page shows "Shared on claude.ai" with a link per file; status.json carries them.
 
@@ -633,6 +633,7 @@ The factory is defined by files in the checkout of the repo it works on. The dae
 - Adopting a repo (`factory init`, `factory repo add`, `factory setup write`) adds `/.factory/` to its `.git/info/exclude`, once. That is the common git dir, so every worktree shares it. The factory never writes a `.gitignore` into the repo. The daemon does the same for every registered repo when it starts.
 - Ticket worktrees have no `.factory/`. Every read (blueprints, agents, prompts, skills, triggers, a feature map under `.factory/`) comes from the registered checkout. `factory validate` in a worktree checks the checkout's.
 - A repo that already tracks `.factory/` is left alone in git. `factory validate`, `factory init` and Home say so, with the command to run yourself: `git rm -r --cached .factory && git commit`. Until then its tracked files are marked skip-worktree in the checkout, so a local edit is never staged (`git update-index --no-skip-worktree <file>` undoes it).
+- A cloud session gets what it needs from `.factory/` in its brief (agent prompts inlined), never on the branch. A ticket branch that commits under `.factory/` can't move to the cloud.
 - A ticket branch that commits anything under `.factory/` never reaches a PR. The pr stage waits with "this ticket changed .factory/, which stays local" until those commits come off the branch. The maintainer's requests are not guarded yet: they still edit `.factory/` in a worktree (see Changing the factory).
 
 Rules for every file:

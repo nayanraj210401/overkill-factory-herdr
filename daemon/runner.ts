@@ -331,7 +331,7 @@ function featureScenarios(db: Database, o: { id: number; repo: string; worktree:
 
 // The .factory/ files a ticket's branches committed, in every repo it works in (a repo's own
 // name first when it isn't the lead). `base`: where the lead's worktree started.
-function localChanges(run: Run, repos: { repo: string; lead: number; path: string; worktree: string | null }[], base?: string) {
+export function localChanges(run: Run, repos: { repo: string; lead: number; path: string; worktree: string | null }[], base?: string) {
   return repos.flatMap((r) => (r.worktree ? factoryChanges(run, r.path, r.worktree, r.lead ? base : undefined).map((f) => (r.lead ? f : `${r.repo}:${f}`)) : []));
 }
 

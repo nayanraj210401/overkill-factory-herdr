@@ -222,13 +222,13 @@ test("the watcher reads every repo's PR: one merged on GitHub is noted, comments
   expect(ticket().state).toBe("merged");
 });
 
-test("⇧C pushes every repo's branch and CLOUD.md names the others; ⇧L fast-forwards each", () => {
+test("⇧C pushes every repo's branch and the cloud brief names the others; ⇧L fast-forwards each", () => {
   const { db, dir, api, web, origins, run, rows } = crossFactory();
   const [wtApi, wtWeb] = rows().map((r) => r.worktree);
   writeFileSync(join(wtWeb, "web.txt"), "local work\n");
-  toCloud(db, { dir, repo: api, id: 7, run, now: "2026-11-21T10:20:00Z" });
+  const moved = toCloud(db, { dir, repo: api, id: 7, run, now: "2026-11-21T10:20:00Z" });
   expect(sh(["git", "-C", origins.web, "log", "-1", "--format=%s", "factory/7-wire-it"]).out).toBe("factory: hand #7 to a cloud session at implement");
-  expect(readFileSync(join(wtApi, ".factory-run/7/CLOUD.md"), "utf8")).toContain("This ticket changes 2 repos, each on the same branch `factory/7-wire-it`, already pushed: this one and `acme/web`.");
+  expect(moved.brief).toContain("This ticket changes 2 repos, each on the same branch `factory/7-wire-it`, already pushed: this one and `acme/web`.");
   // The cloud session pushes to web's branch.
   const elsewhere = mkdtempSync(join(tmpdir(), "cloud-"));
   sh(["git", "clone", "-q", "-b", "factory/7-wire-it", origins.web, elsewhere]);
