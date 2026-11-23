@@ -86,6 +86,7 @@ scripts/check.sh && scripts/sync.sh     # sync.sh restarts the service
 | Doc | What it is |
 | --- | --- |
 | [docs/setup.md](docs/setup.md) | Setting up on a new Mac: tools, install, pointing it at a repo, managed machines, troubleshooting |
+| [docs/flow-stack-skills.md](docs/flow-stack-skills.md) | Which flow-stack skills the factory should take, where each goes, and the build order |
 | [docs/plan.md](docs/plan.md) | The plan: layout and pages, agents, blueprints, ready rules, review loop, learning, budgets, away mode, peer review, milestones |
 | [docs/slices.md](docs/slices.md) | How each milestone was cut into slices |
 | [docs/prd.md](docs/prd.md) | The product requirements the plan implements |
