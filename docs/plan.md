@@ -71,7 +71,7 @@ Each page is drawn below the table. All share one sidebar.
 
 | Page | What it shows |
 | --- | --- |
-| Home | Needs you first (grooming questions, PRs ready to merge, parked tickets), what's running, and today's four numbers |
+| Home | Needs you first (an agent asking you in its terminal, PRs ready to merge, parked tickets), what's running, and today's four numbers |
 | Ticket | One ticket: its stage timeline (STATUS.md, HANDOFF.md), each stage with a plain summary, time and agent; ready rules; decisions made for you; once a PR exists, its watched badge and review rounds; a box to message the session running now. `e` splits in the live agent terminal; `1`–`4` show Plan, Checks, Questions and PR |
 | Tickets | Every ticket, merged ones included, filtered by state and searchable. Its Runs view (press r) lists every agent session instead: stage runs, babysitter fixes, maintenance and benchmark runs, each with its time, cost and transcript |
 | Overwatch | The overwatch agent (PRD 7.1) in a live Herdr terminal: ask what's blocked, start, pause or reorder tickets, and ask for changes to the factory, which it hands to the maintainer |
@@ -192,7 +192,7 @@ Every action is a click or a key, and each one is a single call to the daemon. T
 | `d` | The ticket's diff, in Herdr's `changes` panel |
 | `n` | New ticket: an issue link or a one-line goal |
 | `m` / `x` | Merge a ready PR (after a confirm) / send it back with a note |
-| `u` | Answer a question and restart a waiting ticket |
+| `u` | Answer a waiting ticket: an agent asking now opens its terminal (as `e`); a question with no live session is talked through, in a fresh session of its stage that asks you in its terminal; a park that isn't a question takes a note and restarts |
 | `p` | Pause or resume a ticket |
 | `shift-c / shift-l` | Move the ticket to a cloud session / bring it back to local |
 | `g r` | Reviews. `o` your pending review on GitHub, `a` approve (low risk, Approve verdict), `r` / `t` / `w` run, story only or wait on a PR that may not fit; in a review, `1`–`5` its tabs, `s` the story, `h` the noise |
@@ -246,7 +246,7 @@ Repo agents can differ per repo: a stricter reviewer for the payments repo, a bu
 - Babysitter → maintainer: "the same comment keeps coming back on factory PRs; turn it into a lint rule".
 - Babysitter or a repo agent → Overwatch: "#412 needs a product answer", which Overwatch brings to you.
 
-**Overwatch is the only agent that talks to you.** The rest reach you through it, or by flagging a ticket in Needs you when its agent waits in its terminal (a grooming question, a permission). A change to the factory is made at once, in place, whoever asked for it: the maintainer backs up each file first and says what it changed.
+**Overwatch is the only agent that talks to you.** The rest reach you through it, or by flagging a ticket in Needs you when its agent waits in its terminal (a question from grooming or any stage, a permission). A change to the factory is made at once, in place, whoever asked for it: the maintainer backs up each file first and says what it changed.
 
 ## Technical design
 
@@ -312,12 +312,14 @@ Once a ticket is groomed, the factory runs it to a ready PR on its own. What kee
 - PR.md follows the readable template (PRD 6.3).
 - The ticket stayed within its budget.
 
-**Grooming is the one stop.** As soon as an issue lands in your queue, the triage agent grooms it: it reads the ticket and the code, picks a blueprint, and asks its open questions in its own live terminal, with Claude Code's question prompt and its options. Needs you shows the ticket as waiting on you (decided 2026-11-22; nothing is posted to the issue); you open its terminal and answer there. Triage records each answer under Decisions in GROOMING.md, and you can change the blueprint it picked meanwhile. Any agent that stops to wait on you in its terminal shows in Needs you the same way. After grooming it runs to a ready PR without stopping. A question that only appears mid-run gets a best guess, recorded in GATES.md and listed in PR.md under "Decisions made for you".
+**Grooming is the one stop.** As soon as an issue lands in your queue, the triage agent grooms it: it reads the ticket and the code, picks a blueprint, and asks its open questions in its own live terminal, with Claude Code's question prompt and its options. Needs you shows the ticket as waiting on you (decided 2026-11-22; nothing is posted to the issue); you open its terminal and answer there. Triage records each answer under Decisions in GROOMING.md, and you can change the blueprint it picked meanwhile. Any agent that stops to wait on you in its terminal shows in Needs you the same way. After grooming it runs to a ready PR without stopping for anything it can settle itself. A question that only the person can settle and only appears mid-run is asked the same way, by the stage's agent in its own live terminal (decided 2026-11-23): its session stays open and waits, the ticket shows in Needs you as "<stage> asks you" while Herdr reports the agent `blocked`, and `e` (or the Ticket page's "Answer in terminal") opens that terminal. Nothing parks, no session ends, no retry is spent, and nothing goes to the issue. The agent writes the question and your answer in GATES.md and HANDOFF.md, so later sessions follow it. A routine engineering choice gets a best guess instead, listed in PR.md under "Decisions made for you".
 
 **Product questions are never ours to answer.** Grooming sorts every question into one of two kinds:
 
-- **Product** (what to build, for whom, what the user sees, pricing, wording, scope): it goes to the ticket's product owner as a comment on the issue, mentioning them, and shows in your Needs you as waiting on the PO. The factory never guesses one, not during grooming and not mid-run. A product question that turns up mid-run parks the ticket.
-- **Engineering** (how to build it): it comes to you. During grooming the ticket waits for your answer; mid-run the agent takes its best guess and lists it under "Decisions made for you".
+- **Product** (what to build, for whom, what the user sees, pricing, wording, scope): the factory never guesses one, not during grooming and not mid-run, and not while you're away: the agent asks in its terminal and waits for you. (The `issue` setting under `grooming.questions` still posts a grooming ticket's recorded questions to the issue for its product owner; mid-run questions never go there.)
+- **Engineering** (how to build it): one only you can settle is asked the same way; a routine one gets the agent's best guess, listed under "Decisions made for you".
+
+A ticket parked on a question by older code, or by a cloud session's RESULT.md, has no live session to ask you. `u` there is **Talk it through**: a fresh session of the stage it stopped at starts in its worktree, in a visible terminal labelled like any stage session, with the parked question and the ticket in its brief; it asks you with its question prompt first, then carries on, and its terminal opens over the page. `factory talk <id>` does the same, and `factory answer <id> <text>` still answers one for scripts. No screen shows an answer box for a question.
 
 The product owner is the issue's author unless the Project has a PO field; `grooming.product_owner` in `factory.yaml` can name one per repo.
 
@@ -328,7 +330,8 @@ The product owner is the issue's author unless the Project has a PO field; `groo
 | You touch the factory when | How often |
 | --- | --- |
 | A PR is ready: review it, then merge (`m`) or send it back with a note (`x`) | Every PR, unless its blueprint's merge gate is auto |
-| A ticket is parked: answer it and restart (`u`) | Only when stuck |
+| An agent asks you in its terminal: answer there (`e`) | Only when it can't settle something itself |
+| A ticket is parked: talk it through, or note and restart (`u`) | Only when stuck |
 | A benchmark shows a better setting: you edit `.factory/` | When you choose |
 | The day's budget is used up: raise it or wait | Rarely |
 | A ticket in grooming has questions: answer in Herdr or on the issue | Once per ticket, only if it has questions |
@@ -655,7 +658,7 @@ When tickets run in the cloud and you're away, nobody is there to ask, so the ag
 
 - **An agent pack per ticket.** Before a ticket moves to the cloud, the daemon assembles each agent's prompt in layers: the role prompt, your taste and rules (from `factory.yaml`, or your flow-stack profile after migration), the repo map, the lessons for the areas this ticket touches, and, for the babysitter, a few of your own past review verdicts on similar comments as examples. The pack is written to `.factory-run/<ticket>/agents/` on the branch, so the cloud runs exactly the agents your laptop would. It's assembled per ticket, never appended to, so prompts don't grow.
 - **The babysitter is checked against you before it runs alone.** A benchmark replays your past review comments and measures how often the babysitter's verdict (fix, push back, escalate) matches yours. Below the threshold (`away.min_agreement`, default 85%), it may not push back while you're away: it only fixes clear-cut comments and escalates the rest. The agreement rate is on Metrics.
-- **A stricter policy while away.** `away:` in `factory.yaml` narrows what runs unattended: which blueprints, a lower budget, how many review rounds, and areas that never run unattended (auth, payments). Grooming questions still wait for you, and merge stays human.
+- **A stricter policy while away.** `away:` in `factory.yaml` narrows what runs unattended: which blueprints, a lower budget, how many review rounds, and areas that never run unattended (auth, payments). Grooming questions, and any agent asking you in its terminal, still wait for you (an agent never guesses a product answer because you're away), and merge stays human.
 - **A digest when you're back.** Home opens with what happened while you were away: each run, every decision made for you, every pushback and escalation. Correcting a decision there becomes a lesson or a suggested prompt change, so the next pack decides more like you.
 
 The risk is a pack that sounds like you without deciding like you. The agreement benchmark is what catches that, so it ships before cloud handoff does.
@@ -874,7 +877,7 @@ Each ticket has one folder of Markdown in the factory's data folder, `~/.factory
 | INTENT.md | Goal, acceptance checks, approaches weighed | Spec agent |
 | SLICES.md | The plan: slices, their order, which are done | Plan agent |
 | EVIDENCE.md | Every check run, PASS or FAIL, with logs or screenshots | Daemon |
-| GATES.md | Grooming questions and their answers, plus any mid-run guesses | Daemon, from agents' rows |
+| GATES.md | Grooming questions and their answers, and the questions agents asked you mid-run in their terminals with your answers | Daemon, from agents' rows; agents, for what they asked you |
 | PR.md | One plain sentence, then what changed, why, how it was verified, risk, decisions made for you | PR stage |
 | REVIEW.md | Review comments, each with its verdict: fixed, pushed back, escalated | Daemon (babysitter) |
 | HANDOFF.md | Decisions and open items, so a fresh session resumes cold | Agents |

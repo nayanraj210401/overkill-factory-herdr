@@ -54,10 +54,10 @@ import { liveSession, SESSIONS } from "./globals.ts";
 import { liveRoster, rosterText, writeLive } from "./live.ts";
 import { ask as askAgent, askerOf, askTarget, deliverToGlobal, deliverToRepoAgents, doneAsk, doneAsks, noteText, openAsks, type AskResult, type Live } from "./ask.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, restoreLesson, retireLesson, setOverride, undoOverride, UPKEEP_EVERY, upkeepLessons } from "./learn.ts";
-import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
+import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, holdSuite, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
-import { advance, answer, autoMerge, checkReady, readFactory, mergeOnGithub, recordMerge, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, answer, talk, autoMerge, checkReady, readFactory, mergeOnGithub, recordMerge, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { publishFailed, recordArtifact } from "./artifacts.ts";
 import { migrateFlowStack } from "./migrate.ts";
 import { claudeConfig, MIGRATION_META, MIGRATION_REQUEST, migrationRequest, realProbe, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
@@ -84,12 +84,13 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
   repos <id> owner/name…             the repos a ticket that hasn't started works in (the lead is always one)
-  question <id> product|engineering <text…>  a grooming question (product ones go to the PO on the issue)
+  question <id> product|engineering <text…>  a grooming question (product ones go to the PO on the issue); a running ticket's agent asks in its terminal instead
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
   budget <id> <in>[/<out>]           set a ticket's token budget: 3M, or 3M/200k
   send-back <id> <note…>             a ready PR goes back to its fix stage with your note (REVIEW.md)
-  answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one)
+  answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one), for scripts
+  talk <id> [--json]                 a parked ticket's stage (or a grooming one's triage) starts fresh and asks you in its terminal first
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
   split <id> add <title…> [--scope text] [--keeps-work]  propose one part of a ticket that is really several, in order
   split <id> [approve|reject]        list a ticket's proposed parts / make them sub-issues / go on as one ticket
@@ -599,19 +600,12 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const id = Number(sub);
       if (!Number.isInteger(id)) throw new Error(`usage: factory ${cmd} <id>…`);
       let out = "";
-      const closing: string[] = [];
       change(db, () => {
         if (cmd === "groom") out = `#${id}: triage agent in ${startGrooming(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() })}`;
         else if (cmd === "pick") { pick(db, { repo: repoDir, id, blueprint: rest[0] ?? "", now: now() }); out = `#${id} runs the ${rest[0]} blueprint`; }
-        else if ((db.query("SELECT state FROM tickets WHERE id = ?").get(id) as { state: string } | null)?.state === "running") {
-          const q = askMidRun(db, { repo: repoDir, id, kind: rest[0] ?? "", text: rest.slice(1).join(" "), run: sh, now: now() });
-          out = `#${id}: Q${q.n} asked; the ticket is parked until it's answered. Stop work now.`;
-          closing.push(...q.terminals);
-        }
         else out = `#${id}: Q${ask(db, { id, kind: rest[0] ?? "", text: rest.slice(1).join(" "), now: now() })} asked`;
       });
       log(out);
-      for (const t of closing) closeFinished(t, id);
     } else if (cmd === "start") {
       const repoDir = needLead(db).path;
       let terminal: string | null = null;
@@ -652,6 +646,19 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       });
       log(r.children ? `#${sub}: split into ${r.children.map((c: number) => `#${c}`).join(", ")}` : r.rejected ? `#${sub}: kept as one ticket` : r.answered ? `#${sub}: answered ${r.answered.map((n: number) => `Q${n}`).join(", ")}; ${r.left ? `${r.left} open` : r.started ? "groomed and started" : "groomed, queued"}`
         : `#${sub}: back to ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
+    } else if (cmd === "talk") {
+      // `u` on a ticket waiting on a question with no live session: a fresh session asks you in its terminal.
+      const repoDir = needLead(db).path;
+      const id = Number(sub);
+      if (!Number.isInteger(id)) throw new Error("usage: factory talk <id> [--json]");
+      let r: { stage: string; terminal: string | null } | null = null;
+      change(db, () => {
+        const t = db.query("SELECT state FROM tickets WHERE id = ?").get(id) as { state: string } | null;
+        r = t?.state === "grooming" ? { stage: "groom", terminal: startGrooming(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }) }
+          : talk(db, { dir: p.dir, repo: repoDir, id });
+      });
+      const { stage, terminal } = r!;
+      return log(json ? JSON.stringify({ stage, terminal }) : `#${id}: the ${stage} agent asks you in ${terminal}`);
     } else if (cmd === "diff") {
       const repoDir = needLead(db).path;
       return log(ticketDiff(db, { repo: repoDir, id: Number(sub) }));
@@ -1063,9 +1070,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   // Sessions near their context limit: asked to hand off, or replaced by the next one. Before the exits below see them.
   change(db, () => watchContext(db, { dir: p.dir, repo: repoDir, run, now: new Date().toISOString(), log }));
   // A ticket in the cloud is out of sight until ⇧L brings it back: its sessions aren't watched.
-  const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.argv, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
+  const open_ = db.query(`SELECT s.id, s.ticket, s.stage, s.terminal, s.argv, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as
-    { id: number; ticket: number; terminal: string; argv: string; in_space: number; agent_seen: number; started_at: string }[];
+    { id: number; ticket: number; stage: string | null; terminal: string; argv: string; in_space: number; agent_seen: number; started_at: string }[];
   // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
   // A pr stage whose agent is still writing PR.md waits for it.
   for (const { id } of db.query(`SELECT id FROM tickets t WHERE state = 'running' AND stage = 'pr' AND location != 'cloud' AND resume_at IS NULL
@@ -1185,7 +1192,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     // Waiting on you in its terminal (a question, a prompt): Needs you says so until it moves on.
     try {
       let noted: string | null = null;
-      change(db, () => { noted = noteAttention(db, { ticket: s.ticket, terminal: s.terminal, waiting: !gone && waiting(info, { startedAt: s.started_at, now: Date.now() }), now: nowIso }); });
+      change(db, () => { noted = noteAttention(db, { ticket: s.ticket, terminal: s.terminal, stage: s.stage, waiting: !gone && waiting(info, { startedAt: s.started_at, now: Date.now() }), now: nowIso }); });
       if (noted === "waiting") log(`factory: #${s.ticket}'s agent in ${s.terminal} is waiting on you`);
     } catch (e) { log(`factory: #${s.ticket}: ${(e as Error).message}`); }
     if (!gone) continue;

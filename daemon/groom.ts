@@ -23,6 +23,7 @@ import { estimateBudget, startHold } from "./budget.ts";
 import { compact } from "../lib/model.js";
 import { loadPrompt, render } from "./prompts.ts";
 import { splitGate } from "./split.ts";
+import { ASK_IN_TERMINAL } from "./attention.ts";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
 
@@ -69,6 +70,11 @@ export function triageBrief(t: { id: number; title: string }, o: { slug: string;
   });
 }
 
+// Questions an earlier triager (or a scope change) left open: the new triager asks them first.
+export const earlierQuestions = (open: Question[]) => open.length
+  ? ["## Asked before and still open", "", "Nobody answered these yet. Ask the person each one that still matters, first, here in your terminal with your question tool; don't guess them.", "", ...open.map((q) => `- Q${q.n} (${q.kind}): ${q.text}`)].join("\n")
+  : "";
+
 // `factory groom <id>`: the triage agent starts on a ticket nobody has started.
 export function startGrooming(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
   const t = ticket(db, o.id);
@@ -78,8 +84,10 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const folder = join(o.dir, "tickets", String(o.id));
   mkdirSync(folder, { recursive: true });
   // Grooming again starts clean: what an earlier triager asked and nobody answered is withdrawn
-  // (the new one asks again if it still matters), and its GROOMING.md is kept aside, since a
-  // GROOMING.md is how a finished triage is told from one that died (finishGrooming).
+  // (the new one's brief carries it, to ask in its terminal if it still matters), and its
+  // GROOMING.md is kept aside, since a GROOMING.md is how a finished triage is told from one
+  // that died (finishGrooming).
+  const earlier = openQuestions(db, o.id);
   db.query("DELETE FROM questions WHERE ticket = ? AND answer IS NULL").run(o.id);
   const before = join(folder, "GROOMING.md");
   if (existsSync(before)) renameSync(before, join(folder, "GROOMING.before.md"));
@@ -89,7 +97,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const notes = notesForBrief(db, { agent: g.agent, repo: lead, ticket: o.id }); // notes left for the triage agent (ask.ts)
   const argv = giveAccess(argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, [
     triageBrief(t as any, { slug: lead, repo: o.repo, folder, blueprints: g.blueprints, prompt: withSkillsLine(agent?.prompt, agent), others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db, lead) }),
-    briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n")), agent, join(folder, ".skills", g.agent), from);
+    earlierQuestions(earlier), briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n")), agent, join(folder, ".skills", g.agent), from);
   // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
   const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir, { agent: g.agent, ticket: o.id, repo: lead });
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
@@ -144,43 +152,17 @@ export function chooseRepos(db: Database, o: { repo: string; id: number; slugs: 
   return slugs;
 }
 
-// `factory question <id> product|engineering <text…>`: asked while grooming.
+// `factory question <id> product|engineering <text…>`: asked while grooming. A running ticket's
+// agent asks in its own terminal instead (attention.ts): the command says so, and nothing parks.
 export function ask(db: Database, o: { id: number; kind: string; text: string; now: string }) {
   const t = ticket(db, o.id);
+  if (t.state === "running") throw new Error(ASK_IN_TERMINAL);
   if (t.state !== "grooming") throw new Error(`#${o.id} is ${t.state}; questions are asked while it's groomed`);
   if (o.kind !== "product" && o.kind !== "engineering") throw new Error("a question is product or engineering");
   if (!o.text.trim()) throw new Error("type the question");
   const n = ((db.query("SELECT MAX(n) AS m FROM questions WHERE ticket = ?").get(o.id) as { m: number | null }).m ?? 0) + 1;
   db.query("INSERT INTO questions (ticket, n, kind, text, asked_at) VALUES (?, ?, ?, ?, ?)").run(o.id, n, o.kind, o.text.trim(), o.now);
   return n;
-}
-
-// A question an agent asks mid-run (plan: a product question that turns up mid-run parks
-// the ticket). The ticket parks with it, its session ends, and a product question also
-// goes on the issue to the product owner. \`u\` (or factory answer) writes the answer to
-// GATES.md and restarts the stage, whose brief reads it there.
-export function askMidRun(db: Database, o: { repo: string; id: number; kind: string; text: string; run: Run; now: string }) {
-  const t = ticket(db, o.id);
-  if (t.state !== "running") throw new Error(`#${o.id} is ${t.state}; only a running ticket's agent asks mid-run`);
-  if (o.kind !== "product" && o.kind !== "engineering") throw new Error("a question is product or engineering");
-  const text = o.text.trim();
-  if (!text) throw new Error("type the question");
-  const n = ((db.query("SELECT MAX(n) AS m FROM questions WHERE ticket = ?").get(o.id) as { m: number | null }).m ?? 0) + 1;
-  db.query("INSERT INTO questions (ticket, n, kind, text, asked_at) VALUES (?, ?, ?, ?, ?)").run(o.id, n, o.kind, text, o.now);
-  const po = o.kind === "product" ? productOwner(db, o) : null;
-  const who = o.kind === "product" ? `product, for ${po ? `@${po}` : "the product owner"}` : "engineering";
-  db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?")
-    .run(`Q${n} from the ${t.stage} stage (${who}): ${text}`, o.now, o.id);
-  const ended = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
-  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
-  db.query("UPDATE stages SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'agent', ?, ?, ?)").run(o.id, `asked Q${n} mid-run and parked`, text, o.now);
-  if (o.kind === "product" && isIssue(o.id)) {
-    const body = `${po ? `@${po} ` : ""}The factory is building this and needs a product answer before it goes on:\n\n**Q${n}:** ${text}\n\nReply here with \`A${n}: …\`, or answer in Herdr.`;
-    const r = o.run(["gh", "issue", "comment", String(o.id), "--repo", needLead(db).slug, "--body", body]);
-    if (r.code !== 0) db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)").run(o.id, `couldn't post Q${n} on the issue`, r.out.slice(0, 200), o.now);
-  }
-  return { n, terminals: ended.map((e) => e.terminal) };
 }
 
 function productOwner(db: Database, o: { repo: string; id: number; run: Run }) {

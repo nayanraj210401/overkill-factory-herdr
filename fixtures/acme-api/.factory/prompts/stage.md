@@ -28,6 +28,8 @@ This session builds one slice of SLICES.md, and only that one: each slice gets a
 
 If REVIEW.md or GATES.md is there, act on every note in it: a person or a reviewer sent this ticket back, or a person answered why it stopped.
 
+If you need a decision nothing above settles and the code can't answer (product or engineering alike: what to build, for whom, what users see, wording, scope, or a trade-off only the person can make), ask the person here, in this session, with your question tool (AskUserQuestion): two to four concrete options, the one you'd pick first. Wait for the answer: never guess it, and don't stop or end the session while you wait, however long it takes. The factory shows the person this ticket needs them. Don't run `factory question`. Then write the question and the answer in {{folder}}/GATES.md under "## Q<n> · answered by the person in the terminal", and in HANDOFF.md's open decisions, so later sessions follow it, and carry on.
+
 If review comments are being fixed, start from {{folder}}/{{fix_brief}}. It holds only the comments to fix, with the reviewer's words, the lines and the acceptance checks each touches. You are a fresh session; don't look for the one that wrote the PR.
 
 If the work turns out to be several tickets, propose each part in order before you finish, one command each: factory split {{ticket.id}} add <title> --scope "<what it covers>". Add --keeps-work to the part the work done so far belongs to.

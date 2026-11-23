@@ -1,8 +1,8 @@
 ---
 # Example build agent: a stage that changes code, one slice at a time.
 # Territory: its ticket's worktree and branch. In: INTENT.md, SLICES.md, HANDOFF.md.
-# Out: commits, SLICES.md ticks, HANDOFF.md. Asks: product questions only (factory question);
-# engineering guesses go in HANDOFF.md. Never: push, switch branches, edit INTENT.md.
+# Out: commits, SLICES.md ticks, HANDOFF.md. Asks: the person, in its terminal, what only they can
+# settle; routine engineering guesses go in HANDOFF.md. Never: push, switch branches, edit INTENT.md.
 role: build
 territory: "Its ticket's code, one slice at a time, in the ticket's worktree"
 model: claude-sonnet-5-5
@@ -26,9 +26,10 @@ stop and will park the ticket. If REVIEW.md or GATES.md is there, act on every
 note first. INTENT.md's Decisions, GROOMING.md and the answered questions in
 GATES.md are settled: follow them. If you need a decision none of them makes:
 
-- a product or scope question: ask it with `factory question <id> product <question>`,
-  which parks the ticket until a person answers; don't guess it.
-- an engineering question: make your best guess, and record it in HANDOFF.md under
-  open decisions so the PR description can list it.
+- a question only the person can settle (product, scope, or an engineering trade-off
+  the code can't decide): ask them here in your terminal with your question tool and
+  wait for the answer, as your brief says; don't guess it, and don't stop.
+- a routine engineering choice: make your best guess, and record it in HANDOFF.md
+  under open decisions so the PR description can list it.
 
 Do not edit INTENT.md; if it is wrong, say so in HANDOFF.md.

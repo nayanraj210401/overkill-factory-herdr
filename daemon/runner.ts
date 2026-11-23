@@ -183,7 +183,8 @@ export function notePublishGap(db: Database, o: { repo: string; id: number; now:
   } catch { return false; }
 }
 
-export function startStage(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; blueprint: Blueprint; stage: string }) {
+// `opening`: what the session does before anything else, last in its brief (talk(): ask the person).
+export function startStage(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; blueprint: Blueprint; stage: string; opening?: string }) {
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any>;
   const s = o.blueprint.stages[o.stage];
   if (!s) throw new Error(`blueprint ${o.blueprint.name} has no stage "${o.stage}"`);
@@ -210,7 +211,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   // and notes other agents left this agent there come last in the brief (ask.ts).
   const workRepo = repos[0].repo;
   const notes = notesForBrief(db, { agent: s.agent, repo: workRepo, ticket: o.id });
-  const text = [brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db, workRepo), memory), briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n");
+  const text = [brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db, workRepo), memory), briefNotes(notes, basename(o.dir)), o.opening].filter(Boolean).join("\n\n");
   // Only the skills and tools its frontmatter lists (skills.ts); the plugin sits in the ticket folder, never the repo.
   const argv = withHandoffHook(giveAccess(argvFor(use, defaults, text), agent, join(folder, ".skills", s.agent), from), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
   const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: o.id, repo: workRepo }); // sessions keep the agent's own argv
@@ -740,10 +741,10 @@ function withNote<T>(undo: () => void, fn: () => T): T {
   try { return fn(); } catch (e) { undo(); throw e; }
 }
 
-function restart(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; stage: string; b: Blueprint; who: string; why: string; by?: string }) {
+function restart(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string; stage: string; b: Blueprint; who: string; why: string; by?: string; opening?: string }) {
   db.query("UPDATE tickets SET state = 'running', needs_kind = NULL, needs_text = NULL, retries = 0, updated_at = ? WHERE id = ?").run(o.now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.id, o.by ?? "you", o.who, o.why, o.now);
-  return { stage: o.stage, terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run: o.run, now: o.now, blueprint: o.b, stage: o.stage }) };
+  return { stage: o.stage, terminal: startStage(db, { dir: o.dir, repo: o.repo, id: o.id, run: o.run, now: o.now, blueprint: o.b, stage: o.stage, opening: o.opening }) };
 }
 
 // `x`: a ready PR goes back with a note. The open PR stays; the pr stage updates it.
@@ -792,7 +793,37 @@ export function answer(db: Database, o: { dir: string; repo: string; id: number;
   if (!t.worktree) throw new Error(`#${o.id} has no worktree; factory start ${o.id}`);
   const b = loadBlueprint(o.repo, t.blueprint);
   const undo = note(o.dir, o.id, "GATES.md", `Parked · ${now.slice(0, 16).replace("T", " ")}`, `${t.needs_text ?? "Stopped."}\n\n**Your answer:** ${o.text.trim()}`);
+  db.query("UPDATE questions SET answer = ?, answered_by = 'you', answered_at = ? WHERE ticket = ? AND answer IS NULL").run(o.text.trim(), now, o.id);
   return withNote(undo, () => restart(db, { ...o, run, now, b, stage: restartStage(b, t.stage), who: "answered and restarted", why: o.text.trim() }));
+}
+
+// What a talk-it-through session does first: ask the person, in its terminal, what stopped the ticket.
+export function talkOpening(o: { stage: string; why: string | null; questions: { n: number; kind: string; text: string }[]; folder: string }) {
+  return [
+    "## First: talk it through with the person",
+    `This ticket stopped at its ${o.stage} stage to wait for the person: ${o.why ?? "it parked."}`,
+    ...(o.questions.length ? [["The open questions:", ...o.questions.map((q) => `- Q${q.n} (${q.kind}): ${q.text}`)].join("\n")] : []),
+    "The person opened this session to answer. Before anything else, ask them about it here, in this terminal, with your question tool (AskUserQuestion; give the options you see, your pick first). Wait for the answer: don't guess it, and don't end the session while you wait.",
+    `Then write each question and its answer in ${o.folder}/GATES.md under "## Q<n> · answered by the person in the terminal", so later sessions follow it, and carry on with the stage.`,
+  ].join("\n\n");
+}
+
+// `u` on a parked ticket that waits on a question (or `factory talk <id>`): no answer box. A fresh
+// session of the stage it stopped at starts in a visible terminal, asks the person first, and goes on.
+// Its open questions are closed here; the answers are the ones given in the terminal (GATES.md).
+export function talk(db: Database, o: { dir: string; repo: string; id: number; run?: Run; now?: string }) {
+  const run = o.run ?? sh;
+  const now = o.now ?? new Date().toISOString();
+  const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
+  if (!t) throw new Error(`no ticket ${o.id}`);
+  if (t.state !== "parked") throw new Error(`#${o.id} is ${t.state}; only a parked ticket is talked through (a live agent asks in its terminal: e opens it)`);
+  if (!t.worktree) throw new Error(`#${o.id} has no worktree; factory start ${o.id}`);
+  const b = loadBlueprint(o.repo, t.blueprint);
+  const stage = restartStage(b, t.stage);
+  const questions = db.query("SELECT n, kind, text FROM questions WHERE ticket = ? AND answer IS NULL ORDER BY n").all(o.id) as { n: number; kind: string; text: string }[];
+  const opening = talkOpening({ stage: t.stage ?? stage, why: t.needs_text, questions, folder: join(o.dir, "tickets", String(o.id)) });
+  db.query("UPDATE questions SET answer = 'asked in the terminal (GATES.md)', answered_by = 'terminal', answered_at = ? WHERE ticket = ? AND answer IS NULL").run(now, o.id);
+  return restart(db, { ...o, run, now, b, stage, opening, who: `talking it through in the ${stage} terminal`, why: t.needs_text ?? "parked" });
 }
 
 // `p` on a running ticket: its agent stops now; the stage it was in is remembered.

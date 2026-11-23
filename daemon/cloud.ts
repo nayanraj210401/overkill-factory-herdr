@@ -246,6 +246,10 @@ export function toLocal(db: Database, o: { dir: string; repo: string; id: number
   const b = loadBlueprint(o.repo, t.blueprint);
   if (r.questions) {
     db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = ? WHERE id = ?").run(`From the cloud: ${r.questions.split("\n")[0].slice(0, 160)}`, o.id);
+    // As open questions, so u talks them through in a fresh local session instead of an answer box.
+    let n = ((db.query("SELECT MAX(n) AS m FROM questions WHERE ticket = ?").get(o.id) as { m: number | null }).m ?? 0);
+    for (const q of r.questions.split("\n").map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim()).filter(Boolean))
+      db.query("INSERT INTO questions (ticket, n, kind, text, asked_at) VALUES (?, ?, 'engineering', ?, ?)").run(o.id, ++n, q, o.now);
     return { stage: t.stage, terminal: null, parked: true };
   }
   const at = r.stage && b.stages[r.stage] ? r.stage : t.stage;

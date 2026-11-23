@@ -3,8 +3,8 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setMeta, setRepo } from "./db.ts";
-import { advance, answer, sh, type Run } from "./runner.ts";
-import { ask, askMidRun, grooming, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
+import { advance, answer, sh, talk, type Run } from "./runner.ts";
+import { ask, grooming, parseAnswers, pick, questionsComment, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { recordUsage, transcriptDir } from "./usage.ts";
 
 const now = "2026-11-21T10:00:00Z";
@@ -193,7 +193,8 @@ test("an answer stays answered when the groomed ticket can't start yet; a later 
   expect(ticket().state).toBe("running");
 });
 
-test("an agent's mid-run product question parks the ticket, goes on the issue, and the answer restarts the stage from GATES.md", () => {
+// A ticket started on the feature blueprint, its spec agent in t1; `gh` calls are recorded.
+function running() {
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
   cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
@@ -203,30 +204,74 @@ test("an agent's mid-run product question parks the ticket, goes on the issue, a
   const db = open(join(dir, "factory.db"));
   setRepo(db, { slug: "acme/api", path: repo, lead: true });
   db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (7, 'Wire it', 'feature', '2026-11-21T10:00:00Z')").run();
-  const calls: string[][] = [];
+  const gh: string[][] = [];
+  const hc: string[][] = [];
   let n = 0;
   const run: Run = (argv, cwd) => {
-    if (argv[0] === "hc") return { code: 0, out: `{"address":"t${++n}"}` };
-    if (argv[0] === "gh") { calls.push(argv); return { code: 0, out: argv[2] === "view" ? "dana" : "" }; }
+    if (argv[0] === "hc") { hc.push(argv); return { code: 0, out: `{"address":"t${++n}"}` }; }
+    if (argv[0] === "gh") { gh.push(argv); return { code: 0, out: "" }; }
     return sh(argv, cwd);
   };
   const { startTicket } = require("./runner.ts");
   startTicket(db, { dir, repo, id: 7, run, now: "2026-11-21T10:00:00Z" });
-  const q = askMidRun(db, { repo, id: 7, kind: "product", text: "Per user or per IP?", run, now: "2026-11-21T10:05:00Z" });
-  expect(q).toEqual({ n: 1, terminals: ["t1"] });
-  expect(db.query("SELECT state, needs_text FROM tickets WHERE id = 7").get()).toEqual({ state: "parked", needs_text: "Q1 from the spec stage (product, for @dana): Per user or per IP?" });
-  expect(db.query("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL").get()).toEqual({ n: 0 });
-  const comment = calls.find((c) => c[2] === "comment")!;
-  expect(comment.at(-1)).toContain("@dana");
-  expect(comment.at(-1)).toContain("A1:");
-  expect(() => askMidRun(db, { repo, id: 7, kind: "product", text: "again?", run, now: "2026-11-21T10:06:00Z" })).toThrow("#7 is parked");
-  const r = answer(db, { dir, repo, id: 7, text: "Per user", run, now: "2026-11-21T10:10:00Z" });
-  expect(r).toMatchObject({ stage: "spec" });
+  const ticket = () => db.query("SELECT state, stage, needs_kind, needs_text FROM tickets WHERE id = 7").get() as any;
+  return { db, dir, repo, run, gh, hc, ticket };
+}
+
+test("a stage agent's question mid-run doesn't park: factory question tells it to ask in its terminal, and its session stays open", () => {
+  const { db, gh, ticket } = running();
+  expect(() => ask(db, { id: 7, kind: "product", text: "Per user or per IP?", now: "2026-11-21T10:05:00Z" })).toThrow("ask the person now, here in your terminal");
+  expect(ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: null });
+  expect(db.query("SELECT terminal FROM sessions WHERE ended_at IS NULL").all()).toEqual([{ terminal: "t1" }]);
+  expect(db.query("SELECT COUNT(*) AS n FROM questions").get()).toEqual({ n: 0 });
+  expect(gh).toEqual([]); // nothing goes to the issue
+});
+
+// What older code left: the ticket parked on Q1 and its session ended.
+const parkOnQuestion = (db: ReturnType<typeof open>) => {
+  db.query("INSERT INTO questions (ticket, n, kind, text, asked_at) VALUES (7, 1, 'product', 'Per user or per IP?', '2026-11-21T10:05:00Z')").run();
+  db.query("UPDATE tickets SET state = 'parked', needs_kind = 'parked', needs_text = 'Q1 from the spec stage (product, for @dana): Per user or per IP?' WHERE id = 7").run();
+  db.query("UPDATE sessions SET ended_at = '2026-11-21T10:05:00Z'").run();
+  db.query("UPDATE stages SET ended_at = '2026-11-21T10:05:00Z' WHERE ended_at IS NULL").run();
+};
+
+test("a ticket parked on a question is talked through: a fresh session of its stage, in a labelled terminal, asks the person first", () => {
+  const { db, dir, repo, run, hc, ticket } = running();
+  parkOnQuestion(db);
+  const r = talk(db, { dir, repo, id: 7, run, now: "2026-11-21T10:10:00Z" });
+  expect(r).toEqual({ stage: "spec", terminal: "t2" });
+  expect(ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: null, needs_text: null });
+  expect(hc.at(-1)).toEqual(expect.arrayContaining(["--label", "factory.ticket=7", "factory.stage=spec"]));
+  const brief = (JSON.parse((db.query("SELECT argv FROM sessions WHERE terminal = 't2'").get() as { argv: string }).argv) as string[]).join(" ");
+  expect(brief).toContain("## First: talk it through with the person");
+  expect(brief).toContain("- Q1 (product): Per user or per IP?");
+  expect(brief).toContain("with your question tool (AskUserQuestion");
+  expect(brief.indexOf("## First: talk it through")).toBeGreaterThan(brief.indexOf("When the stage's work is done")); // last: what it does first
+  expect(db.query("SELECT answered_by FROM questions WHERE ticket = 7").all()).toEqual([{ answered_by: "terminal" }]);
+  expect(() => talk(db, { dir, repo, id: 7, run })).toThrow("#7 is running; only a parked ticket is talked through");
+});
+
+test("factory answer still answers a parked question for scripts, in GATES.md, and closes it", () => {
+  const { db, dir, repo, run } = running();
+  parkOnQuestion(db);
+  expect(answer(db, { dir, repo, id: 7, text: "Per user", run, now: "2026-11-21T10:10:00Z" })).toMatchObject({ stage: "spec" });
   const gates = readFileSync(join(dir, "tickets/7/GATES.md"), "utf8");
   expect(gates).toContain("Q1 from the spec stage (product, for @dana): Per user or per IP?");
   expect(gates).toContain("**Your answer:** Per user");
+  expect(db.query("SELECT answer FROM questions WHERE ticket = 7").all()).toEqual([{ answer: "Per user" }]);
 });
 
+test("grooming again carries the questions nobody answered into the new triager's brief", () => {
+  const { db, dir, repo, run, add } = setup();
+  add(412);
+  startGrooming(db, { dir, repo, id: 412, run, now });
+  ask(db, { id: 412, kind: "product", text: "Which plan?", now });
+  db.query("UPDATE sessions SET ended_at = ?").run(now);
+  startGrooming(db, { dir, repo, id: 412, run, now });
+  const brief = (db.query("SELECT argv FROM sessions WHERE ended_at IS NULL").get() as { argv: string }).argv;
+  expect(brief).toContain("## Asked before and still open");
+  expect(brief).toContain("- Q1 (product): Which plan?");
+});
 
 test("triage that stops before GROOMING.md (killed, crashed) parks the ticket instead of starting it, and isn't retried on its own", () => {
   const { db, dir, repo, add, ticket } = setup();
