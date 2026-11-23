@@ -73,7 +73,7 @@ factory setup           # run it until every line shows ✓
 
 ## What runs without you
 
-- **Repo health:** every day the daemon runs the full test suite on the default branch, in a throwaway worktree, with no agent and no tokens. A failure files one `bugfix` ticket; the next passing run closes it. The last result shows on Home.
+- **Repo health:** once a day the daemon runs the repo's `quality_floor` on the default branch, in a throwaway worktree, with no agent and no tokens. The first run is a day after setup; `factory health` runs it now. A failure files one queued `bugfix` ticket that waits for you to start it. The next pass closes it if nobody started it. The last result shows on Home. A fresh worktree has no installed dependencies, so if the suite needs them, add `.factory/triggers/health.yaml` with `on: schedule`, `every: 1d`, `run: health`, `blueprint: bugfix` and `setup: [npm ci]` (or your install command).
 - **Lesson upkeep:** every day near-duplicate lessons are merged and unused ones are retired. `factory learn restore <id>` undoes either.
 - **The maintenance agent is off.** When it is on, it makes one small drift fix a day (a patch bump, lint drift, dead config) as a normal PR. To turn it on, ask Overwatch ("turn on the maintenance agent"), or set `enabled: true` in `.factory/triggers/maintenance.yaml`. Its merge gate stays `human` until you change it.
 
