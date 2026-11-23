@@ -148,3 +148,15 @@ test("a ticket branch that commits to .factory/ never reaches a PR; taken off, t
   expect(tryPr(w.db, { dir: w.dir, repo: w.repo, id: 7, run: w.run })).toMatchObject({ pr: 42 });
   expect(git(w.origin, "ls-tree", "-r", "--name-only", "factory/7-rate-limit-login")).not.toContain(".factory");
 });
+
+test("a folder inside another repo is left alone: no skip-worktree, no exclude line in the enclosing repo", () => {
+  const outer = gitRepo();
+  mkdirSync(join(outer, "fixtures/demo/.factory"), { recursive: true });
+  writeFileSync(join(outer, "fixtures/demo/.factory/factory.yaml"), "name: demo\n");
+  git(outer, "add", ".");
+  git(outer, "commit", "-q", "-m", "fixture");
+  const inner = join(outer, "fixtures/demo");
+  expect(keepLocal(inner)).toEqual({ excluded: false, tracked: [] });
+  expect(sh(["git", "-C", outer, "ls-files", "-v", "fixtures"]).out.trim()).toBe("H fixtures/demo/.factory/factory.yaml");
+  expect(readFileSync(join(outer, ".git/info/exclude"), "utf8")).not.toContain("/.factory/");
+});
