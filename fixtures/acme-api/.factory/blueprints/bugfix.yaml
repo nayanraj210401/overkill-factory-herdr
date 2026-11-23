@@ -1,0 +1,10 @@
+# .factory/blueprints/bugfix.yaml
+name: bugfix
+orchestrator: foreman
+start: implement
+stages:
+  implement: { agent: builder, next: [verify] }
+  verify:    { check: tests, next: [review], on_fail: implement, max_retries: 2 }
+  review:    { agent: reviewer, next: [pr], on_fail: implement }
+  pr:        { agent: pr-writer, requires: ready, output: PR.md, template: pr-readable, next: [merge] }
+  merge:     { gate: human, next: [end] }

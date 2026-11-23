@@ -1,0 +1,424 @@
+{
+  "days": 7,
+  "blueprints": [
+    {
+      "name": "address-review",
+      "start": "fix",
+      "orchestrator": "foreman",
+      "error": null,
+      "grooming_runs": 2,
+      "stages": [
+        {
+          "id": "fix",
+          "agent": "builder",
+          "role": "build",
+          "check": null,
+          "next": [
+            "verify"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 3
+        },
+        {
+          "id": "verify",
+          "agent": null,
+          "role": null,
+          "check": "tests",
+          "next": [
+            "end"
+          ],
+          "on_fail": "fix",
+          "gate": "auto",
+          "requires": null,
+          "runs": 3
+        }
+      ]
+    },
+    {
+      "name": "bugfix",
+      "start": "implement",
+      "orchestrator": "foreman",
+      "error": null,
+      "grooming_runs": 5,
+      "stages": [
+        {
+          "id": "implement",
+          "agent": "builder",
+          "role": "build",
+          "check": null,
+          "next": [
+            "verify"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 5
+        },
+        {
+          "id": "verify",
+          "agent": null,
+          "role": null,
+          "check": "tests",
+          "next": [
+            "review"
+          ],
+          "on_fail": "implement",
+          "gate": "auto",
+          "requires": null,
+          "runs": 6
+        },
+        {
+          "id": "review",
+          "agent": "reviewer",
+          "role": "review",
+          "check": null,
+          "next": [
+            "pr"
+          ],
+          "on_fail": "implement",
+          "gate": "auto",
+          "requires": null,
+          "runs": 3
+        },
+        {
+          "id": "pr",
+          "agent": "pr-writer",
+          "role": "build",
+          "check": null,
+          "next": [
+            "merge"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": "ready",
+          "runs": 4
+        },
+        {
+          "id": "merge",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "end"
+          ],
+          "on_fail": null,
+          "gate": "human",
+          "requires": null,
+          "runs": 3
+        }
+      ]
+    },
+    {
+      "name": "chore",
+      "start": "implement",
+      "orchestrator": "foreman",
+      "error": null,
+      "grooming_runs": 7,
+      "stages": [
+        {
+          "id": "implement",
+          "agent": "builder",
+          "role": "build",
+          "check": null,
+          "next": [
+            "verify"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 8
+        },
+        {
+          "id": "verify",
+          "agent": null,
+          "role": null,
+          "check": "tests",
+          "next": [
+            "pr"
+          ],
+          "on_fail": "implement",
+          "gate": "auto",
+          "requires": null,
+          "runs": 9
+        },
+        {
+          "id": "pr",
+          "agent": "pr-writer",
+          "role": "build",
+          "check": null,
+          "next": [
+            "merge"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": "ready",
+          "runs": 6
+        },
+        {
+          "id": "merge",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "end"
+          ],
+          "on_fail": null,
+          "gate": "human",
+          "requires": null,
+          "runs": 6
+        }
+      ]
+    },
+    {
+      "name": "factory",
+      "start": "maintain",
+      "orchestrator": null,
+      "error": null,
+      "grooming_runs": 0,
+      "stages": [
+        {
+          "id": "maintain",
+          "agent": "maintainer",
+          "role": "maintain",
+          "check": null,
+          "next": [
+            "check"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "check",
+          "agent": null,
+          "role": null,
+          "check": "factory",
+          "next": [
+            "pr"
+          ],
+          "on_fail": "maintain",
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "pr",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "merge"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": "ready",
+          "runs": 0
+        },
+        {
+          "id": "merge",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "end"
+          ],
+          "on_fail": null,
+          "gate": "human",
+          "requires": null,
+          "runs": 0
+        }
+      ]
+    },
+    {
+      "name": "feature",
+      "start": "spec",
+      "orchestrator": "foreman",
+      "error": null,
+      "grooming_runs": 18,
+      "stages": [
+        {
+          "id": "spec",
+          "agent": "spec-writer",
+          "role": "spec",
+          "check": null,
+          "next": [
+            "plan",
+            "implement"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 9
+        },
+        {
+          "id": "plan",
+          "agent": "planner",
+          "role": "plan",
+          "check": null,
+          "next": [
+            "implement"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 6
+        },
+        {
+          "id": "implement",
+          "agent": "builder",
+          "role": "build",
+          "check": null,
+          "next": [
+            "verify"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 15
+        },
+        {
+          "id": "verify",
+          "agent": null,
+          "role": null,
+          "check": "evidence",
+          "next": [
+            "holdout"
+          ],
+          "on_fail": "implement",
+          "gate": "auto",
+          "requires": null,
+          "runs": 21
+        },
+        {
+          "id": "holdout",
+          "agent": "checker",
+          "role": "verify",
+          "check": null,
+          "next": [
+            "review"
+          ],
+          "on_fail": "implement",
+          "gate": "auto",
+          "requires": null,
+          "runs": 15
+        },
+        {
+          "id": "review",
+          "agent": "reviewer",
+          "role": "review",
+          "check": null,
+          "next": [
+            "pr"
+          ],
+          "on_fail": "implement",
+          "gate": "auto",
+          "requires": null,
+          "runs": 14
+        },
+        {
+          "id": "pr",
+          "agent": "pr-writer",
+          "role": "build",
+          "check": null,
+          "next": [
+            "merge"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": "ready",
+          "runs": 12
+        },
+        {
+          "id": "merge",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "end"
+          ],
+          "on_fail": null,
+          "gate": "human",
+          "requires": null,
+          "runs": 10
+        }
+      ]
+    },
+    {
+      "name": "maintenance",
+      "start": "maintain",
+      "orchestrator": null,
+      "error": null,
+      "grooming_runs": 0,
+      "stages": [
+        {
+          "id": "maintain",
+          "agent": "maintenance",
+          "role": "build",
+          "check": null,
+          "next": [
+            "verify"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "verify",
+          "agent": null,
+          "role": null,
+          "check": "tests",
+          "next": [
+            "review"
+          ],
+          "on_fail": "maintain",
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "review",
+          "agent": "reviewer",
+          "role": "review",
+          "check": null,
+          "next": [
+            "pr"
+          ],
+          "on_fail": "maintain",
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "pr",
+          "agent": "pr-writer",
+          "role": "build",
+          "check": null,
+          "next": [
+            "merge"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": "ready",
+          "runs": 0
+        },
+        {
+          "id": "merge",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "end"
+          ],
+          "on_fail": null,
+          "gate": "human",
+          "requires": null,
+          "runs": 0
+        }
+      ]
+    }
+  ]
+}

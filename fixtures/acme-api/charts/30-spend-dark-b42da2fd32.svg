@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 180" width="1040" height="360">
+<line x1="46" x2="510" y1="156" y2="156" stroke="#33373d" stroke-width="1"/>
+<text x="38" y="160" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#838890">$0</text>
+<line x1="46" x2="510" y1="107.3" y2="107.3" stroke="#33373d" stroke-width="1"/>
+<text x="38" y="111.3" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#838890">$2</text>
+<line x1="46" x2="510" y1="58.7" y2="58.7" stroke="#33373d" stroke-width="1"/>
+<text x="38" y="62.7" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#838890">$4</text>
+<line x1="46" x2="510" y1="10" y2="10" stroke="#33373d" stroke-width="1"/>
+<text x="38" y="14" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#838890">$6</text>
+<text x="46" y="174" text-anchor="start" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#838890">Oct 23</text>
+<text x="206" y="174" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#838890">Nov 2</text>
+<text x="350" y="174" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#838890">Nov 11</text>
+<text x="510" y="174" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#838890">Nov 21</text>
+<polygon points="46,156 62,95.4 78,96.9 94,38.7 110,115.6 126,60.9 142,108.3 158,91.3 174,36.5 190,110.3 206,62.6 222,95.7 238,39.7 254,110 270,121.7 286,20.2 302,105.1 318,48.4 334,112.4 350,39.9 366,89.8 382,93.2 398,82 414,93.5 430,39.9 446,95.9 462,47.5 478,102.7 494,85.2 510,117.1 510,156 46,156" fill="#3987e5" fill-opacity="0.1" stroke="none"/>
+<polyline points="46,156 62,95.4 78,96.9 94,38.7 110,115.6 126,60.9 142,108.3 158,91.3 174,36.5 190,110.3 206,62.6 222,95.7 238,39.7 254,110 270,121.7 286,20.2 302,105.1 318,48.4 334,112.4 350,39.9 366,89.8 382,93.2 398,82 414,93.5 430,39.9 446,95.9 462,47.5 478,102.7 494,85.2 510,117.1" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

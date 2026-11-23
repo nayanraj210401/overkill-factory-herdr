@@ -1,0 +1,62 @@
+{
+  "global": {
+    "cmd-shift-f": "layout.switch:factory"
+  },
+  "layout:factory": {
+    "cmd-shift-f": "layout.switch:main",
+    "cmd-o": "factory-config.open",
+    "cmd-alt-1": "factory-ticket.tab-1",
+    "cmd-alt-2": "factory-ticket.tab-2",
+    "cmd-alt-3": "factory-ticket.tab-3",
+    "cmd-alt-4": "factory-ticket.tab-4",
+    "cmd-1": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "home"
+      }
+    },
+    "cmd-2": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "tickets"
+      }
+    },
+    "cmd-3": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "reviews"
+      }
+    },
+    "cmd-4": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "overwatch"
+      }
+    },
+    "cmd-5": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "blueprint"
+      }
+    },
+    "cmd-6": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "metrics"
+      }
+    },
+    "cmd-7": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "config"
+      }
+    }
+  }
+}

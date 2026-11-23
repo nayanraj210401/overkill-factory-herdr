@@ -1,0 +1,379 @@
+{
+  "version": 1,
+  "generated_at": "2026-11-21T10:00:00Z",
+  "source": "fixture",
+  "factory": {
+    "name": "acme-api",
+    "repo": "acme/api",
+    "daemon": true,
+    "repos": [
+      "acme/api",
+      "acme/web"
+    ]
+  },
+  "plan": {
+    "window_5h": 0.42,
+    "week": 0.18
+  },
+  "today": {
+    "time_to_pr_min": 48,
+    "cost_per_pr_usd": 1.9,
+    "interactions_per_pr": 1.6,
+    "revert_rate": 0,
+    "usd": 6.4,
+    "tokens": {
+      "input": 11200000,
+      "output": 520000
+    },
+    "budget": {
+      "input": 40000000,
+      "output": 2000000
+    }
+  },
+  "health": [
+    { "repo": "acme/api", "ok": true, "at": "2026-11-21T06:00:00Z", "branch": "main", "commit": "4f2a9c1", "command": null, "failure": null, "error": null, "ticket": null },
+    { "repo": "acme/web", "ok": false, "at": "2026-11-21T06:04:00Z", "branch": "main", "commit": "b81e07d", "command": "npm test", "failure": "FAIL src/cart.test.ts > applies the discount once\n  expected 90, got 81", "error": null, "ticket": null }
+  ],
+  "away": {
+    "on": false,
+    "since": "2026-11-20T18:30:00Z",
+    "until": "2026-11-21T08:45:00Z",
+    "events": [
+      {
+        "ticket": 412,
+        "who": "daemon",
+        "what": "review comments on PR #431",
+        "at": "2026-11-20T21:12:00Z"
+      },
+      {
+        "ticket": 412,
+        "who": "builder",
+        "what": "C3 fix: keyed the limit on user id",
+        "at": "2026-11-20T21:40:00Z"
+      },
+      {
+        "ticket": 412,
+        "who": "daemon",
+        "what": "updated PR #431",
+        "at": "2026-11-20T21:58:00Z"
+      },
+      {
+        "ticket": 425,
+        "who": "daemon",
+        "what": "parked: touched src/auth/session.ts, which never runs while you're away",
+        "at": "2026-11-21T02:05:00Z"
+      },
+      {
+        "ticket": 409,
+        "who": "daemon",
+        "what": "opened PR #430",
+        "at": "2026-11-21T06:30:00Z"
+      }
+    ]
+  },
+  "overrides": [
+    { "key": "agents.reviewer.model", "value": "sonnet", "file": "opus", "reason": "Reviews passed first try on sonnet in 9 of the last 10 tickets", "at": "2026-11-20T14:00:00Z" },
+    { "key": "budget.handoff_at_context", "value": "50%", "file": null, "reason": "Handing off earlier kept sessions from hitting the ceiling", "at": "2026-11-19T09:30:00Z" }
+  ],
+  "asks": [
+    { "id": 3, "from": "spec-writer", "to": "overwatch", "text": "#412 needs a product answer: should the limit apply to API keys too?", "why": "the issue says logins; the code shares the limiter with API keys", "ticket": 412, "at": "2026-11-21T09:52:00Z", "delivered": true },
+    { "id": 4, "from": "overwatch", "to": "learner", "text": "Is the spec stage worth it for chores?", "why": null, "ticket": null, "at": "2026-11-21T09:40:00Z", "delivered": false }
+  ],
+  "to_review": 5,
+  "rules_failing": 0,
+  "tickets": [
+    {
+      "id": 421,
+      "title": "Search index rebuild",
+      "state": "grooming",
+      "blueprint": "feature",
+      "stage": "grooming",
+      "detail": "3 questions",
+      "updated_at": "2026-11-21T09:40:00Z",
+      "tokens": {
+        "input": 180000,
+        "output": 9000
+      },
+      "budget": {
+        "input": 3000000,
+        "output": 150000
+      },
+      "usd": 0.3,
+      "where": "local",
+      "pr": null,
+      "blocked_by": null,
+      "needs": {
+        "kind": "question",
+        "text": "3 questions · Q1: Should searches wait during a rebuild, or keep using the old index? (product: waiting on @dana)"
+      },
+      "questions": [
+        { "n": 1, "kind": "product", "text": "Should searches wait during a rebuild, or keep using the old index until the new one is ready?" },
+        { "n": 2, "kind": "engineering", "text": "Keep the old index for a day after a rebuild, or drop it at once?" },
+        { "n": 3, "kind": "product", "text": "Index only tickets, or comments and attachments too?" }
+      ]
+    },
+    {
+      "id": 425,
+      "title": "Export API",
+      "state": "parked",
+      "blueprint": "feature",
+      "stage": "verify",
+      "detail": "retries used up",
+      "updated_at": "2026-11-21T09:12:00Z",
+      "tokens": {
+        "input": 2400000,
+        "output": 110000
+      },
+      "budget": {
+        "input": 3000000,
+        "output": 150000
+      },
+      "usd": 2.6,
+      "where": "local",
+      "pr": null,
+      "blocked_by": null,
+      "needs": {
+        "kind": "parked",
+        "text": "Verify retries used up: the upload test is flaky"
+      }
+    },
+    {
+      "id": 412,
+      "title": "Rate-limit login",
+      "state": "running",
+      "blueprint": "feature",
+      "stage": "implement",
+      "detail": "handoff at 60%",
+      "updated_at": "2026-11-21T09:48:00Z",
+      "tokens": {
+        "input": 2500000,
+        "output": 64000
+      },
+      "budget": {
+        "input": 3000000,
+        "output": 150000
+      },
+      "usd": 1.8,
+      "where": "local",
+      "warning": "83% of its token budget used",
+      "pr": null,
+      "blocked_by": null,
+      "needs": null,
+      "session": 2,
+      "terminal": "t7",
+      "artifacts": [
+        { "file": "SLICES.md", "url": "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000412", "kind": "artifact", "at": "2026-11-21T09:20:00Z" },
+        { "file": "INTENT.md", "url": "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000411", "kind": "artifact", "at": "2026-11-21T09:12:00Z" }
+      ],
+      "repos": [
+        {
+          "slug": "acme/api",
+          "lead": true,
+          "pr": { "number": 520, "watched": false, "checked_at": null, "url": "https://github.com/acme/api/pull/520", "state": "draft" },
+          "worktree": "~/.herdr/worktrees/acme-api/factory-412-rate-limit-login",
+          "branch": "factory/412-rate-limit-login",
+          "merged_at": null,
+          "merge": 2
+        },
+        {
+          "slug": "acme/web",
+          "lead": false,
+          "pr": { "number": 131, "watched": false, "checked_at": null, "url": "https://github.com/acme/web/pull/131", "state": "open" },
+          "worktree": "~/.herdr/worktrees/acme-web/factory-412-rate-limit-login",
+          "branch": "factory/412-rate-limit-login",
+          "merged_at": null,
+          "merge": 1
+        }
+      ]
+    },
+    {
+      "id": 418,
+      "title": "Timezone in reports",
+      "state": "running",
+      "blueprint": "bugfix",
+      "stage": "verify",
+      "detail": null,
+      "updated_at": "2026-11-21T09:29:00Z",
+      "tokens": {
+        "input": 1500000,
+        "output": 71000
+      },
+      "budget": {
+        "input": 3000000,
+        "output": 150000
+      },
+      "usd": 2.1,
+      "where": "cloud",
+      "pr": null,
+      "blocked_by": null,
+      "needs": null,
+      "session": 3
+    },
+    {
+      "id": 409,
+      "title": "Bump dependencies",
+      "state": "ready",
+      "blueprint": "chore",
+      "stage": "merge",
+      "detail": "Review round 1: 2 fixed, 1 pushed back \u00b7 6 of 6 ready rules",
+      "updated_at": "2026-11-21T09:58:00Z",
+      "tokens": {
+        "input": 900000,
+        "output": 30000
+      },
+      "budget": {
+        "input": 1500000,
+        "output": 80000
+      },
+      "usd": 0.9,
+      "where": "local",
+      "pr": {
+        "number": 511,
+        "watched": true,
+        "checked_at": "2026-11-21T09:58:00Z",
+        "url": "https://github.com/acme/api/pull/511",
+        "state": "open"
+      },
+      "blocked_by": null,
+      "needs": null
+    },
+    {
+      "id": 430,
+      "title": "Audit log retention",
+      "state": "blocked",
+      "blueprint": "feature",
+      "stage": null,
+      "detail": null,
+      "updated_at": "2026-11-21T08:00:00Z",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "budget": {
+        "input": 3000000,
+        "output": 150000
+      },
+      "usd": 0,
+      "where": "local",
+      "pr": null,
+      "blocked_by": 425,
+      "needs": null
+    },
+    {
+      "id": 431,
+      "title": "Webhook retries",
+      "state": "queued",
+      "blueprint": "feature",
+      "stage": null,
+      "detail": null,
+      "updated_at": "2026-11-21T08:05:00Z",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "budget": {
+        "input": 3000000,
+        "output": 150000
+      },
+      "usd": 0,
+      "where": "local",
+      "pr": null,
+      "blocked_by": null,
+      "needs": null
+    },
+    {
+      "id": 432,
+      "title": "Lint: no default exports",
+      "state": "queued",
+      "blueprint": "chore",
+      "stage": null,
+      "detail": null,
+      "updated_at": "2026-11-21T08:06:00Z",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "budget": {
+        "input": 1500000,
+        "output": 80000
+      },
+      "usd": 0,
+      "where": "local",
+      "pr": null,
+      "blocked_by": null,
+      "needs": null
+    },
+    {
+      "id": 433,
+      "title": "Pagination on /users",
+      "state": "queued",
+      "blueprint": "feature",
+      "stage": null,
+      "detail": null,
+      "updated_at": "2026-11-21T08:07:00Z",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "budget": {
+        "input": 3000000,
+        "output": 150000
+      },
+      "usd": 0,
+      "where": "local",
+      "pr": null,
+      "blocked_by": null,
+      "needs": null
+    },
+    {
+      "id": 401,
+      "title": "Health check endpoint",
+      "state": "merged",
+      "blueprint": "feature",
+      "stage": null,
+      "detail": null,
+      "updated_at": "2026-11-20T16:20:00Z",
+      "tokens": {
+        "input": 1700000,
+        "output": 82000
+      },
+      "budget": {
+        "input": 3000000,
+        "output": 150000
+      },
+      "usd": 1.7,
+      "where": "local",
+      "pr": {
+        "number": 498,
+        "watched": false,
+        "checked_at": null,
+        "url": "https://github.com/acme/api/pull/498",
+        "state": "merged"
+      },
+      "blocked_by": null,
+      "needs": null
+    },
+    {
+      "id": 405,
+      "title": "Drop legacy session table",
+      "state": "closed",
+      "blueprint": "chore",
+      "stage": null,
+      "detail": null,
+      "updated_at": "2026-11-19T11:00:00Z",
+      "tokens": {
+        "input": 300000,
+        "output": 12000
+      },
+      "budget": {
+        "input": 1500000,
+        "output": 80000
+      },
+      "usd": 0.3,
+      "where": "local",
+      "pr": null,
+      "blocked_by": null,
+      "needs": null
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# .factory/triggers/review-comments.yaml
+on: pr_review_comment
+filter: { pr_author: factory }
+blueprint: address-review
+concurrency: 2

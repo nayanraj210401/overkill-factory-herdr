@@ -1,0 +1,9 @@
+node_modules/
+# Herdr writes these into every mod folder; sync.sh copies lib/ and previews in.
+mods/*/lib/
+mods/*/jsconfig.json
+mods/*/*.d.ts
+mods/factory-soon/previews/
+smoke-out/
+.serena/
+dist/

@@ -32,13 +32,17 @@ Earlier drafts and the research pulled in different directions. Each clash is se
 | Labels to start and route work vs. no labels | Your GitHub Project is the queue: an issue assigned to you in its Ready column joins it, or you add one by hand. The triage agent picks the blueprint |
 | Benchmarks that propose factory changes vs. monitoring | Benchmarks are monitoring: they run apart from ticket runs and only report. Separately, the factory tunes the settings you mark tunable, between tickets, as overrides you can undo |
 | Copy Warp's layout and page names vs. our own | Our own. The sidebar lists live tickets with the factory menu at the bottom, one factory per window, and the pages use our words (Tickets, Reviews, Overwatch, Metrics, Config). Warp was a reference for ideas only |
+| Every agent per repo vs. some shared | Two tiers. Repo agents (triage, spec, planner, builder, reviewer) live in each repo's `.factory/agents/`. Factory agents (Overwatch, babysitter, maintainer, learner) are global, one each, in `~/.factory/agents/` |
+| Agents that each change what they need vs. one owner | Each agent has a territory. The maintainer alone changes the factory (config, blueprints, agents, housekeeping, the UI); others ask it |
+| One Overwatch per factory vs. one for everything | One Overwatch, the lead, across every repo. It is the only agent that talks to you |
 
 ## Principles
 
 1. **Markdown in front, code behind.** You manage work, not files. Every view shows a ticket's Markdown. The diff opens in Herdr's shipped `changes` panel with `d`, and the agent terminals with `e`.
 2. **Rules, not approvals.** The factory never stops to ask permission for reversible work. It checks the result at the end of each stage, and a failure goes back to the agent. You see work only when it is ready, or when the factory is truly stuck.
-3. **The factory is code.** `.factory/` defines everything the daemon does. You change it like any other code. Only the maintainer edits it, when you ask, through a PR; otherwise the factory only tunes settings you mark tunable, as overrides kept outside it.
-4. **Measure everything.** Every session is recorded against its ticket. Four numbers are always on screen: time to PR, cost per PR, human interactions per PR and revert rate.
+3. **The factory is code.** `.factory/` defines everything the daemon does. You change it like any other code. Only the maintainer edits it, when you or another agent asks, through a PR; otherwise the factory only tunes settings you mark tunable, as overrides kept outside it.
+4. **Every agent has a territory.** Agents know each other and ask each other directly; none acts outside its own territory. Overwatch leads and is the one you talk to.
+5. **Measure everything.** Every session is recorded against its ticket. Four numbers are always on screen: time to PR, cost per PR, human interactions per PR and revert rate.
 
 ## Layout design
 
@@ -155,7 +159,7 @@ Every action is a click or a key, and each one is a single call to the daemon. T
 | `u` | Answer a question and restart a waiting ticket |
 | `p` | Pause or resume a ticket |
 | `shift-c / shift-l` | Move the ticket to a cloud session / bring it back to local |
-| `g r, then a / s` | Reviews; approve a low-risk PR / open the pending review on github.com |
+| `g r, then a / o` | Reviews; approve a low-risk PR / open the PR (`s` too) on github.com. `h` shows the hidden noise |
 | `b` | Change the ticket's budget |
 
 ## Architecture
@@ -165,6 +169,48 @@ Only two pieces are new: the layout with its mods, and the daemon. herdr-core ru
 ![architecture · 2 new pieces on Herdr](layouts/architecture.png)
 
 The mods never talk to agents. They read the ticket folders and a `status.json` the daemon keeps up to date, wake on changes with `watchFolder`, and send every action to the daemon. The daemon is the one place that knows a ticket's state, so the window stays replaceable.
+
+## The agents: two tiers, each with its own territory
+
+Every agent is a `.md` file: a YAML header and a prompt. Agents come in two tiers.
+
+| Tier | Agents | Where the file lives | How many run |
+| --- | --- | --- | --- |
+| **Repo agents** | triage (grooming), spec (intent), planner, builder, reviewer, checker, and any the maintainer adds | the `.factory/agents/` of the repo the ticket works in, else the lead repo's; never the example library | one per stage run, per ticket |
+| **Factory agents** | Overwatch, babysitter, maintainer, learner | `~/.factory/agents/`, with the shipped defaults as a fallback | one each for the whole factory, across every repo |
+
+Repo agents can differ per repo: a stricter reviewer for the payments repo, a builder that knows the mobile toolchain. Factory agents are global only; a repo never has its own copy.
+
+**The example library** is where every repo agent starts. The factory ships one known-good example per role in `examples/agents/` (builder, planner, reviewer, spec-writer, foreman, checker, triager, pr-writer, maintenance), each with a comment atop its header on what makes it a good one: its territory, what it reads and writes, when it asks and what it must never do. `factory init` and `factory setup` install them into `~/.factory/examples/agents/`, adding new shipped ones and never overwriting a file already there; your own examples sit beside them and count the same. An example is never run: a repo gets only the agents its blueprints and grooming name, copied from the library (yours first, then the shipped one) by `factory setup write`, or by the maintainer when a blueprint needs one the repo lacks. `factory validate` checks the library too, and a blueprint that names an agent the repo doesn't have fails it, saying where the library's copy is.
+
+**Each agent has a territory, and only it acts there.**
+
+| Agent | Territory | Never does |
+| --- | --- | --- |
+| **Overwatch** (the lead) | Talking with you; knowing the state of every repo and ticket; answering questions; ticket actions (start, pause, reorder); routing work to the agent that owns it | Changes the factory itself |
+| **Babysitter** | Every PR the factory opened: review comments, verdicts, fix rounds, pushbacks | Changes config, or works on a ticket before its PR |
+| **Maintainer** | The factory itself, all of it (below) | Decides on its own what to tune: it acts on a request |
+| **Learner** | The decision log, outcomes, experiments, lessons; deciding what would move `learn.target` | Writes any file: it asks the maintainer |
+| **Repo agents** | Their own stage of their own ticket, in its worktree and ticket folder | Touch another ticket, another stage's output, or the factory |
+
+**The maintainer's territory is maintaining the factory:**
+
+- **Configuration:** `.factory/` in any repo and the account config `~/.factory/config.yaml`.
+- **Blueprints:** creating new blueprints from what you describe, and editing existing ones (stages, `next`, gates, retries), each with a dry run.
+- **Agents:** creating or changing repo agents for any repo, and the factory agents' own prompts.
+- **Housekeeping:** clearing closed tickets and their folders, removing stale worktrees and Herdr workspaces, pruning branches the factory made, compacting the database.
+- **The look of the factory:** layout, pages and colours, when you ask ("this page is hard to read", "use a warmer accent"). You are the author, so this is a change to the factory app's own repo (mods, themes), made as a PR there.
+- **Migrations:** flow-stack, old sessions, and the factory's own schema versions.
+
+**Agents are neighbours: each knows the others and asks them directly.** Every agent's brief carries a short map of the factory's agents: who they are, what each owns, and how to ask each one. A repo agent asks the global agents and its own repo's agents; a global agent asks any agent (see Peer review, Who can ask whom), and the map lists only the agents its agent may ask. Asking is `factory ask <agent> "<text>"`, where a repo agent is `<owner/name>:<agent>` (a bare name is the asker's own repo's). It is a request with an origin, routed by the daemon and recorded in SQLite, so every hand-off is visible on Config's Pending changes and in the decision log. The daemon enforces the rule: a repo agent that asks another repo's agent is refused and told to ask a global agent, such as Overwatch, instead. A note to a repo agent is typed into its live session in that repo, or else it comes in that agent's next brief there.
+
+- You → Overwatch: "make the reviewer stricter in api" → Overwatch → maintainer.
+- Learner → maintainer: "set the plan stage to Haiku for chores; 30 tickets, cost per PR down 22%, revert rate unchanged".
+- Overwatch → maintainer on its own: "three worktrees have outlived their merged tickets".
+- Babysitter → maintainer: "the same comment keeps coming back on factory PRs; turn it into a lint rule".
+- Babysitter or a repo agent → Overwatch: "#412 needs a product answer", which Overwatch brings to you.
+
+**Overwatch is the only agent that talks to you.** The rest reach you through it, or by flagging a ticket in Needs you when its agent waits in its terminal (a grooming question, a permission). Every change still lands as a reviewable result behind `maintainer.gate`, whoever asked for it.
 
 ## Technical design
 
@@ -200,8 +246,9 @@ Each decision is a row: what was decided, the options, the choice, the context, 
 **The learner decides; the maintainer writes.**
 
 - Within `learn.tunable`, the learner changes settings itself, as overrides in SQLite, between tickets. No files change.
-- When an override has held for `learn.promote_after` tickets (default 30), the learner files a maintainer request to make it permanent. The maintainer writes it into `.factory/` and opens the PR.
-- Anything outside the tunables (a prompt change, a lesson that should be a lint rule or test, a new stage) is a suggestion. The learner files it as a maintainer request with its evidence; the maintainer drafts it, runs a benchmark against the current setup when it can, and opens the PR.
+- When an override has held for `learn.promote_after` merged tickets (default 30), the learner files a maintainer request to make it permanent, through the same `request()` Overwatch uses, marked as from the learner. Its evidence goes into the request's REQUEST.md: the metric (`learn.target`), its value before and after, the ticket count and the override's id. The maintainer writes it into `.factory/` and opens the PR. There is one request per override, and none while another for the same setting is open.
+- Anything outside the tunables (a prompt change, a lesson that should be a lint rule or test, a new stage) is a suggestion. The learner files it as a maintainer request with its evidence (`factory learn suggest "<change>" --why "<evidence>"`; a lesson loaded into `learn.promote_after` briefs files one on its own). The maintainer drafts it, runs a benchmark against the current setup when it can, and opens the PR.
+- Config's Pending changes says who asked for each request: you (in Overwatch) or the learner.
 - The learner never writes files and the maintainer never decides a setting by itself, so every change has one source of evidence and one reviewable diff.
 
 ### Storage and dependencies
@@ -229,7 +276,7 @@ Once a ticket is groomed, the factory runs it to a ready PR on its own. What kee
 - PR.md follows the readable template (PRD 6.3).
 - The ticket stayed within its budget.
 
-**Grooming is the one stop.** As soon as an issue lands in your queue, the triage agent grooms it: it reads the ticket and the code, picks a blueprint, and lists open questions. The questions appear in Needs you and as a comment on the GitHub issue; an answer in either place counts, and the other is updated. The ticket waits until every question is answered, and you can change the blueprint it picked meanwhile. After grooming it runs to a ready PR without stopping. A question that only appears mid-run gets a best guess, recorded in GATES.md and listed in PR.md under "Decisions made for you".
+**Grooming is the one stop.** As soon as an issue lands in your queue, the triage agent grooms it: it reads the ticket and the code, picks a blueprint, and asks its open questions in its own live terminal, with Claude Code's question prompt and its options. Needs you shows the ticket as waiting on you (decided 2026-11-22; nothing is posted to the issue); you open its terminal and answer there. Triage records each answer under Decisions in GROOMING.md, and you can change the blueprint it picked meanwhile. Any agent that stops to wait on you in its terminal shows in Needs you the same way. After grooming it runs to a ready PR without stopping. A question that only appears mid-run gets a best guess, recorded in GATES.md and listed in PR.md under "Decisions made for you".
 
 **Product questions are never ours to answer.** Grooming sorts every question into one of two kinds:
 
@@ -238,7 +285,7 @@ Once a ticket is groomed, the factory runs it to a ready PR on its own. What kee
 
 The product owner is the issue's author unless the Project has a PO field; `grooming.product_owner` in `factory.yaml` can name one per repo.
 
-**Hard stops.** Only these are blocked on every action, because their damage can't be undone: pushing to main, writing outside the ticket's worktree, destructive commands (flow-stack v1's guard list), and secrets in output. Agents can't push at all; only the daemon opens PRs, and only when the ready rules pass.
+**Hard stops.** Only these are blocked on every action, because their damage can't be undone: pushing to main, writing outside the ticket's worktree, destructive commands (flow-stack v1's guard list), and secrets in output. Agents can't push at all; only the daemon opens PRs, and only when the ready rules pass. The daemon enforces the stops `factory.yaml` lists for local Claude sessions with a PreToolUse hook (`daemon/guard.ts`); a hit blocks the action, kills the session and parks the ticket. The checks are patterns on the tool's input, so they catch the usual ways, not every way. Codex sessions and cloud runs aren't covered: they get the stops in their brief only.
 
 **Escalation.** A ticket parks in Needs you only when it is truly stuck: retries used up, budget reached, a hard stop hit, or a ticket the agent can't make sense of. Other tickets keep running.
 
@@ -296,62 +343,129 @@ Some tickets touch more than one repo, say an API change and the web page that u
 PRD 6.5, the authoring side. Nobody copies review comments into a session.
 
 1. **Watch.** The babysitter polls every PR the factory opened and picks up new review comments, as a `pr_review_comment` trigger.
-2. **Judge each comment.** Three questions decide the verdict: is it correct, is it required, how risky is it. A cheap model judges each comment seeing only the comment and the lines it points at; a product question goes to the PO. The verdict is **fix**, **push back** (a reply with the reasoning), or **escalate** (it goes to Needs you). Each comment and its verdict lands in REVIEW.md.
+2. **Judge each comment.** Three questions decide the verdict: is it correct, is it required, how risky is it. A cheap model judges each comment seeing only the comment and the lines it points at; a product question goes to the PO. The verdict is **fix**, **push back** (a reply with the reasoning), or **escalate** (it goes to Needs you). Each comment and its verdict lands in REVIEW.md. The proposal only pre-fills (`review.judge_model`, haiku by default); while you're away, a clear-cut fix is applied, and a pushback or escalation never is. After a round's fixes are pushed, each PR gets one summary comment and each pushback gets its reply. `review.round_budget` is a share (`25%`) or tokens (`200k`, or `200k/20k` for input/output).
 3. **Fix.** Never by resuming the session that wrote the PR. Once its prompt cache has expired (5 minutes by default, an hour at most), resuming it re-reads its whole history at full input price to change a few lines. Instead the daemon writes a fix brief, REVIEW-ROUND-2.md, with only the comments marked fix: the reviewer's words, file and line, the diff hunk, and the acceptance check each one touches. A fresh session starts in the ticket's worktree, updated to the PR branch, and loads the brief, the touched files and a short HANDOFF summary. Its model matches the work: a cheap one for renames and wording, the builder's for logic. The affected tests and ready rules run before anything is pushed. Each round has its own token cap (`review.round_budget`, a share of the ticket's budget); a round that reaches it parks instead of growing.
 4. **Insistence.** After `review.max_pushbacks` (default 2), the factory makes the change the reviewer asked for. If that change breaks a ready rule, it keeps it on the branch, does not push a failing PR, and parks the ticket in Needs you with the failing check, so you decide. It defers on opinion, never silently on quality.
 5. **Learn.** A comment that keeps coming up across PRs feeds the learning loop below.
 
 Reviewing teammates' PRs (PRD 6.6) is the next section; it reuses the same verdicts and evidence format.
 
-## Reviewing teammates' PRs
+## Peer review: teammates' PRs
 
-PRD 6.6, the reviewer side. The factory makes a lot of PRs, and so do your teammates; reviewing them is where your time goes. The factory prepares every review so you only read, adjust and submit.
+PRD 6.6, the reviewer side, as the user redesigned it on 2026-11-23. People don't read a diff top to bottom any more: they need to understand what a change does, then decide. So every PR gets a story to read before the diff, an agent's review with a verdict, and an output that matches the PR's risk. Every step has a budget, and the outcome of every review becomes data the factory learns from.
 
-**Intake.** The daemon uses the GitHub CLI to learn your teams and teammates (`gh api user/teams`, then each team's members), refreshed daily. Your review queue is:
+### The flow
 
-- every PR that requests a review from you or one of your teams, and
-- every open PR by a teammate in the factory's repos.
+A peer review is a ticket that runs a **peer-review blueprint**, so it gets everything a ticket has: stages, gates, a budget, a worktree, the Ticket page and the decision log.
 
-**Prep, as soon as a PR arrives.**
+1. **Intake.** The daemon learns your teams through `gh` (`gh api user/teams`, then each team's members), refreshed daily. The queue is every PR that requests you or one of your teams, plus every open PR by a teammate in the factory's repos (`review.queue`).
+2. **Risk and cost, before any tokens.** A risk score from size, sensitive areas (`review.never_low_risk`), failing checks, missing evidence and an author new to the area puts the PR at `low`, `medium` or `high`. A cost estimate comes from the diff size and the recorded cost of similar past reviews (the memory store, below). If the estimate is more than what is left in the 5-hour window, the week or today's budget, the PR shows "⚠ may not fit". You can run it anyway, run the story only, or wait for the reset. Nothing starts on its own while the warning stands.
+3. **Prep.** A read-only worktree, never one a ticket uses. The author's evidence pack, if any, is re-run, never trusted. The checks are re-run independently: affected tests, the feature scenarios it touches, lint.
+4. **Story.** A chapters page, built the way flow-stack's `chapters` builds one: the core change first, then what it affects, then glue, with tests and generated files last. Each chapter has its hunks and a read, skim or skip tier. Every why links to the PR body, commit, review, issue or ticket file that says it. A why nobody wrote down becomes a question for the author, never a guess. It is a private Claude artifact, one link per PR, republished in place. On a later round it shows **rounds**: each review's findings, which are fixed and by whose word, and what is still open.
+5. **Review.** The reviewer agent (yours, see below) grades the diff and returns findings with a severity, and decides the verdict. The flow-stack reviewer is the reference, with these rules kept:
+   - one finding per class, listing every instance, so one fix round closes it;
+   - `git blame` decides pre-existing or new, and pre-existing is never blocking;
+   - evidence is a file and line read, or a command run; a blocker comes with the input that breaks it, run, or says `not reproduced`;
+   - at most three nits, and style only when the user's taste covers it.
 
-1. Check it out in its own read-only worktree, never one a ticket uses.
-2. Read the PR and its evidence pack, if the author used a factory. That evidence is verified by re-running it, never trusted.
-3. Re-run the checks independently: the affected tests, the feature scenarios it touches, lint.
-4. A reviewer agent, built from your own reviewer pack (your taste plus examples of your past review comments), sorts findings into must-fix, suggestion and noise. Noise is hidden but kept.
-5. Add the findings worth posting to your pending review on the PR, and keep the full record, noise included, in REVIEW-DRAFT.md.
+   And these added:
+   - **Verify by vote.** Each blocker and major goes to two fresh reviewers in verify mode, each trying to prove it wrong. A finding both call wrong is dropped; a split is kept and marked.
+   - **Your past outcomes.** The brief carries similar past comments from the memory store, with what happened to each (kept, edited, pushed back), so the reviewer stops repeating comments you delete.
+   - **Questions from the story.** Unexplained whys become questions in the review.
+6. **Verdict, by the agent.**
 
-**Output: a pending review on GitHub, as you.** The findings you'd want are added to a pending review under your account: inline comments on the right lines, and a summary with the main point first. A pending review is visible only to you until it's submitted, so you open the PR on github.com, edit or delete comments, pick approve, request changes or comment, and submit it yourself. Noise never makes it into the pending review; it stays in Herdr if you want to look.
+   | Findings | Verdict |
+   | --- | --- |
+   | any blocker or major | Request changes |
+   | only minor findings and nits | Comment |
+   | nits only, or nothing | Approve, with the nits as comments |
 
-**Low-risk PRs.** The queue is sorted by a risk score: size, sensitive areas touched, failing checks, missing evidence, an author new to the area. A PR under the low-risk bar gets no pending comments at all, just a one-screen summary. What happens next is a gate you set:
+7. **Output, by risk level.** The verdict decides what the review says; the level decides whether it is submitted.
 
-- `human` (default): you approve it, on github.com or with `a` in Herdr.
-- `auto`: the factory submits an approving review as you, with a one-line summary. It warns you when you turn this on and shows how many auto-approved PRs were later reverted, but it never refuses.
+   ```yaml
+   # .factory/factory.yaml
+   review:
+     queue: [requested, teammates]
+     blueprint: peer-review          # the default; a rule below can pick another
+     agent: reviewer                  # your own peer-review agent, from the example library or the repo
+     levels:
+       low:    { output: pending }    # pending | submit
+       medium: { output: pending }
+       high:   { output: pending }
+     never_low_risk: [auth, payments]
+     budget: { per_pr: 400k/40k }
+     format: .factory/review-format.md   # how comments and the summary are written
+   ```
 
-```yaml
-# .factory/factory.yaml
-review:
-  queue: [requested, teammates]   # PRs asking for you or your teams, plus teammates' PRs
-  output: pending_review          # findings land as your pending review on GitHub
-  low_risk:
-    gate: human                   # human: you approve. auto: the factory approves as you
-    max_lines: 80
-    requires: [checks_pass, evidence_verified]
-  never_low_risk: [auth, payments]
-```
+   - `pending` (the default for every level): the findings land as your pending review on GitHub, inline on the right lines with a summary, main point first, and the agent's verdict at the top of the summary. Only you see it until you open the PR, adjust it and submit.
+   - `submit`: the factory submits the review as you, with the agent's verdict. `approve` is allowed only for `low`; at `medium` and `high` a `submit` review never approves, and an Approve verdict is posted as Comment. Turning `submit` on warns once and shows how many submitted reviews were later reverted.
+   - Noise never reaches GitHub. The full record, noise included, stays in the review ticket's REVIEW-DRAFT.md.
 
-**It learns from what you submit.** When you submit, the daemon compares your final review with the pending one: which comments you kept, edited or deleted, what you added, and the verdict you chose. That trains the noise filter (a candidate for a small trained model, PRD 6.11) and your reviewer pack, with no extra step from you. Metrics shows how often comments survive unchanged, and your review minutes per day against `attention.review_minutes_per_day`.
+### Your own reviewer, format and blueprints
 
-When teammates run the factory too, the shared evidence format means more of their PRs fall under the low-risk bar.
+- **Your reviewer agent.** `review.agent` names any repo agent. Start from `~/.factory/examples/agents/reviewer.md` or write your own example there; the maintainer copies it into the repo (#129's library). An agent's frontmatter lists the skills and tools it may use (`skills: [...]`, `tools: [...]`), and the brief gives it only those.
+- **Your comment format.** `review.format` points to a Markdown template for an inline comment and for the summary (severity tag, wording, whether to suggest code, sign-off). The agent writes in it; the factory check refuses a review that doesn't parse against it.
+- **Peer-review blueprints.** `blueprints/peer-review.yaml` ships as the default (`intake → prep → story → review → verify → post`). You can add others, for example a light one for docs-only PRs or a deep one for payments, and pick by rule:
+
+  ```yaml
+  review:
+    rules:
+      - { when: { paths: ["docs/**"] }, blueprint: peer-review-light }
+      - { when: { paths: ["src/payments/**"] }, blueprint: peer-review-deep }
+  ```
+
+  The maintainer creates, changes and deletes these blueprints like any other, as a `.factory/` PR.
+
+### Learning from reviews
+
+Every posted comment and verdict gets an outcome, recorded without any step from you:
+
+| Signal | From |
+| --- | --- |
+| kept, edited or deleted | your submitted review against the pending one |
+| verdict changed | the verdict you submitted against the agent's |
+| accepted | a later commit fixes the comment |
+| pushed back | the author disagrees, or resolves it without a change |
+| missed | a bug fix or revert later lands in lines the review passed |
+
+Metrics gets a Reviews tab: comments kept unchanged, accepted, pushed back, misses, verdict agreement, cost per review, and your review minutes per day against `attention.review_minutes_per_day`. The learner reads the outcomes, turns patterns into lessons or reviewer-prompt changes, and asks the maintainer to apply them.
+
+### Agent memory
+
+Lessons are rules the learner distilled. Learning also needs the raw examples, so every agent gets a **memory store**: one row per thing it did, in SQLite with full-text search.
+
+| Field | What |
+| --- | --- |
+| agent, repo | who did it, where |
+| kind | review-comment, verdict, babysitter-verdict, stage-output, … |
+| input | the context it saw (a hunk, a comment thread), trimmed |
+| output | what it wrote or decided |
+| outcome | the signal above, filled in when it arrives |
+| cost, at | tokens and time |
+
+An agent's brief pulls the closest past rows, good and bad, as examples. The learner mines the rows for lessons and prompt changes. The babysitter's verdicts and the agreement benchmark read the same store, so one dataset serves every agent.
+
+### Who can ask whom
+
+- A repo agent can ask any global agent, and any agent in its own repo.
+- A repo agent can't ask an agent in another repo: the daemon refuses it and says to go through a global agent.
+- A global agent (Overwatch, babysitter, maintainer, learner) can ask any agent in any repo.
+- Each brief's neighbour map lists only the agents that agent may ask.
+- Overwatch sees every repo and every agent running in real time: which agent, in which repo, on which ticket or PR, in which stage, and its status.
+
+### Replaces
+
+This replaces the earlier draft of this section (the low-risk `human`/`auto` gate and the noise-filter training). `reviews.json` keeps its shape in `lib/reviews.js` and gains `level`, `verdict`, `story_url`, `budget` (estimate, fits) and per-finding `severity` (blocker, major, minor, nit, pre-existing).
 
 ## Learning loop
 
 PRD 6.4 and 6.11. The factory tunes itself, but only inside limits you set.
 
-- **You pick the target.** `learn.target` in `factory.yaml`: cost per PR, time to PR, human interactions per PR, or review rounds per PR.
+- **You pick the target.** `learn.target` in `factory.yaml`: cost per PR, time to PR, human interactions per PR, or review rounds per PR (written `cost_per_pr`, `time_to_pr`, `interactions_per_pr`, `review_rounds_per_pr`).
 - **You pick what it may change.** `learn.tunable` lists the settings it may move, such as the model per stage, how deep verify goes, and how much context loads at start. Prompts, gates, blueprints, ready rules and hard stops are never tunable.
 - **A ticket's settings are fixed when it starts.** Nothing changes mid-run. Tuning happens between tickets: like a bandit experiment, the daemon tries a few values on similar tickets, compares them on the target, and shifts toward the winner.
 - **The quality floor holds.** A setting that lowers ready-rule pass rates or raises the revert rate loses, however cheap it is.
-- **Tuned values live outside `.factory/`.** They are overrides in SQLite, so the files stay yours. Config shows each override next to the file's value, `z` undoes one, and `factory learn export` writes them into a PR if you want to keep them.
+- **Tuned values live outside `.factory/` until they prove themselves.** They are overrides in SQLite, so the files stay yours. Config shows each override next to the file's value, and `z` undoes one. One that holds for `learn.promote_after` tickets comes back as a maintainer request; the learner never edits a file itself. (`factory learn export` prints the edit, for the maintainer or for you.)
 - **Every decision is logged from day one,** with its outcome, as flow-stack's decisions table does. The same log feeds handoffs and tuning.
 - **Lessons without prompt bloat.** A repeated review comment or failure becomes a suggested lint rule, test or scenario, which you merge like any PR. What can't be a check goes into a lesson store scoped to an area of the code, loaded only when a ticket touches that area. The daemon merges duplicate lessons and retires ones that never fire.
 - **Small trained models later.** Once a narrow, repeated decision has thousands of labelled examples (the review-comment verdict, routing to a cheap or strong model, choosing which tests a change needs), a small classifier can replace the heuristic, under the same floor.
@@ -363,8 +477,8 @@ The Learning tab on Metrics shows the target over time, each shift with its evid
 Budgets are counted in tokens, input and output separately, not dollars. On a Pro, Max or Enterprise subscription, an API-price estimate doesn't tell you how much of your 5-hour or weekly limit a ticket used, so dollars stay a display only: the API-equivalent cost shown beside the tokens. Every ticket has its own budget, and learning has a separate one, so the factory can't spend its way through your limits while it's still finding good settings.
 
 - **Input and output, counted apart.** Output tokens cost more and run out faster, so each budget has both. Cache reads are counted as input but shown separately, since a well-cached session reads far more than it writes.
-- **Your plan limits are a guard of their own.** The daemon reads the agents' own usage reports (the way herdr-roundup's pane header shows Claude Code and Codex plan limits) and knows where your 5-hour and weekly windows stand. When the 5-hour window passes `plan.pause_at`, nothing new starts and running tickets finish their current stage; the status bar shows when the window resets. On API keys this guard is off and the dollar estimate is exact.
-- **A budget per ticket.** Grooming estimates a ticket's input and output tokens from past tickets on the same blueprint, and sets its budget to that times `headroom`. You can change it during grooming, or later with `b` on the ticket page. The sidebar and ticket page show use against it.
+- **Your plan limits are a guard of their own.** The daemon reads the agents' own usage reports (the way herdr-roundup's pane header shows Claude Code and Codex plan limits) and knows where your 5-hour and weekly windows stand. When the 5-hour window passes `plan.pause_at`, nothing new starts and running tickets finish their current stage; the status bar shows when the window resets. A session that is running when a window fills (the 5-hour one or the weekly one) is stopped cleanly: the daemon commits its work in progress, ends it, and the ticket waits, still running and not in Needs you, with "waiting for plan reset · resumes 14:05" on its row. A minute after the reset it starts a fresh session in the same stage and slice, never the old conversation: the prompt cache expired long ago, so going on would resend the whole history at full price. The new session's brief is the handoff brief, built from the last commit, the diff and the end of the old transcript. Waiting tickets restart one at a time, oldest first, two minutes apart, within `max_running`, and none restarts while the window still reads over `plan.pause_at`. On API keys this guard is off and the dollar estimate is exact.
+- **A budget per ticket.** With fewer than 5 merged tickets on the blueprint, grooming doesn't guess: the ticket gets `budget.per_ticket`. With 5 or more, it takes the 80th percentile of their input and of their output (counted apart, so one tiny ticket can't drag it down; only tickets that reached a merged PR count) and multiplies by `headroom`. Either way there is a floor: `budget.floor` (default 50%) of `per_ticket`, or 150k input and 8k output for each stage run of the blueprint (a `per: slice` stage counts as 3 runs), whichever is larger. The decision log says how: "default: only 2 past feature tickets, need 5", or "p80 of 14 past feature tickets × 1.5, floor 1.5M in, 80k out"; Home and the ticket page show it. You can change it during grooming, or later with `b` on the ticket page. The sidebar and ticket page show use against it.
 - **What happens at the limit.** At 80% the ticket shows a warning. At 100% it stops at the next step boundary, never mid-edit, and parks in Needs you: raise the budget or drop the ticket.
 - **A daily cap,** also in tokens: when it's reached, nothing new starts.
 - **A separate learning budget.** Experiments and benchmarks spend only from `budget.learning`, never from a ticket's budget. The first `learn.warmup_tickets` tickets run on defaults with no experiments, only logging. Experiments also pause when the 5-hour window or the day's budget passes `learn.pause_above`. The Cost tab shows work and learning use apart.
@@ -374,6 +488,7 @@ Budgets are counted in tokens, input and output separately, not dollars. On a Pr
 budget:
   per_ticket: { input: 3M, output: 150k }   # the default; grooming sets each ticket's own
   headroom: 1.5
+  floor: 50%               # of per_ticket: grooming never sets a budget below this
   per_day: { input: 40M, output: 2M }
   learning: 10%            # of per_day, for experiments and benchmarks only
   show_cost: api_equivalent
@@ -384,28 +499,42 @@ learn:
   pause_above: 70%         # of the 5-hour window or the day's budget
 ```
 
+**Account-wide settings.** What belongs to you rather than to one repo lives in `~/.factory/config.yaml`, which every factory reads. A repo's `factory.yaml` wins key by key where it sets the same thing (`plan.pause_at`, `away.*`). `budget.per_day` is checked at both levels: the factory's own cap, and the account's total over every factory today. `factory away on|off` applies to every factory, and `factory validate` checks the file.
+
+```yaml
+# ~/.factory/config.yaml
+plan:    { limits: { five_hour: 20M, week: 400M }, pause_at: 85% }   # limits: the estimate when Claude gives no reading
+budget:  { per_day: { input: 40M, output: 2M } }                     # every factory together
+away:    { blueprints: [chore], review_rounds: 2, never: ["src/auth/**"] }
+profile: { rules: [never push to main], taste: [small diffs over clever ones] }   # in every stage brief
+```
+
 ## First run: setup and migration
 
 The first time factory mode opens in a space with no `.factory/` folder, it runs setup instead of Home. Every step can be skipped and rerun later from Config.
 
 1. **Check the tools:** herdr-core, the GitHub CLI and its login, and at least one agent harness. Each missing one gets its install command.
-2. **Start the daemon** as a login item, so the babysitter and triggers keep running with the window closed.
+2. **Start the daemon** as a login item (`factory service install`: a per-user launchd LaunchAgent with KeepAlive), so the babysitter and triggers keep running with the window closed.
 3. **Connect the queue:** pick the GitHub Project, its Ready column and the assignee.
 4. **Choose the basics:** budget per ticket and per day, the merge gate, `max_running`, the learning target and tunables.
 5. **Write `.factory/`** with the default blueprints and agents, show the files, and commit them to a branch when you agree.
+6. **Migrate flow-stack**, when setup finds it (below).
 
-**Migrating from flow-stack.** Setup looks for `~/.flow-stack/profile.md`, a `.flow/` folder in the repo, and the flow-stack plugin. If it finds them, it offers to copy:
+Each step that changes configuration is a maintainer request, not setup code: setup lists what's missing, Overwatch offers each fix, and when you agree it files the request (see Changing the factory).
+
+**Migrating from flow-stack.** Setup looks for `~/.flow-stack/profile.md`, a `.flow/` folder in the repo, and the flow-stack plugin. If it finds any of them, the checklist gets a flow-stack step and Overwatch offers the migration. Accepting runs `factory setup migrate`, which files one maintainer request. The maintainer runs `factory migrate flow-stack --propose <its ticket>` and turns what it proposes into changes in the same PR:
 
 | From flow-stack v1 | Into the factory |
 | --- | --- |
-| Profile taste and rules | The agent prompts and `factory.yaml` |
-| `.flow/lessons.md` | The lesson store, scoped by area where it can tell |
+| Profile rules and taste | The account config's `profile:` (`~/.factory/config.yaml`), which every stage brief reads; applied when the PR merges |
+| Profile `max_parallel_agents` | `max_running` in `factory.yaml` |
+| `.flow/lessons.md` | The lesson store, scoped by the first path a lesson names (its folder), else loaded for every ticket |
 | The decisions table and traces | The decision log, so learning starts with history |
-| Calibration | Default budgets |
-| `.flow/features/` and verify drivers | Used as they are by the verify stage |
+| Calibration | `budget.headroom` in `factory.yaml`: the largest cost overrun the calibration records |
+| `.flow/features/` and verify drivers | `verify: { features: .flow/features }` in `factory.yaml` (a copy under `.factory/features/` when `.flow/` isn't in git). The tests check runs the scenario of each feature whose `owns:` globs a ticket touched, as `feat:<id>`. When a scenario's driver isn't committed, nothing is wired and the PR lists it as a to-do. |
 | Past task folders | Merged tickets on the Tickets page |
 
-It copies and changes nothing in flow-stack, which keeps working for your normal sessions. Factory worker sessions start without the flow-stack plugin, so its hooks never run inside the factory.
+Past tasks, decisions and lessons go into the database when the migration runs, once each. Everything else waits for the PR. The migration writes `MIGRATION.md` (what it changed and what is left to do), which goes on the PR. It is safe to run again: nothing is imported twice, and the profile, budget and verify edits come out the same. It copies and changes nothing in flow-stack, which keeps working for your normal sessions. Factory worker sessions start without the flow-stack plugin, so its hooks never run inside the factory.
 
 ## Changing the factory: Overwatch and the maintainer
 
@@ -413,11 +542,18 @@ You change the factory by asking for it. Overwatch is where you ask; the **maint
 
 **Overwatch sorts every request.** A question ("what's blocking #425?") it answers itself. A ticket action (start, pause, reorder) it sends to the daemon. A change to the factory it turns into a maintainer request, listed on Tickets with a factory tag and on Config under Pending changes.
 
+**The maintainer owns every change to the factory** (its territory is in "The agents" above). You ask Overwatch, and Overwatch hands the work to the maintainer with `factory request`. Other agents ask it the same way: the learner with its promotions and suggestions, the babysitter with a comment that keeps coming back, Overwatch itself when it spots housekeeping. Nothing else edits `.factory/`, the account config, the factory's agents or its UI.
+
 **What the maintainer handles:**
 
 - **Configuration:** budgets, gates, `max_running`, tunables, the queue.
+- **The account config** (`~/.factory/config.yaml`: `plan`, the account's `budget.per_day`, `away`, `cloud`, `profile`). No repo holds that file, so the maintainer never edits it in place. `factory account propose <id>` copies it into the request's ticket folder as `ACCOUNT-CONFIG.yaml`, and the maintainer edits that copy. The factory check validates it against the account schema, keeps the copy it checked, and puts the diff on the PR (`ACCOUNT-CONFIG.md`). The daemon applies the checked copy only after the request merges, through the same gate (`maintainer.gate`, human by default), and keeps the old file as `config.yaml.bak-<time>-<id>`. If the file changed after the check, nothing is applied and the ticket's log says so. A request that changes only the account config opens no PR: it waits at the merge gate, and `m` applies it.
 - **Rules:** a new ready rule, hard stop, lint rule or never-unattended area.
-- **Blueprints and agents:** a new blueprint, a new stage, a new agent or a change to one's prompt.
+- **Blueprints:** a new blueprint drafted from what you describe ("a lane for database migrations, with a human gate before the migration runs"), or any edit to an existing one: stages, `next`, gates, retries. Each comes with a dry run.
+- **Agents:** a new repo agent for any repo, a change to one's prompt or model, deleting one no blueprint names any more, or a change to a factory agent (`~/.factory/agents/`). A new or reworked repo agent starts from the closest example in `~/.factory/examples/agents/`: the maintainer copies it into the repo, adapts it, and the PR says which example it started from and what changed. A blueprint can use an example you wrote yourself the same way, copied into the repo in that blueprint's PR.
+- **The example library** (`~/.factory/examples/agents/`): adding, changing or removing an example. Like the factory agents it is in no repo, so `factory examples propose <id> <name> [--from <example>]` copies it into the request's folder as `EXAMPLES/<name>.md`, an emptied copy removes it, the check puts the diff on the PR (`EXAMPLES.md`), and the daemon applies it, with a backup, only once the request merges.
+- **Housekeeping:** clearing closed tickets and their folders, removing stale worktrees and Herdr workspaces, pruning branches the factory made. A cleanup lists what it will remove and waits at the gate like any change.
+- **The factory's look:** pages, layout and colours, as a PR against the factory app's own repo (its mods and themes), since you are the author.
 - **Migrations:** importing old Claude Code sessions into Runs and the decision log, migrating flow-stack's lessons, profile and playbooks (each built-in or repo playbook becomes a blueprint draft), and later, moving between versions of the factory's own schema.
 
 **Every change is a PR against `.factory/`.** The maintainer works in its own worktree, writes the files, runs the schema check, and for a blueprint does a dry run: it replays a few past tickets through the new graph and reports which path each took. The Blueprint page shows the draft graph beside the current one. Merging is a gate: `maintainer.gate: human` by default; small changes such as a budget can be set to `auto`.
@@ -443,6 +579,23 @@ Everything runs locally by default, so a sleeping laptop stops running tickets a
 
 Cloud runs keep the same gates, ready rules and hard stops.
 
+### Shared plans as Claude artifacts
+
+A ticket's spec and plan live as files in the factory's data folder, which a cloud session can't see. With sharing on, the agent that writes one also publishes it to claude.ai, so any session the person owns reads it by link.
+
+```yaml
+# .factory/factory.yaml, or ~/.factory/config.yaml for every factory
+artifacts:
+  as: artifact          # artifact (a page) | doc (a Claude Doc) | off (the default)
+  publish: [INTENT.md, SLICES.md, PR.md, HANDOFF.md]   # the default when as is set
+```
+
+- **Who publishes.** Only an agent: the Artifact tool and the Claude Docs connector exist inside an interactive Claude Code session signed in to claude.ai, and no command or API publishes from outside one. A stage whose `output:` is listed ends with publishing it, as is (Markdown renders as a page), then `factory artifact <id> <file> <url>`. A handoff's next session publishes the handoff it starts from as HANDOFF.md.
+- **One link per file.** The daemon keeps each link in SQLite (`ticket_artifacts`). Every later session (a new stage run, a slice, a review round, a handoff) is given the link and republishes to it, so it never changes. Links start private; the person shares one from the page if they want.
+- **Who reads.** Every brief that points at the files also gives the links: stage and handoff briefs, CLOUD.md for `⇧C`, and ROUTINE.md beside each watched PR. A cloud session reads the plan with its own Artifact tool; the pack's copies still travel.
+- **Best-effort.** The local files stay the source of truth, and no ready rule reads a link. A failed publish (`factory artifact <id> <file> --fail <why>`), or a stage that ends with no new link, adds one line to the decision log and nothing else.
+- **What you see.** The Ticket page shows "Shared on claude.ai" with a link per file; status.json carries them.
+
 ## Away mode
 
 When tickets run in the cloud and you're away, nobody is there to ask, so the agents have to carry your judgement with them. The babysitter does most of the unattended work (review rounds, fixes, pushbacks), so most of this is about the babysitter.
@@ -460,7 +613,7 @@ The factory is defined by files in the repo it works on, so it can be branched, 
 
 Rules for every file:
 
-- **Checked against a schema.** The repo ships a JSON Schema per file type. `factory validate` runs it on every save and as a pre-commit hook. Unknown keys are errors, so a typo never silently does nothing.
+- **Checked against a schema.** `factory validate` checks each file kind against its rules (`daemon/validate.ts`), and Config runs it on every save. Unknown keys and duplicate keys are errors, so a typo never silently does nothing. JSON Schemas for editors can be generated from the same rules.
 - **Defaults are documented and inherited.** A factory can start from `factory.yaml` alone; every other file states only what it changes.
 - **Files refer to each other by name,** never by path: a trigger names a blueprint, a stage names an agent.
 - **Secrets by name only.** Values come from the macOS keychain or the environment.
@@ -501,7 +654,7 @@ grooming:
   blueprints: [feature, bugfix, chore]   # it picks one per ticket
   questions: [herdr, issue]              # an answer in either place counts
 max_running: 3
-defaults: { harness: claude, model: sonnet, effort: medium }
+defaults: { harness: claude, model: claude-sonnet-5-5, effort: medium }
 budget: { per_ticket_usd: 5, per_day_usd: 50, handoff_at_context: 60% }
 ready: [evidence, holdout, quality_floor, review, template, budget]
 quality_floor: [npm test, npm run typecheck]
@@ -524,7 +677,8 @@ stages:
   spec:      { agent: spec-writer, output: INTENT.md, next: [plan, implement] }
   plan:      { agent: planner, output: SLICES.md, next: [implement] }
   implement: { agent: builder, per: slice, next: [verify] }
-  verify:    { check: evidence, next: [review], on_fail: implement, max_retries: 3 }
+  verify:    { check: evidence, next: [holdout], on_fail: implement, max_retries: 3 }
+  holdout:   { agent: checker, next: [review], on_fail: implement }   # hidden tests
   review:    { agent: reviewer, next: [pr], on_fail: implement }
   pr:        { requires: ready, output: PR.md, template: pr-readable, next: [merge] }
   merge:     { gate: human, next: [end] }   # auto on a chore blueprint, if you choose
@@ -549,23 +703,31 @@ Other blueprints sit in `blueprints/<name>.yaml`, such as a short one for lint f
 
 The same format as Claude Code agents: a YAML header, then the prompt in Markdown. The default agents are ported from flow-stack v1 (reviewer, checker, advocate, builder) and live in the new repo.
 
+Repo agents live here, in `.factory/agents/`. The factory agents (Overwatch, babysitter, maintainer, learner) use the same format but live in `~/.factory/agents/`, one set for every repo; the shipped defaults fill in any that's missing. The example library (`~/.factory/examples/agents/`, shipped from `examples/agents/`) uses the format too, but nothing runs from it. Every agent's brief carries the map of its neighbours: each agent's name, territory and how to ask it.
+
+A stage's agent loads from the repo the stage works in. Each stage of a ticket runs in one session, opened in the worktree of the ticket's lead repo, so that repo is the one it works in: a ticket the maintainer files for another repo works there, and that repo's `.factory/agents/<name>.md` is read first. Next comes the factory's lead repo's file, and nothing else: a stage never runs an example, so an agent neither repo has fails the stage (and `factory validate` before it). A cross-repo ticket is led by the factory's lead repo (grooming makes it so), so its stages run the lead's agents; the other repos' worktrees are worked in from that same session, and their own agent files don't apply to it. Blueprints, prompts and `factory.yaml` stay the lead repo's for every ticket, and so does the neighbour map, which every brief shares. `factory validate` checks every repo's `.factory/agents/`.
+
 | Field | What it sets |
 | --- | --- |
 | `role` | `orchestrator`, `triage`, `spec`, `plan`, `build`, `review`, `verify`, `scorer` or `maintain` |
 | `harness`, `model`, `effort` | Overrides `factory.yaml`'s defaults, so each role can use a different tool or model |
 | `from` | Starts from another agent in this factory and changes only what's listed |
-| `tools`, `mcp`, `skills` | What the agent may use, on top of the defaults |
+| `skills` | The factory skills the session gets, by name: the repo's `.factory/skills/<name>/`, else `~/.factory/skills/<name>/` (a factory agent reads only the latter). None listed: none of the factory skills |
+| `tools` | The only built-in tools the session has (`claude --tools`); `Skill` is added when it lists skills. None listed: every tool, as before |
+| `mcp` | MCP servers the agent may use |
 | `context` | Files and lessons loaded on demand, never the whole history (PRD 6.4, 7.4) |
 
 ```markdown
 ---
 role: review
-model: opus
+model: claude-opus-5-5
 context: [INTENT.md, EVIDENCE.md, lessons/auth.md]
 ---
 Grade the diff against INTENT.md. Block on any acceptance check
 without a PASS in EVIDENCE.md. Flag code that could be smaller.
 ```
+
+A session gets its skills through a plugin folder of its own: the factory copies exactly the listed skills into `<ticket folder>/.skills/<agent>/` (Overwatch's into `~/.factory/.skills/overwatch/`) and starts `claude --plugin-dir=<that folder>`, so they show as `factory:<name>`. The brief names them in one line. Nothing is written into the repo checkout or `~/.claude/skills/`. `factory validate` errors on a listed skill that isn't in either place, and checks each `SKILL.md` in `~/.factory/skills/`. Stage, handoff, triage and Overwatch sessions get them; the one-shot `claude -p` calls (the learner, the babysitter's judge, the orchestrator) don't. `examples/skills/README.md` has the skill format.
 
 ### triggers/\<name>.yaml: when work starts
 
@@ -575,6 +737,7 @@ without a PASS in EVIDENCE.md. Flag code that could be smaller.
 | `filter` | Which events count: repos, authors, paths |
 | `blueprint` | The blueprint to run |
 | `concurrency` | How many tickets from this trigger run at once |
+| `enabled` | `false` keeps the trigger from firing; it also turns off the built-in trigger that does the same job. Defaults to `true`, and `factory validate` marks a disabled file "(off)" |
 
 ```yaml
 # .factory/triggers/review-comments.yaml
@@ -584,7 +747,7 @@ blueprint: address-review   # fix, push back, or escalate (PRD 6.5)
 concurrency: 2
 ```
 
-Triggers run the babysitter (review comments on factory PRs), the maintenance agent (stale checks, scheduled full test runs, drift) and intake from your GitHub Project queue. Since everything is local, the daemon polls GitHub every few minutes instead of receiving webhooks, so triggers fire only while the machine is awake.
+Triggers run the babysitter (review comments on factory PRs), the maintenance agent (stale checks, scheduled full test runs, drift) and intake from your GitHub Project queue. Setup ships the maintenance agent's daily trigger with `enabled: false`, so it stays off until you set `enabled: true` in `triggers/maintenance.yaml` or ask Overwatch to turn it on, which the maintainer does in a normal `.factory/` PR. Since everything is local, the daemon polls GitHub every few minutes instead of receiving webhooks, so triggers fire only while the machine is awake.
 
 ## Benchmarks: monitoring on your own data
 
@@ -603,12 +766,14 @@ size: mini                        # smoke, mini or full
 tasks: { from: merged-prs, repo: acme/api, pick: 15, holdout: tests-added-by-pr }
 variants:
   - name: baseline
-  - name: sonnet-builder
-    set: { agents.builder.model: sonnet }
+  - name: opus-builder
+    set: { agents.builder.model: claude-opus-5-5 }
 score: [holdout_pass, cost_usd, minutes, diff_lines]
 limits: { max_usd: 40, parallel: 3 }
 schedule: weekly
 ```
+
+The held-out tests are scored by running factory.yaml's `quality_floor` commands in the replayed worktree with `$FACTORY_HOLDOUT_FILES` set; a scheduled suite first runs one interval after the daemon sees it, since it spends money.
 
 Benchmarks inform you; the learning loop above is what tunes settings, on live tickets and within your limits.
 
@@ -640,7 +805,7 @@ One repo, laid out like herdr-roundup so Herdr users recognise it, plus the daem
 | `mods/factory-*/` | The mods above |
 | `themes/factory.json` | The layout's own theme, light and dark |
 | `keys.json` | Only the `layout:factory` section, so the user's other keys stay theirs |
-| `daemon/` | SQLite, the blueprint runner, the babysitter, the benchmark runner |
+| `daemon/` | TypeScript on Bun (decided 2026-11-21): SQLite via `bun:sqlite`, the blueprint runner, the babysitter, the benchmark runner; shares `lib/status.js` with the mods; `bun build --compile` makes the one binary |
 | `schemas/` | A JSON Schema per `.factory/` file |
 | `agents/` | The default agent prompts, ported from flow-stack v1 |
 | `scripts/sync.sh` | Installs layout, mods and theme into `~/.config/herdr-app` (copies, as Herdr won't load a mod's SVGs through a symlink) |
@@ -659,8 +824,8 @@ Parts carry over by copying, not by dependency. The flow-stack plugin is never i
 | `checker` agent (blind checks) | Kept, as the hidden tests |
 | `reviewer` agent, its vote, the `ready.sh` stamp | Kept, as the review stage and a ready rule |
 | `advocate` / `challenge` | Kept, as an optional agent the orchestrator can call for large tickets |
-| Feature map and `impact` | Kept: decides which scenarios a ticket must pass |
-| Verify drivers | Kept: the verify stage runs them |
+| Feature map and `impact` | Kept: a feature's `owns:` globs decide which scenarios a ticket must pass |
+| Verify drivers | Kept: the verify stage runs them, through the feature map's `scenario:` lines (`verify.features`) |
 | Handoff | Kept, as the hard handoff at 60% context |
 | `deslop` / `unslop` | Kept, inside the review stage |
 | Guard hook | Kept, as the destructive-commands hard stop |
@@ -669,7 +834,7 @@ Parts carry over by copying, not by dependency. The flow-stack plugin is never i
 | Intent interview, the `gate` skill, rigor levels | Dropped: blueprints, ready rules and non-blocking questions replace them |
 | `task.sh` and session ownership | Dropped: the daemon owns tickets in SQLite |
 | Tour, brief, dojo, teach, board, status line, the herdr TUI plugin | Dropped: the layout is the UI |
-| Profile taste | Moved into `factory.yaml` and agent prompts |
+| Profile taste and rules | Moved into the account config's `profile:`, which every stage brief carries |
 
 ## Mapping to the PRD
 
@@ -704,8 +869,11 @@ Each milestone ends when its "done when" passes on a real ticket.
    - Done when: a 15-task mini suite on the implement stage compares two models on held-out tests and cost, and its report is on the Benchmarks tab.
 5. **M5, Auto gates and the maintenance agent.** A blueprint's merge gate can be set to auto, its revert rate shows on Home, and maintenance runs on scheduled triggers.
    - Done when: a chore blueprint with an auto merge gate runs for a week, with its revert rate on Home.
-6. **M6, Reviewing teammates' PRs.** Team discovery through `gh`, the review queue with risk order and fast lane, pending reviews on GitHub with independent checks, the low-risk gate, and learning from what you submit.
+6. **M6, Peer review.** Team discovery through `gh`; a risk level and cost estimate per PR with a warning when it won't fit the budget; peer-review blueprints with your own reviewer agent, skills and comment format; a chapters story per PR; the agent's verdict (request changes, comment, approve with nits); pending review by default, submit per level (approve only for low); review outcomes as signals; a memory store for every agent; the ask rule (repo agents ask globals and their own repo; globals ask anyone); Overwatch's live view of every repo's agents.
    - Done when: a teammate's PR arrives, its draft is ready before you open it, and its findings are waiting as your pending review on github.com.
+
+7. **M7, Agents with territories.** The factory agents move to `~/.factory/agents/`: one Overwatch for every repo, and the babysitter and learner become agents rather than daemon heuristics. Every brief carries the neighbour map, and an agent asks another through a recorded request (a repo agent asks globals and its own repo's agents; globals ask anyone, from M6). The maintainer's territory grows to blueprints from a description, agents for any repo, housekeeping, and the factory's UI and theme.
+   - Done when: you ask Overwatch for a new blueprint, a stricter reviewer in one repo, a cleanup of merged tickets and a different accent colour, and each comes back from the maintainer as a reviewable change; and a learner finding reaches the maintainer as a request with no one relaying it.
 
 ## Risks and open questions
 
@@ -721,10 +889,10 @@ Each milestone ends when its "done when" passes on a real ticket.
 
 Open questions:
 
-- Can a mod draw the blueprint graph and the Metrics charts itself, or does the daemon render SVGs the mod shows with `image()`? The SVG path works today.
+- Can a mod draw the blueprint graph and the Metrics charts itself, or does the daemon render SVGs the mod shows with `image()`? Settled for Metrics: the charts are daemon-rendered SVG (`daemon/charts.ts`), a light and a dark file per chart named by a hash of its content, since `image()` caches by path and loads only paths inside Herdr's folder (a real factory's `charts/` is reached through a link at `factory-charts/<factory>`). The blueprint graph is still open.
 - Does the orchestrator run as its own long-lived agent per ticket, or does the daemon call it once per stage change?
-- What language is the daemon written in?
 - Which Claude Code interface does the daemon use to start a cloud session from a branch and to fetch one back, and can it start worker sessions with the flow-stack plugin turned off? Both need checking before M3.
+- The scheduled cloud agent that watches PRs is a Claude Code cloud scheduled task (formerly a routine). It can be made only on claude.ai/code/routines, in the Desktop app, or with `/schedule` in an interactive session, and runs at most hourly. Still to check: whether its session can read review comments and reply through `gh` or the GitHub connector (docs/slices.md, M3).
 
 ## Sources
 

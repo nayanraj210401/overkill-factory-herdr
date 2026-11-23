@@ -1,0 +1,27 @@
+# .factory/factory.yaml
+name: acme-api
+repos: [acme/api]
+queue: { github_project: acme/Engineering, column: Ready, assignee: me }
+grooming:
+  agent: triager
+  blueprints: [feature, bugfix, chore]   # it picks one per ticket
+  questions: [herdr, issue]              # an answer in either place counts
+max_running: 3
+defaults: { harness: claude, model: claude-sonnet-5-5, effort: medium }
+budget:
+  per_ticket: { input: 3M, output: 150k }
+  headroom: 1.5
+  per_day: { input: 40M, output: 2M }
+  learning: 10%
+ready: [evidence, holdout, quality_floor, review, template, budget]
+quality_floor: [npm test, npm run typecheck]
+hard_stops: [push-to-main, outside-worktree, destructive-commands, secrets-in-output]
+merge: human
+learn:
+  target: cost_per_pr
+  tunable: [agents.reviewer.model, agents.checker.model, budget.handoff_at_context]
+  warmup_tickets: 20
+  pause_above: 70%
+  promote_after: 30
+away:
+  min_agreement: 0.85   # below this agreement with your past review verdicts, no pushbacks while you're away
