@@ -33,9 +33,9 @@ export default class FactoryTickets extends View {
         setShared("factory.ticket", ticket.id);
         run("layout.select", { stack: STACK, child: "ticket" });
       })
-      .child(h_flex().gap(8).items_center().text_size(13).text_color(t.foreground)
+      .child(h_flex().min_w_0().gap(8).items_center().text_size(13).text_color(t.foreground)
         .child(div().size(7).rounded_full().bg(t[COLOR[group]]))
-        .child(div().flex_1().truncate().child(`#${ticket.id} ${ticket.title}`))
+        .child(div().id(`tt-${ticket.id}`).flex_1().min_w_0().truncate().tooltip(`#${ticket.id} ${ticket.title}`).child(`#${ticket.id} ${ticket.title}`))
         .when(!!warnMark(ticket), (el) => el.child(div().flex_none().px(5).rounded(7).text_size(10.5).border(1).border_color(t.blocked).text_color(t.blocked).child(warnMark(ticket))))
         .when(!!badge, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(badge))))
       .child(div().pl(15).text_size(11.5).text_color(t.muted).truncate().child(subtitle(ticket, now)));

@@ -155,7 +155,7 @@ export default class FactoryHome extends View {
             .child(div().w(44).text_color(t.dim).child(clock(e.at)))
             .child(div().w(52).text_color(t.muted).child(e.ticket != null ? `#${e.ticket}` : ""))
             .child(div().w(70).text_color(t.dim).truncate().child(e.who))
-            .child(div().flex_1().text_color(t.foreground).truncate().child(e.what))))
+            .child(div().flex_1().min_w_0().text_color(t.foreground).truncate().child(e.what))))
           .when(!s.away.events.length, (el) => el.child(div().text_color(t.dim).child("Nothing happened.")))))
       .when(Boolean(holdText(s)), (el) => el.child(v_flex().id("hold").mt(8).p(10).gap(2).rounded(8).bg(t.surface).border(1).border_color(t.blocked)
         .child(div().font_semibold().text_color(t.blocked).child(holdText(s)))
