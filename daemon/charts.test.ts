@@ -79,6 +79,14 @@ test("a budget level: dashed, and the axis reaches it", () => {
   expect(labels(svg)).toContain("8M");
 });
 
+test("shift marks: a dotted rule at each marked day, drawn under the line", () => {
+  const svg = renderChart(chart({ unit: "usd", series: [{ name: "x", values: [2, 3, 1] }], marks: [1] }), "light");
+  const rule = svg.match(/<line x1="([\d.]+)" x2="([\d.]+)" y1="10" y2="([\d.]+)"[^>]*stroke-dasharray="2 3"\/>/)!;
+  expect(rule[1]).toBe("278"); // the middle of three days
+  expect(svg.indexOf('stroke-dasharray="2 3"')).toBeLessThan(svg.indexOf("<polyline"));
+  expect(renderChart(chart({ unit: "usd", series: [{ name: "x", values: [2, 3, 1] }] }), "light")).not.toContain('stroke-dasharray="2 3"');
+});
+
 test("light and dark: the palette and the axis ink each step for their appearance", () => {
   const c = chart({ series: [{ name: "x", values: [1, 2] }] });
   const [light, dark] = [renderChart(c, "light"), renderChart(c, "dark")];
@@ -99,7 +107,7 @@ test("writeCharts: both appearances of every chart, named by content, stale file
   writeFileSync(join(dir, "charts", "7-spend-light-0000000000.svg"), "<svg/>");
   const a = writeCharts(dir, doc);
   expect(Object.keys(a.manifest["7"])).toEqual(chartsFor(doc.ranges["7"]).map((c: Chart) => c.id));
-  expect(readdirSync(join(dir, "charts"))).toHaveLength(36 + 1);
+  expect(readdirSync(join(dir, "charts"))).toHaveLength(40 + 1);
   expect(a.stale.map((f) => f.split("/").at(-1))).toEqual(["7-spend-light-0000000000.svg"]);
   // same data, same names; changed data, a new name for that chart only
   expect(writeCharts(dir, doc).manifest).toEqual(a.manifest);

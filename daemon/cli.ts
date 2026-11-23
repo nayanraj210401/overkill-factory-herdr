@@ -1051,8 +1051,9 @@ function writeAll(db: Database, p: ReturnType<typeof paths>) {
 // a manifest naming a file not yet written; the files it stops naming go after.
 export function writeMetrics(db: Database, path: string, now = new Date()) {
   const lead = leadRepo(db);
-  const doc: ReturnType<typeof buildMetrics> & { charts?: unknown; learning?: LearningMetrics | null } = buildMetrics(db, now, lead ? dayCap(lead.path)?.input ?? null : null);
-  doc.learning = lead ? learningMetrics(db, lead.path, now) : null; // the experiments, for the Learning tab
+  const learning = lead ? learningMetrics(db, lead.path, now) : null; // the experiments and lessons, for the Learning tab
+  const doc: ReturnType<typeof buildMetrics> & { charts?: unknown; learning?: LearningMetrics | null } = buildMetrics(db, now, lead ? dayCap(lead.path)?.input ?? null : null, learning?.target);
+  doc.learning = learning;
   const errors = validateMetrics(doc);
   if (errors.length) throw new Error(`metrics.json would break the contract:\n${errors.join("\n")}`);
   const charts = writeCharts(dirname(path), doc);

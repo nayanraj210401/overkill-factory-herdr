@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
-import { activeOverrides, setOverride, undoOverride } from "./learn.ts";
+import { activeOverrides, addLesson, retireLesson, setOverride, undoOverride } from "./learn.ts";
 import { finishPr, type Run } from "./runner.ts";
 import { promoteOverrides } from "./learner.ts";
 import { MODELS } from "./models.ts";
@@ -184,6 +184,7 @@ test("the winner becomes an override, with a shift and a decision; promotion fol
   expect(m.overrides).toEqual([expect.objectContaining({ id: 1, key: KEY, value: H, from_experiment: true })]);
   expect(m.experiments[0]).toMatchObject({ current: H, file: S, winner: H, outcomes: 6 });
   expect(validateMetrics({ ranges: {}, learning: m })).toEqual([]);
+  expect(m.lessons).toEqual([]);
   // Tickets that held it count toward promotion, which files the maintainer request.
   s.db.query("UPDATE tickets SET settings = ? WHERE state = 'merged'").run(JSON.stringify({ [KEY]: H }));
   const filed = promoteOverrides(s.db, { dir: s.dir, repo: s.repo, slug: "acme/api", run: () => ({ code: 1, out: "stubbed" }), now: NOW });
@@ -194,4 +195,22 @@ test("the winner becomes an override, with a shift and a decision; promotion fol
   undoOverride(s.db, KEY, "2026-11-22T13:00:00.000Z");
   expect(s.run(H, { usd: 0.5 }).shift).toEqual([]);
   expect(activeOverrides(s.db)).toEqual([]);
+});
+
+test("metrics.json's lessons: the active store by area, most used first, repeats and retired ones left out", () => {
+  const s = setup();
+  const add = (area: string, text: string, hits: number) => {
+    const { id } = addLesson(s.db, { area, text, now: NOW });
+    s.db.query("UPDATE lessons SET hits = ? WHERE id = ?").run(hits, id);
+    return id;
+  };
+  add("src/auth/**", "Rotate session tokens in the middleware only.", 2);
+  add("src/auth/**", "Rate-limit tests need the fake clock or they flake.", 7);
+  add("migrations/", "Every migration needs a down step.", 0);
+  add("src/auth/**", "rotate session tokens in the middleware only", 9); // a repeat of the first
+  retireLesson(s.db, add("src/billing/**", "Old advice.", 4), NOW);
+  const m = learningMetrics(s.db, s.repo, new Date(NOW));
+  expect(m.lessons.map((l) => [l.area, l.hits])).toEqual([["migrations/", 0], ["src/auth/**", 7], ["src/auth/**", 2]]);
+  expect(m.lessons[1]).toEqual({ id: 2, area: "src/auth/**", text: "Rate-limit tests need the fake clock or they flake.", source: "you", hits: 7, since: NOW });
+  expect(validateMetrics({ ranges: {}, learning: m })).toEqual([]);
 });

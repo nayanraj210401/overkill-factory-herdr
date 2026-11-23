@@ -206,7 +206,32 @@
       0.99
      ]
     }
-   ]
+   ],
+   "target_per_day": [
+    2.37,
+    2.5,
+    2.31,
+    2.54,
+    1.73,
+    1.66,
+    1.83
+   ],
+   "shifts_per_day": [
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0
+   ],
+   "target": {
+    "name": "cost_per_pr",
+    "value": [
+     2.04,
+     2.41
+    ]
+   }
   },
   "30": {
    "headline": {
@@ -735,7 +760,78 @@
       1.09
      ]
     }
-   ]
+   ],
+   "target_per_day": [
+    null,
+    null,
+    2.54,
+    2.47,
+    2.4,
+    2.57,
+    2.37,
+    2.5,
+    2.31,
+    2.37,
+    2.5,
+    2.31,
+    2.54,
+    2.47,
+    2.4,
+    2.57,
+    2.37,
+    2.5,
+    2.31,
+    2.54,
+    2.47,
+    2.4,
+    2.57,
+    2.37,
+    2.5,
+    2.31,
+    2.54,
+    1.73,
+    1.66,
+    1.83
+   ],
+   "shifts_per_day": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0
+   ],
+   "target": {
+    "name": "cost_per_pr",
+    "value": [
+     2.29,
+     null
+    ]
+   }
   }
  },
  "agreement": {
@@ -895,6 +991,40 @@
     "override": 4,
     "why": "cost_per_pr in feature/m: claude-haiku-5-5 1.62 over 6 tickets (first try 0.833, reverts 0) against claude-sonnet-5-5 2.31 over 6 (first try 0.833, reverts 0)"
    }
+  ],
+  "lessons": [
+   {
+    "id": 3,
+    "area": "src/auth/**",
+    "text": "Session tokens are rotated in middleware/session.ts; never mint them in a route handler.",
+    "source": "you",
+    "hits": 14,
+    "since": "2026-10-28T09:12:00.000Z"
+   },
+   {
+    "id": 7,
+    "area": "src/auth/**",
+    "text": "Rate-limit tests need the fake clock from test/clock.ts, or they flake on CI.",
+    "source": "flow-stack",
+    "hits": 6,
+    "since": "2026-11-02T16:40:00.000Z"
+   },
+   {
+    "id": 9,
+    "area": "migrations/",
+    "text": "Every migration needs a down step; the deploy check rolls one back.",
+    "source": "you",
+    "hits": 9,
+    "since": "2026-11-05T11:03:00.000Z"
+   },
+   {
+    "id": 12,
+    "area": "src/billing/**",
+    "text": "Amounts are integer cents end to end; format only in the view.",
+    "source": "you",
+    "hits": 2,
+    "since": "2026-11-17T08:30:00.000Z"
+   }
   ]
  },
  "charts": {
@@ -934,6 +1064,10 @@
    "first-try": {
     "light": "7-first-try-light-532fd14abc.svg",
     "dark": "7-first-try-dark-e52a2249b8.svg"
+   },
+   "target": {
+    "light": "7-target-light-e4cf636bfe.svg",
+    "dark": "7-target-dark-abd6ff9943.svg"
    }
   },
   "30": {
@@ -972,6 +1106,10 @@
    "first-try": {
     "light": "30-first-try-light-3a6fc3e412.svg",
     "dark": "30-first-try-dark-44b86c1516.svg"
+   },
+   "target": {
+    "light": "30-target-light-a5ff6f484e.svg",
+    "dark": "30-target-dark-e0cf8aaccc.svg"
    }
   }
  }
