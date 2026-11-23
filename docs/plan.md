@@ -202,7 +202,7 @@ Repo agents can differ per repo: a stricter reviewer for the payments repo, a bu
 - **The look of the factory:** layout, pages and colours, when you ask ("this page is hard to read", "use a warmer accent"). You are the author, so this is a change to the factory app's own repo (mods, themes), made as a PR there.
 - **Migrations:** flow-stack, old sessions, and the factory's own schema versions.
 
-**Agents are neighbours: each knows the others and asks them directly.** Every agent's brief carries a short map of the factory's agents: who they are, what each owns, and how to ask each one. Asking is a request with an origin, routed by the daemon and recorded in SQLite, so every hand-off is visible on Config's Pending changes and in the decision log.
+**Agents are neighbours: each knows the others and asks them directly.** Every agent's brief carries a short map of the factory's agents: who they are, what each owns, and how to ask each one. A repo agent asks the global agents and its own repo's agents; a global agent asks any agent (see Peer review, Who can ask whom). Asking is a request with an origin, routed by the daemon and recorded in SQLite, so every hand-off is visible on Config's Pending changes and in the decision log.
 
 - You → Overwatch: "make the reviewer stricter in api" → Overwatch → maintainer.
 - Learner → maintainer: "set the plan stage to Haiku for chores; 30 tickets, cost per PR down 22%, revert rate unchanged".
@@ -350,68 +350,112 @@ PRD 6.5, the authoring side. Nobody copies review comments into a session.
 
 Reviewing teammates' PRs (PRD 6.6) is the next section; it reuses the same verdicts and evidence format.
 
-## Reviewing teammates' PRs
+## Peer review: teammates' PRs
 
-PRD 6.6, the reviewer side. The factory makes a lot of PRs, and so do your teammates; reviewing them is where your time goes. The factory prepares every review so you only read, adjust and submit.
+PRD 6.6, the reviewer side, as the user redesigned it on 2026-11-23. People don't read a diff top to bottom any more: they need to understand what a change does, then decide. So every PR gets a story to read before the diff, an agent's review with a verdict, and an output that matches the PR's risk. Every step has a budget, and the outcome of every review becomes data the factory learns from.
 
-**Intake.** The daemon uses the GitHub CLI to learn your teams and teammates (`gh api user/teams`, then each team's members), refreshed daily. Your review queue is:
+### The flow
 
-- every PR that requests a review from you or one of your teams, and
-- every open PR by a teammate in the factory's repos.
+A peer review is a ticket that runs a **peer-review blueprint**, so it gets everything a ticket has: stages, gates, a budget, a worktree, the Ticket page and the decision log.
 
-**Prep, as soon as a PR arrives.**
+1. **Intake.** The daemon learns your teams through `gh` (`gh api user/teams`, then each team's members), refreshed daily. The queue is every PR that requests you or one of your teams, plus every open PR by a teammate in the factory's repos (`review.queue`).
+2. **Risk and cost, before any tokens.** A risk score from size, sensitive areas (`review.never_low_risk`), failing checks, missing evidence and an author new to the area puts the PR at `low`, `medium` or `high`. A cost estimate comes from the diff size and the recorded cost of similar past reviews (the memory store, below). If the estimate is more than what is left in the 5-hour window, the week or today's budget, the PR shows "⚠ may not fit". You can run it anyway, run the story only, or wait for the reset. Nothing starts on its own while the warning stands.
+3. **Prep.** A read-only worktree, never one a ticket uses. The author's evidence pack, if any, is re-run, never trusted. The checks are re-run independently: affected tests, the feature scenarios it touches, lint.
+4. **Story.** A chapters page, built the way flow-stack's `chapters` builds one: the core change first, then what it affects, then glue, with tests and generated files last. Each chapter has its hunks and a read, skim or skip tier. Every why links to the PR body, commit, review, issue or ticket file that says it. A why nobody wrote down becomes a question for the author, never a guess. It is a private Claude artifact, one link per PR, republished in place. On a later round it shows **rounds**: each review's findings, which are fixed and by whose word, and what is still open.
+5. **Review.** The reviewer agent (yours, see below) grades the diff and returns findings with a severity, and decides the verdict. The flow-stack reviewer is the reference, with these rules kept:
+   - one finding per class, listing every instance, so one fix round closes it;
+   - `git blame` decides pre-existing or new, and pre-existing is never blocking;
+   - evidence is a file and line read, or a command run; a blocker comes with the input that breaks it, run, or says `not reproduced`;
+   - at most three nits, and style only when the user's taste covers it.
 
-1. Check it out in its own read-only worktree, never one a ticket uses.
-2. Read the PR and its evidence pack, if the author used a factory. That evidence is verified by re-running it, never trusted.
-3. Re-run the checks independently: the affected tests, the feature scenarios it touches, lint.
-4. A reviewer agent, built from your own reviewer pack (your taste plus examples of your past review comments), sorts findings into must-fix, suggestion and noise. Noise is hidden but kept.
-5. Add the findings worth posting to your pending review on the PR, and keep the full record, noise included, in REVIEW-DRAFT.md.
+   And these added:
+   - **Verify by vote.** Each blocker and major goes to two fresh reviewers in verify mode, each trying to prove it wrong. A finding both call wrong is dropped; a split is kept and marked.
+   - **Your past outcomes.** The brief carries similar past comments from the memory store, with what happened to each (kept, edited, pushed back), so the reviewer stops repeating comments you delete.
+   - **Questions from the story.** Unexplained whys become questions in the review.
+6. **Verdict, by the agent.**
 
-**Output: a pending review on GitHub, as you.** The findings you'd want are added to a pending review under your account: inline comments on the right lines, and a summary with the main point first. A pending review is visible only to you until it's submitted, so you open the PR on github.com, edit or delete comments, pick approve, request changes or comment, and submit it yourself. Noise never makes it into the pending review; it stays in Herdr if you want to look.
+   | Findings | Verdict |
+   | --- | --- |
+   | any blocker or major | Request changes |
+   | only minor findings and nits | Comment |
+   | nits only, or nothing | Approve, with the nits as comments |
 
-**Low-risk PRs.** The queue is sorted by a risk score: size, sensitive areas touched, failing checks, missing evidence, an author new to the area. A PR under the low-risk bar gets no pending comments at all, just a one-screen summary. What happens next is a gate you set:
+7. **Output, by risk level.** The verdict decides what the review says; the level decides whether it is submitted.
 
-- `human` (default): you approve it, on github.com or with `a` in Herdr.
-- `auto`: the factory submits an approving review as you, with a one-line summary. It warns you when you turn this on and shows how many auto-approved PRs were later reverted, but it never refuses.
+   ```yaml
+   # .factory/factory.yaml
+   review:
+     queue: [requested, teammates]
+     blueprint: peer-review          # the default; a rule below can pick another
+     agent: reviewer                  # your own peer-review agent, from the example library or the repo
+     levels:
+       low:    { output: pending }    # pending | submit
+       medium: { output: pending }
+       high:   { output: pending }
+     never_low_risk: [auth, payments]
+     budget: { per_pr: 400k/40k }
+     format: .factory/review-format.md   # how comments and the summary are written
+   ```
 
-```yaml
-# .factory/factory.yaml
-review:
-  queue: [requested, teammates]   # PRs asking for you or your teams, plus teammates' PRs
-  output: pending_review          # findings land as your pending review on GitHub
-  low_risk:
-    gate: human                   # human: you approve. auto: the factory approves as you
-    max_lines: 80
-    requires: [checks_pass, evidence_verified]
-  never_low_risk: [auth, payments]
-```
+   - `pending` (the default for every level): the findings land as your pending review on GitHub, inline on the right lines with a summary, main point first, and the agent's verdict at the top of the summary. Only you see it until you open the PR, adjust it and submit.
+   - `submit`: the factory submits the review as you, with the agent's verdict. `approve` is allowed only for `low`; at `medium` and `high` a `submit` review never approves, and an Approve verdict is posted as Comment. Turning `submit` on warns once and shows how many submitted reviews were later reverted.
+   - Noise never reaches GitHub. The full record, noise included, stays in the review ticket's REVIEW-DRAFT.md.
 
-#### reviews.json (draft, pending the user's M6 ideas)
+### Your own reviewer, format and blueprints
 
-The Reviews page and the sidebar's "To review" count read `reviews.json` from the factory's folder, next to `status.json`. `lib/reviews.js` is the contract (`validateReviews`, `shapeReviews`); the page was built against `fixtures/acme-api/reviews.json` while the daemon side waits, so the shape can still change in one place. A missing file is not an error: the page says the daemon hasn't written one, and the sidebar falls back to `status.json`'s `to_review`.
+- **Your reviewer agent.** `review.agent` names any repo agent. Start from `~/.factory/examples/agents/reviewer.md` or write your own example there; the maintainer copies it into the repo (#129's library). An agent's frontmatter lists the skills and tools it may use (`skills: [...]`, `tools: [...]`), and the brief gives it only those.
+- **Your comment format.** `review.format` points to a Markdown template for an inline comment and for the summary (severity tag, wording, whether to suggest code, sign-off). The agent writes in it; the factory check refuses a review that doesn't parse against it.
+- **Peer-review blueprints.** `blueprints/peer-review.yaml` ships as the default (`intake → prep → story → review → verify → post`). You can add others, for example a light one for docs-only PRs or a deep one for payments, and pick by rule:
 
-```json
-{
-  "version": 1, "generated_at": "ISO time", "source": "fixture | daemon",
-  "low_risk": { "gate": "human | auto" },
-  "prs": [{
-    "repo": "acme/api", "number": 95, "title": "…", "author": "alex", "url": "https://github.com/acme/api/pull/95",
-    "additions": 372, "deletions": 38, "requested_at": "ISO time",
-    "low_risk": false,                       // the daemon applies review.low_risk; the page never re-scores
-    "risk": { "score": 82, "reasons": ["touches payments", "scenario failing"] },
-    "summary": "main point first", "pending_review": true,
-    "evidence": "verified | failed | none",  // the author's pack, re-run (none: they had no pack)
-    "findings": [{ "kind": "must-fix | suggestion | noise", "text": "…", "file": "retry.ts", "line": 42 }],
-    "checks": [{ "name": "tests | scenario x | lint", "status": "pass | fail", "detail": "128 of 128" }]
-  }]
-}
-```
+  ```yaml
+  review:
+    rules:
+      - { when: { paths: ["docs/**"] }, blueprint: peer-review-light }
+      - { when: { paths: ["src/payments/**"] }, blueprint: peer-review-deep }
+  ```
 
-The page puts `low_risk` PRs in the fast lane, the rest by `risk.score` (highest first, the older request first among equals), shows `high` from a score of 60, and hides `noise` until `h`. `a` approves a low-risk PR through `factory review approve <repo>#<n>`, which the daemon doesn't have yet, so the page toasts that it isn't wired (`APPROVE_WIRED` in `lib/reviews.js`).
+  The maintainer creates, changes and deletes these blueprints like any other, as a `.factory/` PR.
 
-**It learns from what you submit.** When you submit, the daemon compares your final review with the pending one: which comments you kept, edited or deleted, what you added, and the verdict you chose. That trains the noise filter (a candidate for a small trained model, PRD 6.11) and your reviewer pack, with no extra step from you. Metrics shows how often comments survive unchanged, and your review minutes per day against `attention.review_minutes_per_day`.
+### Learning from reviews
 
-When teammates run the factory too, the shared evidence format means more of their PRs fall under the low-risk bar.
+Every posted comment and verdict gets an outcome, recorded without any step from you:
+
+| Signal | From |
+| --- | --- |
+| kept, edited or deleted | your submitted review against the pending one |
+| verdict changed | the verdict you submitted against the agent's |
+| accepted | a later commit fixes the comment |
+| pushed back | the author disagrees, or resolves it without a change |
+| missed | a bug fix or revert later lands in lines the review passed |
+
+Metrics gets a Reviews tab: comments kept unchanged, accepted, pushed back, misses, verdict agreement, cost per review, and your review minutes per day against `attention.review_minutes_per_day`. The learner reads the outcomes, turns patterns into lessons or reviewer-prompt changes, and asks the maintainer to apply them.
+
+### Agent memory
+
+Lessons are rules the learner distilled. Learning also needs the raw examples, so every agent gets a **memory store**: one row per thing it did, in SQLite with full-text search.
+
+| Field | What |
+| --- | --- |
+| agent, repo | who did it, where |
+| kind | review-comment, verdict, babysitter-verdict, stage-output, … |
+| input | the context it saw (a hunk, a comment thread), trimmed |
+| output | what it wrote or decided |
+| outcome | the signal above, filled in when it arrives |
+| cost, at | tokens and time |
+
+An agent's brief pulls the closest past rows, good and bad, as examples. The learner mines the rows for lessons and prompt changes. The babysitter's verdicts and the agreement benchmark read the same store, so one dataset serves every agent.
+
+### Who can ask whom
+
+- A repo agent can ask any global agent, and any agent in its own repo.
+- A repo agent can't ask an agent in another repo: the daemon refuses it and says to go through a global agent.
+- A global agent (Overwatch, babysitter, maintainer, learner) can ask any agent in any repo.
+- Each brief's neighbour map lists only the agents that agent may ask.
+- Overwatch sees every repo and every agent running in real time: which agent, in which repo, on which ticket or PR, in which stage, and its status.
+
+### Replaces
+
+This replaces the earlier draft of this section (the low-risk `human`/`auto` gate and the noise-filter training). `reviews.json` keeps its shape in `lib/reviews.js` and gains `level`, `verdict`, `story_url`, `budget` (estimate, fits) and per-finding `severity` (blocker, major, minor, nit, pre-existing).
 
 ## Learning loop
 
@@ -821,10 +865,10 @@ Each milestone ends when its "done when" passes on a real ticket.
    - Done when: a 15-task mini suite on the implement stage compares two models on held-out tests and cost, and its report is on the Benchmarks tab.
 5. **M5, Auto gates and the maintenance agent.** A blueprint's merge gate can be set to auto, its revert rate shows on Home, and maintenance runs on scheduled triggers.
    - Done when: a chore blueprint with an auto merge gate runs for a week, with its revert rate on Home.
-6. **M6, Reviewing teammates' PRs.** Team discovery through `gh`, the review queue with risk order and fast lane, pending reviews on GitHub with independent checks, the low-risk gate, and learning from what you submit.
+6. **M6, Peer review.** Team discovery through `gh`; a risk level and cost estimate per PR with a warning when it won't fit the budget; peer-review blueprints with your own reviewer agent, skills and comment format; a chapters story per PR; the agent's verdict (request changes, comment, approve with nits); pending review by default, submit per level (approve only for low); review outcomes as signals; a memory store for every agent; the ask rule (repo agents ask globals and their own repo; globals ask anyone); Overwatch's live view of every repo's agents.
    - Done when: a teammate's PR arrives, its draft is ready before you open it, and its findings are waiting as your pending review on github.com.
 
-7. **M7, Agents with territories.** The factory agents move to `~/.factory/agents/`: one Overwatch for every repo, and the babysitter and learner become agents rather than daemon heuristics. Every brief carries the neighbour map, and any agent can ask another through a recorded request. The maintainer's territory grows to blueprints from a description, agents for any repo, housekeeping, and the factory's UI and theme.
+7. **M7, Agents with territories.** The factory agents move to `~/.factory/agents/`: one Overwatch for every repo, and the babysitter and learner become agents rather than daemon heuristics. Every brief carries the neighbour map, and an agent asks another through a recorded request (a repo agent asks globals and its own repo's agents; globals ask anyone, from M6). The maintainer's territory grows to blueprints from a description, agents for any repo, housekeeping, and the factory's UI and theme.
    - Done when: you ask Overwatch for a new blueprint, a stricter reviewer in one repo, a cleanup of merged tickets and a different accent colour, and each comes back from the maintainer as a reviewable change; and a learner finding reaches the maintainer as a request with no one relaying it.
 
 ## Risks and open questions
