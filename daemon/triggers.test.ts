@@ -77,16 +77,39 @@ function factory(triggers: Record<string, string> | null) {
   return { db, repo, calls, logs, tick };
 }
 
-test("no triggers folder keeps the built-ins: the queue and the PR watcher", () => {
+test("no triggers folder keeps the built-ins: the queue, the PR watcher and repo health", () => {
   const { repo } = factory(null);
   expect(readTriggers(repo)).toEqual({ triggers: DEFAULT_TRIGGERS, skipped: [] });
-  expect(DEFAULT_TRIGGERS.map((t) => t.on)).toEqual(["project_ready", "pr_review_comment"]);
+  expect(DEFAULT_TRIGGERS.map((t) => [t.name, t.on])).toEqual([["queue", "project_ready"], ["review-comments", "pr_review_comment"], ["health", "schedule"]]);
+});
+
+test("a schedule trigger of your own keeps the health built-in; a run: health file replaces it", () => {
+  const nightly = "on: schedule\nevery: 1d\nblueprint: feature\n";
+  expect(readTriggers(factory({ "nightly.yaml": nightly }).repo).triggers.map((t) => t.name)).toEqual(["nightly", "queue", "review-comments", "health"]);
+  const own = factory({ "suite.yaml": "on: schedule\nevery: 6h\nrun: health\nblueprint: bugfix\nsetup: [npm ci]\n" });
+  expect(readTriggers(own.repo).triggers.map((t) => [t.name, t.every])).toEqual([["suite", "6h"], ["queue", undefined], ["review-comments", undefined]]);
+  // on: manual turns the schedule off: only factory health runs it.
+  expect(readTriggers(factory({ "health.yaml": "on: manual\nrun: health\nblueprint: bugfix\n" }).repo).triggers.filter((t) => t.run === "health").map((t) => t.on)).toEqual(["manual"]);
+});
+
+test("run: health takes on: schedule or manual, and only it takes setup", () => {
+  expect(validateFile("triggers/h.yaml", "on: schedule\nevery: 1d\nrun: health\nblueprint: bugfix\nsetup: [npm ci]\n")).toEqual([]);
+  expect(validateFile("triggers/h.yaml", "on: project_ready\nrun: health\nblueprint: bugfix\n")[0]).toContain("run: health runs on: schedule");
+  expect(validateFile("triggers/h.yaml", "on: schedule\nevery: 1d\nblueprint: bugfix\nsetup: [npm ci]\n")[0]).toContain("only a run: health trigger");
+  expect(validateFile("triggers/h.yaml", "on: schedule\nevery: 1d\nrun: lint\nblueprint: bugfix\n").length).toBeGreaterThan(0);
+});
+
+test("the trigger loop never starts a ticket for a health trigger", () => {
+  const { db, tick } = factory(null);
+  tick("2026-11-21T10:00:00Z");
+  tick("2026-11-23T10:00:00Z");
+  expect(db.query("SELECT COUNT(*) AS n FROM tickets WHERE trigger_name = 'health'").get()).toEqual({ n: 0 });
 });
 
 test("a project_ready trigger's filter and blueprint decide which issues join, and as what", () => {
   const { db, repo, tick } = factory({ "bugs.yaml": "on: project_ready\nfilter: { labels: [bug] }\nblueprint: bugfix\n" });
-  // bugs.yaml takes the place of the built-in queue trigger; the built-in watcher stays.
-  expect(readTriggers(repo).triggers.map((t) => t.name)).toEqual(["bugs", "review-comments"]);
+  // bugs.yaml takes the place of the built-in queue trigger; the built-in watcher and health check stay.
+  expect(readTriggers(repo).triggers.map((t) => t.name)).toEqual(["bugs", "review-comments", "health"]);
   tick("2026-11-21T10:00:00Z");
   expect(db.query("SELECT id, blueprint, trigger_name, state FROM tickets").all()).toEqual([{ id: 5, blueprint: "bugfix", trigger_name: "bugs", state: "grooming" }]);
 });

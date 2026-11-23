@@ -16,6 +16,7 @@ import { isLastGate, loadBlueprint, readFactory } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
 import { BLUEPRINT, requestedBy } from "./maintainer.ts";
 import { openAsks } from "./ask.ts";
+import { healthOf } from "./health.ts";
 
 type Row = Record<string, any>;
 
@@ -93,6 +94,7 @@ export function buildStatus(db: Database, now = new Date()) {
   const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
   const auto = autoGates(db, lead?.path);
   const beat = Date.parse(getMeta(db, "heartbeat") ?? "") || 0;
+  const health = healthOf(db);
   return {
     version: 1,
     generated_at: now.toISOString(),
@@ -110,6 +112,8 @@ export function buildStatus(db: Database, now = new Date()) {
     },
     away: digest(db, now.toISOString()),
     ...(auto.length ? { auto_gates: auto } : {}),
+    // Each repo's last full-suite run (health.ts), for Home.
+    ...(health.length ? { health } : {}),
     // No .factory/ yet: Home shows the setup checklist instead.
     ...(setup ? { setup } : {}),
     // Which claude the sessions run, for Config (claude-bin.ts); tests never look one up.

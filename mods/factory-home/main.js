@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, setShared, props, exec, notify, home } from "herdr";
-import { needsYou, overwatchNotes, ago, compact, repoBadge, warnMark, holdText, localRunning } from "./lib/model.js";
+import { needsYou, overwatchNotes, ago, compact, repoBadge, warnMark, holdText, localRunning, healthLine } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, state, act, sampleOn, showSample, peekAgent } from "./lib/store.js";
@@ -186,6 +186,19 @@ export default class FactoryHome extends View {
         .child(tile("Interactions / PR", String(d.interactions_per_pr)))
         .child(tile("Revert rate", `${Math.round(d.revert_rate * 100)}%`)))
       .children((s.auto_gates ?? []).map((g) => div().id(`auto-${g.blueprint}`).pt(6).text_size(12).text_color(g.reverted ? t.blocked : t.muted)
-        .child(`${g.blueprint} merges itself (gate: auto) · ${g.reverted} of ${g.merged} merged in 30 days reverted (${Math.round(g.revert_rate * 100)}%)`)));
+        .child(`${g.blueprint} merges itself (gate: auto) · ${g.reverted} of ${g.merged} merged in 30 days reverted (${Math.round(g.revert_rate * 100)}%)`)))
+      .when((s.health ?? []).length > 0, (el) => el.child(section("Repo health")).children(s.health.map((h) => this.healthRow(t, h, now))));
+  }
+
+  // One repo's last scheduled full-suite run; a failure opens the ticket it filed.
+  healthRow(t, h, now) {
+    const l = healthLine(h, now);
+    const color = { pass: t.done, fail: t.blocked, none: t.dim }[l.tone];
+    return h_flex().id(`health-${h.repo}`).gap(10).px(4).py(4).items_start().rounded(6)
+      .when(h.ticket != null, (el) => el.cursor_pointer().hover((st) => st.bg(t.hover)).on_click(() => open(h.ticket)))
+      .child(div().mt(5).size(7).rounded_full().bg(color))
+      .child(v_flex().flex_1().min_w_0().gap(2)
+        .child(div().text_color(l.tone === "pass" ? t.muted : t.foreground).truncate().child(l.text))
+        .when(!!l.detail, (el) => el.child(div().text_size(12).text_color(t.dim).truncate().child(l.detail))));
   }
 }
