@@ -4,6 +4,8 @@
 // A trigger with `run: health` starts no ticket: it runs the full suite (health.ts), and
 // its blueprint is the one a failure's ticket gets. The built-in ones below run unless a
 // file in triggers/ has the same name or does the same job (the same `on`, or `run: health`).
+// A file with `enabled: false` never fires, and still takes its job from the built-in, so
+// `enabled: false` in a queue.yaml turns reading the queue off.
 import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,6 +20,7 @@ export type Trigger = {
   every?: string;
   run?: "ticket" | "health";
   setup?: string[];
+  enabled?: boolean;
 };
 
 export const DEFAULT_TRIGGERS: Trigger[] = [
@@ -39,7 +42,7 @@ export function intervalOf(t: Trigger): number | null {
 
 // The folder's triggers, plus each built-in whose job no file does: a folder holding only
 // review-comments.yaml still reads the queue and checks the repo's health. A file that
-// fails validation is left out and named in `skipped`.
+// fails validation is left out and named in `skipped`; one with `enabled: false` is left out.
 export function readTriggers(repo: string): { triggers: Trigger[]; skipped: string[] } {
   const dir = join(repo, ".factory", "triggers");
   if (!existsSync(dir)) return { triggers: DEFAULT_TRIGGERS, skipped: [] };
@@ -51,7 +54,8 @@ export function readTriggers(repo: string): { triggers: Trigger[]; skipped: stri
     if (errors.length) { skipped.push(`${file}: ${errors[0]}`); continue; }
     triggers.push({ name: file.replace(/\.ya?ml$/, ""), ...(Bun.YAML.parse(text) as Omit<Trigger, "name">) });
   }
-  return { triggers: [...triggers, ...DEFAULT_TRIGGERS.filter((d) => !triggers.some((t) => sameJob(d, t)))], skipped };
+  const all = [...triggers, ...DEFAULT_TRIGGERS.filter((d) => !triggers.some((t) => sameJob(d, t)))];
+  return { triggers: all.filter((t) => t.enabled !== false), skipped };
 }
 
 // Due when never run, or its interval has passed since the last stamp.

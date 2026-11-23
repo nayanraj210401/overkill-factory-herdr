@@ -686,6 +686,7 @@ without a PASS in EVIDENCE.md. Flag code that could be smaller.
 | `filter` | Which events count: repos, authors, paths |
 | `blueprint` | The blueprint to run |
 | `concurrency` | How many tickets from this trigger run at once |
+| `enabled` | `false` keeps the trigger from firing; it also turns off the built-in trigger that does the same job. Defaults to `true`, and `factory validate` marks a disabled file "(off)" |
 
 ```yaml
 # .factory/triggers/review-comments.yaml
@@ -695,7 +696,7 @@ blueprint: address-review   # fix, push back, or escalate (PRD 6.5)
 concurrency: 2
 ```
 
-Triggers run the babysitter (review comments on factory PRs), the maintenance agent (stale checks, scheduled full test runs, drift) and intake from your GitHub Project queue. Since everything is local, the daemon polls GitHub every few minutes instead of receiving webhooks, so triggers fire only while the machine is awake.
+Triggers run the babysitter (review comments on factory PRs), the maintenance agent (stale checks, scheduled full test runs, drift) and intake from your GitHub Project queue. Setup ships the maintenance agent's daily trigger with `enabled: false`, so it stays off until you set `enabled: true` in `triggers/maintenance.yaml` or ask Overwatch to turn it on, which the maintainer does in a normal `.factory/` PR. Since everything is local, the daemon polls GitHub every few minutes instead of receiving webhooks, so triggers fire only while the machine is awake.
 
 ## Benchmarks: monitoring on your own data
 

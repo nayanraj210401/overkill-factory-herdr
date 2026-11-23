@@ -1,7 +1,10 @@
 # .factory/triggers/maintenance.yaml
 # Once a day, one maintenance ticket: the maintenance agent makes one small drift fix
 # (blueprints/maintenance.yaml). One at a time, so runs never race each other.
+# Off until you turn it on: set enabled: true below, or ask Overwatch "turn on the
+# maintenance agent" and the maintainer flips it in a .factory/ PR.
 on: schedule
 every: 1d
 blueprint: maintenance
 concurrency: 1
+enabled: false

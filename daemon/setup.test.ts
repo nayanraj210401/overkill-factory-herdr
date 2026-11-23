@@ -86,6 +86,8 @@ test("setup write commits .factory/ on factory/setup and leaves the checkout alo
   expect(files).toEqual(expect.arrayContaining([".factory/agents/maintenance.md", ".factory/blueprints/maintenance.yaml", ".factory/triggers/maintenance.yaml"]));
   expect(files.filter((f) => f.startsWith(".factory/triggers/"))).toEqual([".factory/triggers/maintenance.yaml"]);
   expect(yaml).not.toMatch(/blueprints: \[[^\]]*maintenance/);
+  // It lands off: a new factory opens no maintenance PR until you turn it on.
+  expect(git(repo, "show", "factory/setup:.factory/triggers/maintenance.yaml")).toMatch(/^enabled: false$/m);
   expect(git(repo, "log", "-1", "--format=%s", "factory/setup")).toContain("factory setup write");
   // Again with the same answers: nothing new to commit. With another: one more commit.
   expect(writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { budget: "2M/100k", merge: "auto", maxRunning: 2 } }).committed).toBe(false);

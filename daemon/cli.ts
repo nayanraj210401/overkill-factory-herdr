@@ -256,8 +256,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       } finally { db.close(); }
     }
     if (json) return log(JSON.stringify(results));
-    for (const r of results as { path: string; errors: string[]; warnings?: string[] }[])
-      log((r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `${r.warnings?.length ? "!" : "✓"} ${r.path}`) + (r.warnings ?? []).map((w) => `\n    ${w}`).join(""));
+    for (const r of results as { path: string; errors: string[]; warnings?: string[]; off?: true }[])
+      log((r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `${r.warnings?.length ? "!" : "✓"} ${r.path}${r.off ? " (off)" : ""}`) + (r.warnings ?? []).map((w) => `\n    ${w}`).join(""));
     const bad = results.filter((r) => r.errors.length).length;
     if (bad) throw new Error(`${bad} of ${results.length} files have problems`);
     return;

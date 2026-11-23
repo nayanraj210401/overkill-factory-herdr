@@ -129,9 +129,30 @@ test("the loop starts a scheduled ticket when due, and not again before the inte
   expect(db.query("SELECT COUNT(*) AS n FROM tickets WHERE trigger_name = 'nightly'").get()).toEqual({ n: 2 });
 });
 
-test("the shipped maintenance trigger starts one maintenance ticket a day, run by the maintenance agent", () => {
-  const shipped = readFileSync(join(import.meta.dir, "../fixtures/acme-api/.factory/triggers/maintenance.yaml"), "utf8");
-  const { db, calls, tick } = factory({ "maintenance.yaml": shipped });
+const SHIPPED_MAINTENANCE = readFileSync(join(import.meta.dir, "../fixtures/acme-api/.factory/triggers/maintenance.yaml"), "utf8");
+
+test("the shipped maintenance trigger is off: it starts no ticket, and the built-in triggers still run", () => {
+  expect(SHIPPED_MAINTENANCE).toMatch(/^enabled: false$/m);
+  const { db, repo, tick } = factory({ "maintenance.yaml": SHIPPED_MAINTENANCE });
+  expect(readTriggers(repo).triggers.map((t) => t.name)).toEqual(DEFAULT_TRIGGERS.map((t) => t.name));
+  tick("2026-11-21T10:00:00Z");
+  tick("2026-11-23T10:00:00Z");
+  expect(db.query("SELECT COUNT(*) AS n FROM tickets WHERE trigger_name = 'maintenance'").get()).toEqual({ n: 0 });
+});
+
+test("enabled: false takes a built-in's job too, so a disabled queue.yaml stops reading the queue", () => {
+  const { repo } = factory({ "queue.yaml": "on: project_ready\nblueprint: feature\nenabled: false\n" });
+  expect(readTriggers(repo).triggers.map((t) => t.name)).toEqual(["review-comments", "health"]);
+});
+
+test("enabled is true or false", () => {
+  expect(validateFile("triggers/n.yaml", "on: manual\nblueprint: chore\nenabled: true\n")).toEqual([]);
+  expect(validateFile("triggers/n.yaml", "on: manual\nblueprint: chore\nenabled: false\n")).toEqual([]);
+  expect(validateFile("triggers/n.yaml", "on: manual\nblueprint: chore\nenabled: \"no\"\n")[0]).toContain("enabled");
+});
+
+test("the maintenance trigger, turned on, starts one maintenance ticket a day, run by the maintenance agent", () => {
+  const { db, calls, tick } = factory({ "maintenance.yaml": SHIPPED_MAINTENANCE.replace(/^enabled: false$/m, "enabled: true") });
   tick("2026-11-21T10:00:00Z");
   expect(db.query("SELECT blueprint, stage, state FROM tickets WHERE trigger_name = 'maintenance'").all()).toEqual([{ blueprint: "maintenance", stage: "maintain", state: "running" }]);
   expect(calls.find((c) => c[0] === "hc")!.join(" ")).toContain("You are the repo's maintenance agent");
