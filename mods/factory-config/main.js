@@ -1,25 +1,27 @@
-import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, EditorState, Editor } from "gpui-base";
-import { theme, exec, readTextFile, watchFolder, nextCommand, checking, notify } from "herdr";
-import { configFiles, daemonView, pendingNotes } from "./lib/model.js";
+import { View, div } from "gpui-kit";
+import { h_flex, v_flex } from "gpui-base";
+import { theme, exec, watchFolder, checking, notify, home, appHome } from "herdr";
+import { daemonView, pendingNotes } from "./lib/model.js";
+import { globalFiles, globalPrecedence, fileBadge, checkoutOf, maintainerAsk, GLOBAL_TOP } from "./lib/configfiles.js";
+import { FileView, listFiles, badgesFor, badgedRow, viewerLabels, viewerDetail, maintainerLine } from "./lib/fileview.js";
+import { cliCommand } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
-import { root, status, act } from "./lib/store.js";
+import { root, status, act, ask } from "./lib/store.js";
 import { keyAction, clamp } from "./lib/keys.js";
 
-// The Config page: the daemon's service controls, the .factory/ files, the selected
-// one read-only, ⌘O to edit it in your own editor (docs/layouts/07-config.png).
+// The Config page, the factory's global settings: the daemon's service controls, then the files in
+// ~/.factory every repo shares (factory agents, skills, shared steps, the account's files), the
+// selected one read-only, ⌘O to edit it in your own editor. Each repo's own .factory/ is on Repo config.
 export default class FactoryConfig extends View {
-  // The lead repo's checkout holds .factory/; the sample data keeps one beside its status.json.
+  // ~/.factory. `herdr-app check` has none: it shows the sample repo's folder, so the list draws rows.
   get dir() {
-    return `${status()?.factory?.path ?? root()}/.factory`;
+    return checking() ? `${appHome()}/factory-data/acme-api/.factory` : `${home()}/.factory`;
   }
 
   init(_props, cx) {
-    this.files = [];
-    this.selected = null;
+    this.view = new FileView("config");
     this.error = null;
-    this.editor = null;
-    this.editors = {}; // path → its read-only EditorState, made once
+    this.badges = {};
     this.checks = {};
     this.daemon = undefined; // undefined: not asked yet; null: the CLI didn't answer
     this.busy = null;
@@ -33,24 +35,17 @@ export default class FactoryConfig extends View {
     const wait = (ms) => new Promise((done) => cx.timer.after(ms, done));
     cx.spawn(async (cx) => {
       await this.list();
-      if (this.files.length) await this.select(this.files[0]);
       cx.notify();
       if (checking()) return;
       for (;;) {
         this.validate(cx); // the schema check fills in after the files show
-        // A missing folder has nothing to watch: look again soon rather than spin. (Before
-        // status.json loads, this.dir is the data folder's, which has no .factory.)
-        if (this.error) await wait(1000);
-        else await Promise.race([watchFolder(this.dir), wait(30000)]);
+        // ~/.factory itself changes every tick (agents-live.json, each factory's status.json), so
+        // watch the agents folder and look again every 15 s for the rest.
+        const watch = this.error ? null : watchFolder(`${this.dir}/agents`);
+        await Promise.race([watch?.catch(() => new Promise(() => {})) ?? new Promise(() => {}), wait(this.error ? 3000 : 15000)]);
+        watch?.cancel?.();
         await wait(300); // one reload for a burst of saves
         await this.list();
-        if (this.selected) await this.select(this.selected);
-        cx.notify();
-      }
-    });
-    if (!checking()) cx.spawn(async (cx) => {
-      for (;;) {
-        if ((await nextCommand()).endsWith("open") && this.selected) await exec("open", [`${this.dir}/${this.selected.path}`]);
         cx.notify();
       }
     });
@@ -170,88 +165,54 @@ export default class FactoryConfig extends View {
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(o.reason ?? ""))));
   }
 
-  schemaLabel(t) {
-    const errors = this.checks[this.selected?.path];
-    if (!errors) return div().text_size(12).text_color(t.dim).child("Schema check: not run");
-    return div().text_size(12).text_color(errors.length ? t.blocked : t.done)
-      .child(errors.length ? `Schema check: ${errors.length} ${errors.length === 1 ? "problem" : "problems"}` : "Schema check: passes");
-  }
-
+  // ~/.factory's config: its top files, then agents/, skills/ and steps/ (only those listed).
   async list() {
-    const r = await exec("find", [".", "-type", "f"], { cwd: this.dir }).catch((e) => ({ code: 1, stderr: String(e) }));
-    if (r.code !== 0) {
-      this.files = [];
-      this.error = `${this.dir}: no .factory folder`;
-      return;
+    const top = await listFiles(this.dir, [".", "-maxdepth", "1"]);
+    if (top == null) {
+      this.error = `${this.dir}: not there yet (factory setup makes it)`;
+      return this.view.show(this.dir, []);
     }
     this.error = null;
-    this.files = configFiles(r.stdout.split("\n").filter(Boolean).map((p) => p.replace(/^\.\//, "")));
+    const deep = (await listFiles(this.dir, ["agents", "skills", "steps"])) ?? [];
+    const files = globalFiles([...top.filter((p) => GLOBAL_TOP.includes(p)), ...deep]);
+    await this.view.show(this.dir, files);
+    const checkout = checkoutOf(CLI);
+    this.badges = await badgesFor(this.dir, files, (p) => globalPrecedence(p, { home: this.dir, checkout }), fileBadge);
   }
 
-  // The daemon's schema check, per file: path → errors (undefined while unknown).
+  // The daemon's schema check of the global files (factory validate's ~/.factory rows), per file:
+  // path → errors (undefined while unknown). Only a live factory has a CLI to ask.
   validate(cx) {
-    if (this.error) return;
+    if (this.error || status()?.source !== "daemon") return;
     cx.spawn(async (cx) => {
-      const v = await this.factory(["validate", this.dir, "--json"]).catch(() => null);
-      try { this.checks = Object.fromEntries(JSON.parse(v.stdout).map((x) => [x.path, x.errors])); } catch { this.checks = {}; }
+      const { command, args } = cliCommand(CLI, root(), ["validate", "--json"]);
+      const v = await exec(command, args, { timeout: 20000 }).catch(() => null);
+      try {
+        this.checks = Object.fromEntries(JSON.parse(v.stdout).filter((x) => x.path.startsWith("~/.factory/")).map((x) => [x.path.slice("~/.factory/".length), x.errors]));
+      } catch { this.checks = {}; }
       cx.notify();
     });
   }
 
-  // Shows a file. The caller repaints, with a cx of its own (see tests/mods.test.mjs).
-  async select(file) {
-    const t = theme();
-    const text = (await readTextFile(`${this.dir}/${file.path}`)) ?? "";
-    // A file's language is fixed when its editor is made: one editor per file, kept, so
-    // clicking between files doesn't rebuild and re-highlight each one.
-    const key = `${this.dir}/${file.path}`;
-    let editor = this.editors[key];
-    if (!editor) {
-      editor = this.editors[key] = EditorState.new({ language: file.language, value: text, readonly: true, soft_wrap: true,
-        syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, number: t.ansi3, constant: t.ansi4, boolean: t.ansi3 } });
-    } else if (editor.value() !== text) editor.set_value(text);
-    this.editor = editor;
-    this.selected = file;
-  }
-
   render() {
     const t = theme();
-    const row = (f) => {
-      const on = f.path === this.selected?.path;
-      return h_flex().id(`f-${f.path}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
-        .bg(on ? t.selected : t.surface).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover))
-        // select awaits the file; this click's cx is gone by then, so a spawned task repaints.
-        .on_click((_e, cx) => cx.spawn(async (cx) => { await this.select(f); cx.notify(); }))
-        .child(svg(`mods/workspace-chrome/${f.language === "markdown" ? "file-text" : "settings"}.svg`).size(13))
-        .child(div().flex_1().min_w_0().truncate().child(f.path))
-        .when(Boolean(this.checks[f.path]), (el) => el.child(div().text_size(11)
-          .text_color(this.checks[f.path].length ? t.blocked : t.done).child(this.checks[f.path].length ? `✗ ${this.checks[f.path].length}` : "✓")));
-    };
+    const v = this.view;
+    const sel = v.selected?.path;
     const overrides = this.overrides();
     this.at = clamp(this.at, overrides.length);
     const notes = pendingNotes(status()?.asks);
     const cards = [status()?.claude?.found?.length, notes.length, overrides.length].some(Boolean);
     // The cards scroll in their own capped area and the files row takes what's left (min_h 0), so
-    // neither the .factory list nor the file view grows past the window.
+    // neither the file list nor the file view grows past the window.
     return v_flex().size_full().min_h(0).gap(8).text_size(13).child(this.daemonBar(t))
       .when(cards, (el) => el.child(v_flex().id("config-cards").flex_none().max_h(260).gap(8).overflow_y_scrollbar()
         .when(Boolean(status()?.claude?.found?.length), (c) => c.child(this.claudeCard(t, status().claude)))
         .when(notes.length > 0, (c) => c.child(this.pendingCard(t, notes)))
         .when(overrides.length > 0, (c) => c.child(this.overridesCard(t, overrides)))))
+      .child(maintainerLine(t, "Global: ~/.factory, shared by every factory and repo. The maintainer makes every change here; this view is read-only.", () => ask(maintainerAsk())))
       .child(h_flex().flex_1().min_h(0).w_full().gap(8)
-      .child(v_flex().id("files").w(240).flex_none().h_full().min_h(0).p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()
-        .child(div().px(8).pb(6).text_size(11).text_color(t.dim).child(".FACTORY"))
-        .children(this.files.map(row))
-        .when(Boolean(this.error), (el) => el.child(div().px(8).text_color(t.blocked).child(this.error))))
-      .child(v_flex().flex_1().min_w(0).min_h(0).h_full().rounded(10).bg(t.background).border(1).border_color(t.border)
-        .child(h_flex().h(36).px(14).gap(10).items_center().border_b(1).border_color(t.border)
-          .child(div().flex_1().min_w_0().font_semibold().text_color(t.foreground).truncate().child(this.selected?.path ?? "No file"))
-          .child(this.schemaLabel(t))
-          .child(div().id("open").px(8).py(2).rounded(6).border(1).border_color(t.border).text_size(12).text_color(t.muted).cursor_pointer()
-            .hover((s) => s.bg(t.hover)).on_click(() => this.selected && exec("open", [`${this.dir}/${this.selected.path}`]))
-            .child("Open in editor ⌘O")))
-        .when(Boolean(this.checks[this.selected?.path]?.length), (el) => el.child(v_flex().px(14).py(8).gap(2).border_b(1).border_color(t.border)
-          .text_size(12).text_color(t.blocked).children(this.checks[this.selected.path].map((e) => div().w_full().truncate().child(e)))))
-        .child(div().flex_1().min_h(0).p(4).when(Boolean(this.editor), (el) => el.child(Editor.new(this.editor).size_full())))));
+        .child(v.list(t, "~/.FACTORY", v.files.map((f) => badgedRow(v, t, f, this.badges[f.path], this.checks[f.path])),
+          this.error ? div().px(8).text_color(t.blocked).child(this.error) : null))
+        .child(v.pane(t, viewerLabels(t, this.badges[sel], this.checks[sel]), viewerDetail(t, this.badges[sel], this.checks[sel]))));
   }
 }

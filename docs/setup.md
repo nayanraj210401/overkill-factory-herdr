@@ -69,7 +69,7 @@ factory setup           # run it until every line shows ✓
 
 1. Start Herdr and open a space on the repo's folder. The folder name is how the window finds the factory.
 2. Press ⌘⇧F to switch to factory mode. ⌘⇧F again goes back to Herdr.
-3. Open Config (⌘7). The daemon dot is green when the service runs.
+3. Open Config (⌘8). The daemon dot is green when the service runs.
 4. Press `n` and give a small goal, or an issue number, for a first ticket.
 
 ## What runs without you
