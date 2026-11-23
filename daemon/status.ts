@@ -17,10 +17,21 @@ import { loadAgent } from "./agents.ts";
 import { BLUEPRINT, requestedBy } from "./maintainer.ts";
 import { askTarget, openAsks } from "./ask.ts";
 import { healthOf } from "./health.ts";
+import { trackedFactory, UNTRACK } from "./local.ts";
 
 type Row = Record<string, any>;
 
 const HEARTBEAT_MS = 15_000;
+
+// Repos whose git tracks .factory/ (local.ts), for Home's warning. git runs at most once a minute per repo.
+const trackedSeen = new Map<string, { at: number; n: number }>();
+function trackedRepos(repos: { slug: string; path: string }[], now: number) {
+  return repos.flatMap((r) => {
+    let c = trackedSeen.get(r.path);
+    if (!c || now - c.at > 60_000) trackedSeen.set(r.path, (c = { at: now, n: existsSync(r.path) ? trackedFactory(r.path).length : 0 }));
+    return c.n ? [{ repo: r.slug, files: c.n, fix: UNTRACK }] : [];
+  });
+}
 
 // A ticket's PR in one repo. The state is what GitHub last said, unless the ticket's own end settles it:
 // merged is merged, and a closed ticket's PR is closed. The url is built, never asked of gh.
@@ -114,6 +125,8 @@ export function buildStatus(db: Database, now = new Date()) {
     ...(auto.length ? { auto_gates: auto } : {}),
     // Each repo's last full-suite run (health.ts), for Home.
     ...(health.length ? { health } : {}),
+    // Repos that track .factory/ in git: Home says so, with the command to stop (local.ts).
+    ...(() => { const x = trackedRepos(listRepos(db), now.getTime()); return x.length ? { tracked_factory: x } : {}; })(),
     // No .factory/ yet: Home shows the setup checklist instead.
     ...(setup ? { setup } : {}),
     // Which claude the sessions run, for Config (claude-bin.ts); tests never look one up.
