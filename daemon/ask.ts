@@ -181,7 +181,7 @@ export function deliverToRepoAgents(db: Database, o: { run: Run; now: string; na
     const live = db.query(`SELECT s.terminal FROM sessions s JOIN ticket_lead t ON t.id = s.ticket
       WHERE s.agent = ? AND s.ended_at IS NULL AND s.terminal IS NOT NULL AND COALESCE(t.repo, ?) = ? ${a.about != null ? "AND s.ticket = ?" : ""}
       ORDER BY s.id DESC`).all(a.to, lead, a.toRepo, ...(a.about != null ? [a.about] : [])) as { terminal: string }[];
-    const terminal = live.map((s) => s.terminal).find((t) => alive(o.run, t));
+    const terminal = live.map((s) => s.terminal).find((t) => takesNotes(o.run, t));
     if (!terminal || o.run(["hc", "send", terminal, noteText(a, o.name)]).code !== 0) continue;
     db.query("UPDATE asks SET delivered_at = ? WHERE id = ?").run(o.now, a.id);
     n++;
@@ -189,9 +189,11 @@ export function deliverToRepoAgents(db: Database, o: { run: Run; now: string; na
   return n;
 }
 
-const alive = (run: Run, terminal: string) => {
+// Alive, and not waiting on the person: typed text would land in its question prompt as an answer.
+// A note for a session that's waiting is typed in once it moves on (the next tick).
+const takesNotes = (run: Run, terminal: string) => {
   const r = run(["hc", "get", terminal, "--json"]);
-  try { return r.code === 0 && JSON.parse(r.out).exit_code == null; } catch { return false; }
+  try { const t = JSON.parse(r.out); return r.code === 0 && t.exit_code == null && t.status?.state !== "blocked"; } catch { return false; }
 };
 
 // The notes waiting for `agent` in `repo` that a new session of it on `ticket` takes in its

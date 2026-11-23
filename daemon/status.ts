@@ -85,8 +85,8 @@ export function buildStatus(db: Database, now = new Date()) {
        WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ({
     ...ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null),
-    // The open grooming questions, numbered as the `A1:` answers are.
-    ...(r.state === "grooming" && open.has(r.id) ? { questions: questionsOf(r.id) } : {}),
+    // The open questions of a ticket in grooming, or parked on one (u talks it through), numbered as the `A1:` answers are.
+    ...((r.state === "grooming" || r.state === "parked") && open.has(r.id) ? { questions: questionsOf(r.id) } : {}),
     ...(shared.has(r.id) ? { artifacts: shared.get(r.id)!.map((a) => ({ file: a.file, url: a.url, kind: a.kind, at: a.published_at })) } : {}),
   }));
   const setup = lead ? setupField(db, lead.path) : null;

@@ -5,7 +5,7 @@ import { needsYou, overwatchNotes, ago, compact, repoBadge, warnMark, holdText, 
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, state, act, sampleOn, showSample, peekAgent } from "./lib/store.js";
-import { cliCommand } from "./lib/actions.js";
+import { cliCommand, talkable } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { SETUP_SAMPLE, setupProgress } from "./lib/setup.js";
 
@@ -41,7 +41,7 @@ export default class FactoryHome extends View {
   card(t, s, { ticket, kind }, now, on) {
     const badge = repoBadge(s, ticket);
     const color = kind === "merge" ? t.done : t.blocked;
-    const tag = kind === "attention" ? "waiting on you in its terminal · click to answer" : kind === "question" ? "grooming · waiting on you" : kind === "parked" ? "parked"
+    const tag = kind === "attention" ? "needs your attention · e" : kind === "question" ? "grooming · waiting on you" : kind === "parked" ? (talkable(ticket) ? "asks you · u talks it through" : "parked")
       : ticket.pr?.watched && ticket.pr.checked_at ? `watching · checked ${ago(ticket.pr.checked_at, now)}` : "ready to merge";
     return h_flex().id(`n-${ticket.id}`).rounded(8).bg(t.surface).border(1).border_color(on ? t.accent : t.border).cursor_pointer()
       .hover((s) => s.bg(t.hover)).on_click(() => visit(ticket))

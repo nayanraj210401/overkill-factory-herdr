@@ -1,10 +1,10 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, shared, readTextFile, nextCommand, checking, props, exec, notify } from "herdr";
-import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, prLinks, prColor, watchNote, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW } from "./lib/model.js";
+import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, prLinks, prColor, watchNote, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW, TALK_HOW } from "./lib/model.js";
 import { root, status, state, peekAgent, act } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
-import { cliCommand } from "./lib/actions.js";
+import { cliCommand, talkable } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
@@ -102,13 +102,16 @@ export default class FactoryTicket extends View {
       .when(!!watch && ticket.state === "ready", (el) => el.child(div().id("pr-watch").px(8).py(2).rounded(10).border(1).border_color(t.border).text_size(12).text_color(t.muted).child(watch)));
     const live = Boolean(ticket.terminal);
     const questions = questionCards(ticket);
-    const asking = ticket.state === "grooming" && ticket.needs?.kind === "question";
+    // Questions are answered in the asking agent's terminal: the live one, or a fresh one (talk it through).
+    const waiting = live && (ticket.needs?.kind === "attention" || (ticket.state === "grooming" && ticket.needs?.kind === "question"));
+    const talk = talkable(ticket);
     const actions = [
+      ...(waiting ? [button("answer", "Answer in terminal  e", true, () => peekAgent(ticket))] : []),
       ...(ticket.state === "ready" && ticket.pr ? [
         button("merge", cards ? `Merge ${cards.length} PRs in order  m` : `Merge PR #${ticket.pr.number}  m`, true, () => act({ kind: "merge" }, ticket)),
         button("send-back", "Send back  x", false, () => act({ kind: "send-back" }, ticket))] : []),
-      ...(asking ? [button("answer", "Answer  u", true, () => act({ kind: "answer" }, ticket))] : []),
-      ...(ticket.state === "parked" ? [button("answer", "Answer and restart  u", true, () => act({ kind: "answer" }, ticket))] : []),
+      ...(talk ? [button("answer", "Talk it through  u", true, () => act({ kind: "answer" }, ticket))] : []),
+      ...(ticket.state === "parked" && !talk ? [button("answer", "Answer and restart  u", true, () => act({ kind: "answer" }, ticket))] : []),
       ...(!["grooming", "queued"].includes(ticket.state) ? [button("diff", "Diff  d", false, () => act({ kind: "diff" }, ticket))] : []),
       button("refresh", this.refreshing ? "Refreshing…" : "Refresh", false, () => this.refresh(ticket, cx)),
       ...(ticket.state === "running" || ticket.state === "paused" ? [button("pause", ticket.state === "paused" ? "Resume  p" : "Pause  p", false, () => act({ kind: "pause" }, ticket))] : []),
@@ -120,8 +123,8 @@ export default class FactoryTicket extends View {
         .child(div().w(28).flex_none().font_semibold().text_color(t.blocked).child(q.label))
         .child(v_flex().flex_1().min_w_0().gap(1)
           .child(div().text_color(t.foreground).child(q.text))
-          .child(div().text_size(12).text_color(q.kind === "product" ? t.muted : t.accent).child(`${q.who} · reply ${q.reply}`)))))
-      .child(div().text_size(12).text_color(t.dim).child(ANSWER_HOW));
+          .child(div().text_size(12).text_color(q.kind === "product" ? t.muted : t.accent).child(q.reply ? `${q.who} · reply ${q.reply}` : q.who)))))
+      .child(div().text_size(12).text_color(t.dim).child(waiting ? "The agent is asking you in its terminal: press e to answer there." : talk ? TALK_HOW : ANSWER_HOW));
     return h_flex().size_full().gap(8).text_size(13)
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus())
       .on_key_down((e, cx) => {
@@ -162,10 +165,10 @@ export default class FactoryTicket extends View {
       // The live column exists only while an agent runs; otherwise the page gets the width.
       .when(live, (el) => el.child(v_flex().w(380).flex_none().h_full().p(14).gap(8).rounded(10).bg(t.surface).border(1).border_color(t.border).text_color(t.muted)
         .child(div().text_color(t.foreground).child(`${ticket.stage ?? ticket.state} · ${compact(ticket.tokens.input)} in · ${compact(ticket.tokens.output)} out`))
-        .child(div().text_color(t.dim).child(`Agent running in ${ticket.terminal}.`))
+        .child(div().text_color(waiting ? t.blocked : t.dim).child(waiting ? `${ticket.stage ?? "Its agent"} asks you in ${ticket.terminal}.` : `Agent running in ${ticket.terminal}.`))
         .child(div().flex_1())
-        .child(div().id("peek").px(10).py(6).rounded(6).border(1).border_color(t.accent).text_color(t.accent)
-          .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => peekAgent(ticket)).child("Open live terminal  e"))
+        .when(!waiting, (el) => el.child(div().id("peek").px(10).py(6).rounded(6).border(1).border_color(t.accent).text_color(t.accent)
+          .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => peekAgent(ticket)).child("Open live terminal  e")))
         .children(actions)));
   }
 }

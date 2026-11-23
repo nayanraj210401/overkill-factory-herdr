@@ -54,7 +54,7 @@ Start small: one ticket at a time, a low daily budget, and a human merge gate. A
 | `n` | new ticket from an issue, `#number` or a one-line goal |
 | `e` | peek at the ticket's live agent terminal |
 | `m` | merge a ready PR |
-| `x` / `u` | send a PR back with a note / answer a parked ticket |
+| `x` / `u` | send a PR back with a note / answer a waiting ticket (an agent asking now: its terminal; a parked question: talk it through in a fresh session) |
 | `p` / `b` / `d` | pause or resume / change the budget / diff |
 
 You change the factory by asking Overwatch ("add a blueprint for migrations", "turn on the maintenance agent"). The maintainer agent makes the change in place, in your local `.factory/` and `~/.factory/`, backs up each file first, and tells you what it changed: there is nothing to merge.

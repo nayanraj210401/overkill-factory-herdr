@@ -226,7 +226,7 @@ test("planPct shows a dash when nothing reports the plan's usage", async () => {
 
 test("an agent waiting on you in its terminal is in Needs you, first, whatever its stage", async () => {
   const { groupOf, needsYou } = await import("../lib/model.js");
-  const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "Waiting on you in its terminal (t1): open it to answer" } };
+  const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "spec asks you in its terminal (t1): press e to answer" } };
   assert.equal(groupOf(waiting), "needs");
   assert.equal(groupOf({ id: 8, state: "running", stage: "spec", needs: null }), "running");
   const order = needsYou([{ id: 1, state: "ready", needs: null }, { id: 2, state: "parked", needs: { kind: "parked", text: "" } }, waiting]);
