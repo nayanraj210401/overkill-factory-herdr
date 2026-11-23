@@ -11,8 +11,9 @@
 // when it adds an agent. An example is never run: a stage only loads its repo's own file.
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { validateFile } from "./validate.ts";
+import { applySteps } from "./steps.ts";
 import type { Database } from "bun:sqlite";
 import { listRepos, ticketRepos } from "./db.ts";
 
@@ -117,7 +118,7 @@ export function exampleFile(name: string, home?: string): { file: string; label:
   return existsSync(shipped) ? { file: shipped, label: `examples/agents/${name}.md (shipped)` } : null;
 }
 
-// The repo agents a .factory/ folder's blueprints and grooming name: every stage's agent and
+// The repo agents a .factory/ folder's blueprints and grooming name: every stage's agent (its step's too) and
 // orchestrator, and grooming.agent. Factory agents (the maintainer) aren't repo files.
 export function neededAgents(dir: string): string[] {
   const parse = (p: string) => { try { return Bun.YAML.parse(readFileSync(p, "utf8")) as any; } catch { return null; } };
@@ -128,7 +129,8 @@ export function neededAgents(dir: string): string[] {
   for (const f of existsSync(bps) ? readdirSync(bps).filter((x) => /\.ya?ml$/.test(x)) : []) {
     const b = parse(join(bps, f));
     if (typeof b?.orchestrator === "string") names.add(b.orchestrator);
-    for (const s of Object.values<any>(b?.stages && typeof b.stages === "object" ? b.stages : {})) if (typeof s?.agent === "string") names.add(s.agent);
+    // A stage's shared step names its agent: the folder's own steps/, then the account's (steps.ts).
+    for (const s of Object.values<any>(applySteps(b?.stages && typeof b.stages === "object" ? b.stages : {}, dirname(dir), () => {}))) if (typeof s?.agent === "string") names.add(s.agent);
   }
   return [...names].filter((n) => !isFactoryAgent(n)).sort();
 }

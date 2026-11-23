@@ -61,7 +61,8 @@ export default class FactoryBlueprint extends View {
     const tone = (s) => (s.gate === "human" ? "blocked" : "border");
     const stageBox = (s) => v_flex().gap(4).items_center()
       .child(this.box(t, { id: s.id, label: s.id, sub: runs(s.runs), tone: tone(s) }))
-      .child(div().text_size(11).text_color(s.gate === "human" ? t.blocked : t.dim).child(s.gate === "human" ? "human gate" : s.requires === "ready" ? "needs ready rules" : s.who));
+      .child(div().text_size(11).text_color(s.gate === "human" ? t.blocked : t.dim).child(s.gate === "human" ? "human gate" : s.requires === "ready" ? "needs ready rules" : s.who))
+      .when(Boolean(s.step), (el) => el.child(div().text_size(11).text_color(t.muted).child(`step: ${s.step}`)));
     const MARK = { added: ["done", "+ added"], changed: ["blocked", "~ changed"] };
     const draftBox = (s) => {
       const [tn, word] = MARK[s.change] ?? ["border", ""];

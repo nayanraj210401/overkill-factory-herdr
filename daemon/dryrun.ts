@@ -6,6 +6,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateFile } from "./validate.ts";
+import { applySteps } from "./steps.ts";
 
 export type Graph = { name: string; orchestrator?: string; start: string; stages: Record<string, { next?: string[]; on_fail?: string; max_retries?: number }> };
 export type Choice = { at: string; to: string; by: string };
@@ -28,10 +29,14 @@ export function plan(g: Graph, from: string) {
 }
 
 // Parse and check a draft with the schema check, which also names every stage it points at.
-export function loadDraft(text: string, file = "blueprints/draft.yaml"): Graph {
+// A stage's shared step (steps.ts) loads from `repo`'s .factory/steps/, then the account's,
+// so its max_retries counts.
+export function loadDraft(text: string, file = "blueprints/draft.yaml", repo: string | null = null): Graph {
   const errors = validateFile(file, text);
+  const g = errors.length ? null : (Bun.YAML.parse(text) as Graph);
+  if (g) g.stages = applySteps(g.stages, repo, (id, e) => errors.push(`stages.${id}.step: ${e}`));
   if (errors.length) throw new Error(`the draft blueprint is invalid:\n${errors.map((e) => `  ${e}`).join("\n")}`);
-  return Bun.YAML.parse(text) as Graph;
+  return g!;
 }
 
 // One ticket through the draft. Pure.

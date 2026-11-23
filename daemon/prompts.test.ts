@@ -116,7 +116,7 @@ test("a stage's `prompt:` picks its own template; other stages keep stage.md", (
   const { dir, db, calls, run, repo } = stageSetup();
   prompts(repo, { "specs.md": "SPEC TEMPLATE for #{{ticket.id}}: {{agent.prompt}}" });
   const bp = join(repo, ".factory/blueprints/feature.yaml");
-  writeFileSync(bp, readFileSync(bp, "utf8").replace("agent: spec-writer,", "agent: spec-writer, prompt: specs,"));
+  writeFileSync(bp, readFileSync(bp, "utf8").replace("step: write-spec,", "step: write-spec, prompt: specs,"));
   expect(readFileSync(bp, "utf8")).toContain("prompt: specs");
   expect(validateDir(join(repo, ".factory")).filter((r) => r.errors.length)).toEqual([]);
   startTicket(db, { dir, repo, id: 412, run, now: "2026-11-21T10:00:00Z" });
@@ -139,7 +139,7 @@ test("validate: a stage prompt must name a file; unknown placeholders and empty 
   prompts(repo, { "good.md": "Hi {{ticket.title}}", "typo.md": "Hi {{ticket.titel}}", "empty.md": "  \n" });
   const bp = join(repo, ".factory/blueprints/feature.yaml");
   const text = readFileSync(bp, "utf8");
-  const add = (name: string) => writeFileSync(bp, text.replace("agent: spec-writer,", `agent: spec-writer, prompt: ${name},`));
+  const add = (name: string) => writeFileSync(bp, text.replace("step: write-spec,", `step: write-spec, prompt: ${name},`));
   const errors = () => Object.fromEntries(validateDir(join(repo, ".factory")).filter((r) => r.errors.length).map((r) => [r.path, r.errors]));
   expect(errors()).toMatchObject({ "prompts/typo.md": [expect.stringContaining("{{ticket.titel}}: unknown placeholder")], "prompts/empty.md": ["prompt: the file is empty"] });
   add("good");
@@ -150,7 +150,7 @@ test("validate: a stage prompt must name a file; unknown placeholders and empty 
   expect(errors()["blueprints/feature.yaml"]).toEqual(["stages.spec.prompt: no file prompts/nope.md"]);
   add("groom"); // grooming's template doesn't fit a stage
   expect(errors()["blueprints/feature.yaml"]![0]).toContain("groom is not a stage template");
-  writeFileSync(bp, text.replace("agent: spec-writer,", "agent: spec-writer, prompt: [a],"));
+  writeFileSync(bp, text.replace("step: write-spec,", "step: write-spec, prompt: [a],"));
   expect(errors()["blueprints/feature.yaml"]![0]).toContain("expected text");
   expect(existsSync(join(repo, ".factory/prompts/good.md"))).toBe(true);
 });

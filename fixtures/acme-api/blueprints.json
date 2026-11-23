@@ -10,6 +10,7 @@
       "stages": [
         {
           "id": "fix",
+          "step": "build",
           "agent": "builder",
           "role": "build",
           "check": null,
@@ -23,6 +24,7 @@
         },
         {
           "id": "verify",
+          "step": "run-tests",
           "agent": null,
           "role": null,
           "check": "tests",
@@ -45,6 +47,7 @@
       "stages": [
         {
           "id": "implement",
+          "step": "build",
           "agent": "builder",
           "role": "build",
           "check": null,
@@ -58,6 +61,7 @@
         },
         {
           "id": "verify",
+          "step": "run-tests",
           "agent": null,
           "role": null,
           "check": "tests",
@@ -71,6 +75,7 @@
         },
         {
           "id": "review",
+          "step": "review",
           "agent": "reviewer",
           "role": "review",
           "check": null,
@@ -84,6 +89,7 @@
         },
         {
           "id": "pr",
+          "step": "write-pr",
           "agent": "pr-writer",
           "role": "build",
           "check": null,
@@ -97,6 +103,7 @@
         },
         {
           "id": "merge",
+          "step": "merge",
           "agent": null,
           "role": null,
           "check": null,
@@ -119,6 +126,7 @@
       "stages": [
         {
           "id": "implement",
+          "step": "build",
           "agent": "builder",
           "role": "build",
           "check": null,
@@ -132,6 +140,7 @@
         },
         {
           "id": "verify",
+          "step": "run-tests",
           "agent": null,
           "role": null,
           "check": "tests",
@@ -145,6 +154,7 @@
         },
         {
           "id": "pr",
+          "step": "write-pr",
           "agent": "pr-writer",
           "role": "build",
           "check": null,
@@ -158,6 +168,7 @@
         },
         {
           "id": "merge",
+          "step": "merge",
           "agent": null,
           "role": null,
           "check": null,
@@ -180,6 +191,7 @@
       "stages": [
         {
           "id": "maintain",
+          "step": null,
           "agent": "maintainer",
           "role": "maintain",
           "check": null,
@@ -193,6 +205,7 @@
         },
         {
           "id": "check",
+          "step": null,
           "agent": null,
           "role": null,
           "check": "factory",
@@ -206,6 +219,7 @@
         },
         {
           "id": "pr",
+          "step": null,
           "agent": null,
           "role": null,
           "check": null,
@@ -219,6 +233,7 @@
         },
         {
           "id": "merge",
+          "step": null,
           "agent": null,
           "role": null,
           "check": null,
@@ -241,6 +256,7 @@
       "stages": [
         {
           "id": "spec",
+          "step": "write-spec",
           "agent": "spec-writer",
           "role": "spec",
           "check": null,
@@ -255,6 +271,7 @@
         },
         {
           "id": "plan",
+          "step": "plan-slices",
           "agent": "planner",
           "role": "plan",
           "check": null,
@@ -268,6 +285,7 @@
         },
         {
           "id": "implement",
+          "step": "build",
           "agent": "builder",
           "role": "build",
           "check": null,
@@ -281,6 +299,7 @@
         },
         {
           "id": "verify",
+          "step": "check-evidence",
           "agent": null,
           "role": null,
           "check": "evidence",
@@ -294,6 +313,7 @@
         },
         {
           "id": "holdout",
+          "step": "holdout",
           "agent": "checker",
           "role": "verify",
           "check": null,
@@ -307,6 +327,7 @@
         },
         {
           "id": "review",
+          "step": "review",
           "agent": "reviewer",
           "role": "review",
           "check": null,
@@ -320,6 +341,7 @@
         },
         {
           "id": "pr",
+          "step": "write-pr",
           "agent": "pr-writer",
           "role": "build",
           "check": null,
@@ -333,6 +355,7 @@
         },
         {
           "id": "merge",
+          "step": "merge",
           "agent": null,
           "role": null,
           "check": null,
@@ -355,6 +378,7 @@
       "stages": [
         {
           "id": "maintain",
+          "step": null,
           "agent": "maintenance",
           "role": "build",
           "check": null,
@@ -368,6 +392,7 @@
         },
         {
           "id": "verify",
+          "step": "run-tests",
           "agent": null,
           "role": null,
           "check": "tests",
@@ -381,6 +406,7 @@
         },
         {
           "id": "review",
+          "step": "review",
           "agent": "reviewer",
           "role": "review",
           "check": null,
@@ -394,6 +420,7 @@
         },
         {
           "id": "pr",
+          "step": "write-pr",
           "agent": "pr-writer",
           "role": "build",
           "check": null,
@@ -407,6 +434,7 @@
         },
         {
           "id": "merge",
+          "step": "merge",
           "agent": null,
           "role": null,
           "check": null,

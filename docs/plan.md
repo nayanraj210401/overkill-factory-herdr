@@ -623,6 +623,7 @@ Rules for every file:
 | --- | --- | --- |
 | `factory.yaml` | What the factory covers, defaults, budgets, ready rules, hard stops, merge policy | 4.1, 6.10, 6.11 |
 | `blueprint.yaml` and `blueprints/<name>.yaml` | The graph of stages a ticket moves through | 6.1, 6.3 |
+| `steps/<name>.yaml` | One shared step: what a stage runs, for any blueprint to name | 6.1 |
 | `agents/<name>.md` | One role: a YAML header above a Markdown prompt | 6.2, 6.4, 7.4 |
 | `triggers/<name>.yaml` | What starts work, and which blueprint runs | 6.5, 7.5 |
 | `benchmarks/<name>.yaml` | A replay suite built from past tickets | 6.11 |
@@ -698,6 +699,30 @@ stages:
 | `stages.<id>.gate` | human or auto: whether you must act before the stage counts as done. auto by default; merge defaults to human |
 
 Other blueprints sit in `blueprints/<name>.yaml`, such as a short one for lint fixes, and grooming picks one per ticket; you can change its pick while the ticket is in grooming. The blueprint view draws this graph with run counts per stage.
+
+### steps/\<name>.yaml: a shared step
+
+A step is one stage's work as its own file, so writing a spec or opening the PR is written once and used by every blueprint that needs it. A step holds what runs: `agent` or `check`, `output`, `template`, `prompt`, `per`, `requires`, `gate`, a default `max_retries`, and a one-line `description`. It has no `next` or `on_fail`: the graph stays in the blueprint.
+
+```yaml
+# .factory/steps/write-pr.yaml
+description: Once the ready rules pass, the PR writer opens the PR from PR.md, in the pr-readable template.
+agent: pr-writer
+requires: ready
+output: PR.md
+template: pr-readable
+```
+
+A stage names it with `step:`, and any field the stage sets wins over the step's:
+
+```yaml
+stages:
+  implement: { step: build, per: slice, next: [verify] }
+  verify:    { step: run-tests, max_retries: 5, next: [pr], on_fail: implement }
+  pr:        { step: write-pr, next: [merge] }
+```
+
+`step: <name>` loads from the repo's `.factory/steps/<name>.yaml`, then the account's `~/.factory/steps/<name>.yaml`, which every repo on this machine shares. A step in neither is a `factory validate` error naming the blueprint and stage, and that blueprint won't load. A stage without `step:` is written out in full, as before. The shipped steps (`examples/steps/`) install into `~/.factory/examples/steps/`, and `setup write` copies the ones the blueprints name into the repo, unless your `~/.factory/steps/` already has them. The Blueprint page names each stage's step.
 
 ### agents/\<name>.md: one role
 

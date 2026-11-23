@@ -7,6 +7,7 @@ import { PLACEHOLDERS, templateErrors } from "./prompts.ts";
 import { featureErrors } from "./features.ts";
 import { exampleFile, FACTORY_AGENTS, isFactoryAgent } from "./agents.ts";
 import { skillErrors, skillFileErrors } from "./skills.ts";
+import { applySteps } from "./steps.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -29,12 +30,13 @@ const ARTIFACTS: Rule = { object: { as: { enum: ["artifact", "doc", "off"] }, pu
 const TICKET_SOURCE = { enum: ["github", "linear", "local"] };
 const LEARN_TARGETS = ["cost_per_pr", "time_to_pr", "interactions_per_pr", "review_rounds_per_pr"];
 
-const STAGE: Rule = {
-  object: {
-    agent: str, prompt: str, check: { enum: ["evidence", "tests", "lint", "factory"] }, output: str, next: strs, on_fail: str,
-    max_retries: num, per: { enum: ["ticket", "slice"] }, requires: str, template: str, gate, stages: "any",
-  },
-};
+// What a stage runs. A shared step (steps/<name>.yaml, daemon/steps.ts) holds the same fields
+// and a description; a stage naming it with `step:` keeps the graph and may override any field.
+const WORK = {
+  agent: str, prompt: str, check: { enum: ["evidence", "tests", "lint", "factory"] }, output: str,
+  max_retries: num, per: { enum: ["ticket", "slice"] }, requires: str, template: str, gate,
+} satisfies Record<string, Rule>;
+const STAGE: Rule = { object: { step: str, ...WORK, next: strs, on_fail: str, stages: "any" } };
 
 export const KINDS: Record<string, Rule> = {
   factory: {
@@ -50,6 +52,7 @@ export const KINDS: Record<string, Rule> = {
     },
   },
   blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },
+  step: { required: ["description"], object: { description: str, ...WORK } },
   agent: {
     object: {
       // overwatch, babysit, maintain and learn are the factory agents' roles (agents.ts).
@@ -121,6 +124,7 @@ const AGENT_KEYS = Object.keys((KINDS.agent as { object: object }).object);
 const kindOf = (path: string) =>
   path === "factory.yaml" ? "factory"
   : path === "blueprint.yaml" || /^blueprints\/[^/]+\.ya?ml$/.test(path) ? "blueprint"
+  : /^steps\/[^/]+\.ya?ml$/.test(path) ? "step"
   : /^agents\/[^/]+\.md$/.test(path) ? "agent"
   : /^prompts\/[^/]+\.md$/.test(path) ? "prompt"
   : /^triggers\/[^/]+\.ya?ml$/.test(path) ? "trigger"
@@ -184,7 +188,7 @@ export function duplicateKeys(text: string): string[] {
 
 export function validateFile(path: string, text: string): string[] {
   const kind = kindOf(path);
-  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, prompts/, triggers/, benchmarks/, features/, skills/<name>/SKILL.md)`];
+  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, steps/, agents/, prompts/, triggers/, benchmarks/, features/, skills/<name>/SKILL.md)`];
   if (kind === "skill") return skillFileErrors(text);
   if (kind === "skill-file") return [];
   // flow-stack's feature map, copied by the migration (daemon/features.ts).
@@ -286,12 +290,16 @@ function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
     if (kindOf(p) === "blueprint") {
       const b = parse(p);
       if (typeof b?.orchestrator === "string" && !agents.has(b.orchestrator)) add(p, `orchestrator: ${noAgent(b.orchestrator)}`);
-      for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
-        if (typeof s?.agent === "string" && !agents.has(s.agent)) add(p, `stages.${id}.agent: ${noAgent(s.agent)}`);
-      for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
+      // A stage's shared step: the repo's steps/, then the account's (steps.ts). Its fields count as the stage's.
+      const raw = b?.stages && typeof b.stages === "object" ? b.stages : {};
+      const stages = applySteps(raw, dirname(dir), (id, e) => add(p, `stages.${id}.step: ${e}`));
+      const from = (id: string, k: string) => typeof raw[id]?.step === "string" && raw[id]?.[k] === undefined ? ` (from step ${raw[id].step})` : "";
+      for (const [id, s] of Object.entries<any>(stages))
+        if (typeof s?.agent === "string" && !agents.has(s.agent)) add(p, `stages.${id}.agent: ${noAgent(s.agent)}${from(id, "agent")}`);
+      for (const [id, s] of Object.entries<any>(stages))
         if (typeof s?.prompt !== "string") continue;
-        else if (s.prompt !== "stage" && s.prompt in PLACEHOLDERS) add(p, `stages.${id}.prompt: ${s.prompt} is not a stage template (it is for ${s.prompt === "groom" ? "grooming" : s.prompt === "handoff" ? "handoffs" : "overwatch"})`);
-        else if (!prompts.has(s.prompt)) add(p, `stages.${id}.prompt: no file prompts/${s.prompt}.md`);
+        else if (s.prompt !== "stage" && s.prompt in PLACEHOLDERS) add(p, `stages.${id}.prompt: ${s.prompt} is not a stage template (it is for ${s.prompt === "groom" ? "grooming" : s.prompt === "handoff" ? "handoffs" : "overwatch"})${from(id, "prompt")}`);
+        else if (!prompts.has(s.prompt)) add(p, `stages.${id}.prompt: no file prompts/${s.prompt}.md${from(id, "prompt")}`);
     } else if (p === "factory.yaml") {
       const g = parse(p)?.grooming;
       if (typeof g?.agent === "string" && !agents.has(g.agent)) add(p, `grooming.agent: ${noAgent(g.agent)}`);
@@ -343,7 +351,8 @@ export function gateWarnings(path: string, file: string): string[] {
   let doc: any;
   try { doc = Bun.YAML.parse(readFileSync(file, "utf8")); } catch { return []; }
   if (kind === "factory") return doc?.maintainer?.gate === "auto" ? ["maintainer.gate is auto: the maintainer's PRs merge themselves, and the account config and factory agents change on that merge, with nobody looking. Check the revert rate on Home"] : [];
-  const stages = doc?.stages && typeof doc.stages === "object" ? doc.stages : {};
+  // A gate set by a shared step counts too; the repo is the folder above .factory/ (steps.ts).
+  const stages = applySteps(doc?.stages && typeof doc.stages === "object" ? doc.stages : {}, dirname(file.endsWith(path) ? file.slice(0, -path.length - 1) : dirname(file)), () => {});
   return Object.entries<any>(stages).filter(([, s]) => s?.gate === "auto")
     .map(([id]) => `stages.${id}.gate is auto: this stage passes without you${(stages[id].next ?? []).every((n: string) => n === "end") ? ", and ready PRs of this blueprint merge themselves" : ""}. Check this blueprint's revert rate on Home`);
 }

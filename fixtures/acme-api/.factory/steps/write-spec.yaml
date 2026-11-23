@@ -1,0 +1,5 @@
+# A shared step: what a stage runs. A blueprint stage names it with `step: write-spec`
+# and keeps the graph (next, on_fail); any field the stage sets wins over these.
+description: The spec writer turns the ticket into INTENT.md, what to build and how to tell it works.
+agent: spec-writer
+output: INTENT.md

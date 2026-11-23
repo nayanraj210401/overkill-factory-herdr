@@ -3,7 +3,7 @@ name: chore
 orchestrator: foreman
 start: implement
 stages:
-  implement: { agent: builder, next: [verify] }
-  verify:    { check: tests, next: [pr], on_fail: implement, max_retries: 2 }
-  pr:        { agent: pr-writer, requires: ready, output: PR.md, template: pr-readable, next: [merge] }
-  merge:     { gate: human, next: [end] }
+  implement: { step: build, next: [verify] }
+  verify:    { step: run-tests, next: [pr], on_fail: implement }
+  pr:        { step: write-pr, next: [merge] }
+  merge:     { step: merge, next: [end] }

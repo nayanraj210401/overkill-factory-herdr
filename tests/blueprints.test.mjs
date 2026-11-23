@@ -56,3 +56,10 @@ test("the page takes the drafts for the picked blueprint, and validateBlueprints
   assert.equal(draftsFor(doc, "feature").length, 0); // an older blueprints.json has no drafts
   assert.deepEqual(validateBlueprints({ ...doc, drafts: [{ name: "x" }] }), ["drafts[0]: needs {name, ticket, stages}"]);
 });
+
+test("a stage names its shared step; a draft that swaps the step is a change", () => {
+  assert.equal(feature.stages.find((s) => s.id === "spec").step, "write-spec");
+  assert.deepEqual(validateBlueprints({ days: 7, blueprints: [{ name: "x", stages: [{ id: "a", runs: 0, next: [], step: 3 }] }] }), ["blueprints[0].stages[0].step: needs text or null"]);
+  const draft = { ...feature, ticket: 4, stages: feature.stages.map((s) => (s.id === "spec" ? { ...s, step: "write-spec-lite" } : s)) };
+  assert.equal(draftView(feature, draft).stages.find((s) => s.id === "spec").change, "changed");
+});

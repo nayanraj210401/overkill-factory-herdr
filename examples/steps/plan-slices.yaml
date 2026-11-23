@@ -1,0 +1,3 @@
+description: The planner cuts the spec into slices a builder can ship one at a time, in SLICES.md.
+agent: planner
+output: SLICES.md

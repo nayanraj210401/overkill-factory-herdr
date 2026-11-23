@@ -1,0 +1,2 @@
+description: The PR waits for you to merge it; set the stage's gate to auto to let ready PRs merge themselves.
+gate: human

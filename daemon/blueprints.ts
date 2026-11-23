@@ -1,5 +1,6 @@
 // blueprints.json, beside status.json: each blueprint's stages as the Blueprint page
 // draws them, with how many times each ran in the last 7 days (retries count again).
+// A stage that names a shared step (steps.ts) shows the step's fields, and its name as `step`.
 import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -18,14 +19,14 @@ function shape(repo: string, name: string, counted: Record<string, number> = {})
   return {
     start: b.start as string, orchestrator: (b.orchestrator ?? null) as string | null,
     stages: Object.entries(b.stages as Record<string, any>).map(([id, s]) => ({
-      id, agent: s.agent ?? null, role: s.agent ? loadAgent(repo, s.agent)?.role ?? null : null, check: s.check ?? null,
+      id, step: s.step ?? null, agent: s.agent ?? null, role: s.agent ? loadAgent(repo, s.agent)?.role ?? null : null, check: s.check ?? null,
       next: s.next ?? [], on_fail: s.on_fail ?? null, gate: s.gate ?? "auto", requires: s.requires ?? null, runs: counted[id] ?? 0,
     })),
   };
 }
 
 // Blueprints a pending maintainer request changes: each ticket on the factory blueprint
-// that hasn't finished and whose worktree's .factory/blueprints differs from the repo's.
+// that hasn't finished and whose worktree's .factory/blueprints (or a step one names) differs from the repo's.
 // The page draws each beside the current one (lib/blueprints.js marks the differences).
 export function buildDrafts(db: Database | null, repo: string) {
   const tickets = (db?.query(`SELECT id, title, worktree FROM ticket_lead WHERE blueprint = 'factory' AND worktree IS NOT NULL AND state NOT IN (${FINISHED.map(() => "?").join(",")}) ORDER BY id`).all(...FINISHED) as { id: number; title: string; worktree: string }[] | undefined) ?? [];
@@ -36,11 +37,16 @@ export function buildDrafts(db: Database | null, repo: string) {
       const name = f.slice(0, -5);
       const mine = join(repo, ".factory", "blueprints", f);
       const text = readFileSync(join(dir, f), "utf8");
-      if (existsSync(mine) && readFileSync(mine, "utf8") === text) return [];
+      // Same file and same shared steps: nothing pending. A changed step changes every blueprint naming it.
+      if (existsSync(mine) && readFileSync(mine, "utf8") === text && sameStages(repo, t.worktree, name)) return [];
       try { return [{ ticket: t.id, title: t.title, name, error: null as string | null, ...shape(t.worktree, name) }]; }
       catch (e) { return [{ ticket: t.id, title: t.title, name, error: (e as Error).message, start: null, orchestrator: null, stages: [] }]; }
     });
   });
+}
+
+function sameStages(a: string, b: string, name: string) {
+  try { return JSON.stringify(loadBlueprint(a, name).stages) === JSON.stringify(loadBlueprint(b, name).stages); } catch { return false; }
 }
 
 export function buildBlueprints(db: Database | null, repo: string, now = new Date()) {
@@ -54,15 +60,8 @@ export function buildBlueprints(db: Database | null, repo: string, now = new Dat
     drafts: buildDrafts(db, repo),
     blueprints: names.map((name) => {
       try {
-        const b = loadBlueprint(repo, name) as any;
         const counted = runs(name);
-        return {
-          name, start: b.start, orchestrator: b.orchestrator ?? null, error: null, grooming_runs: counted.groom ?? 0,
-          stages: Object.entries(b.stages as Record<string, any>).map(([id, s]) => ({
-            id, agent: s.agent ?? null, role: s.agent ? loadAgent(repo, s.agent)?.role ?? null : null, check: s.check ?? null,
-            next: s.next ?? [], on_fail: s.on_fail ?? null, gate: s.gate ?? "auto", requires: s.requires ?? null, runs: counted[id] ?? 0,
-          })),
-        };
+        return { name, ...shape(repo, name, counted), error: null, grooming_runs: counted.groom ?? 0 };
       } catch (e) {
         return { name, start: null, orchestrator: null, error: (e as Error).message, grooming_runs: 0, stages: [] };
       }
