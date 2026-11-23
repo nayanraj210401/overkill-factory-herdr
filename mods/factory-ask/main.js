@@ -65,7 +65,9 @@ export default class FactoryAsk extends View {
       .child(h_flex().items_center()
         .child(div().flex_1().text_size(15).font_semibold().text_color(t.foreground).child(p.title ?? "Are you sure?"))
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
-      .child(div().text_color(t.muted).child(p.detail ?? ""))
+      // A long question scrolls on its own, so the answer box and the buttons stay in view. A max
+      // height, not flex_1: the dialog sizes to its content, where a flex_1 area collapses to nothing.
+      .child(div().id("ask-detail").max_h(320).overflow_y_scrollbar().pr(6).text_color(t.muted).child(p.detail ?? ""))
       .when(Boolean(this.input), (el) => el.child(v_flex().gap(6)
         .child(div().text_size(11.5).text_color(t.dim).child(p.input.label ?? ""))
         .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(12.8).text_color(t.foreground))

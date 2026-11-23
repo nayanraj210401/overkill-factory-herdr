@@ -40,7 +40,7 @@ export function layout() {
         background: "chrome",
         resizable: false,
         children: [
-          block("brand", "factory-chrome", null, { size: { px: 112 }, window_drag: true }),
+          block("brand", "factory-chrome", null, { size: { px: 134 }, window_drag: true }), // room for the "⚠ <factory>: N needs you" line
           block("sidebar-tickets", "factory-tickets", null, { size: { weight: 1 }, min: 90 }),
           block("sidebar-menu", "factory-menu", null, { size: { px: 40 + 30 * PAGES.filter((p) => p.key).length } }),
           block("sidebar-budget", "factory-chrome", { footer: true }, { size: { px: 44 } }),

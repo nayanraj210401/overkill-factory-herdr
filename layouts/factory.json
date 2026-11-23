@@ -32,7 +32,7 @@
           "id": "brand",
           "type": "block",
           "size": {
-            "px": 112
+            "px": 134
           },
           "window_drag": true,
           "content": {

@@ -230,15 +230,20 @@ export default class FactoryConfig extends View {
     const overrides = this.overrides();
     this.at = clamp(this.at, overrides.length);
     const notes = pendingNotes(status()?.asks);
-    return v_flex().size_full().gap(8).text_size(13).child(this.daemonBar(t))
-      .when(Boolean(status()?.claude?.found?.length), (el) => el.child(this.claudeCard(t, status().claude)))
-      .when(notes.length > 0, (el) => el.child(this.pendingCard(t, notes)))
-      .when(overrides.length > 0, (el) => el.child(this.overridesCard(t, overrides))).child(h_flex().flex_1().w_full().gap(8)
-      .child(v_flex().id("files").w(240).flex_none().h_full().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()
+    const cards = [status()?.claude?.found?.length, notes.length, overrides.length].some(Boolean);
+    // The cards scroll in their own capped area and the files row takes what's left (min_h 0), so
+    // neither the .factory list nor the file view grows past the window.
+    return v_flex().size_full().min_h(0).gap(8).text_size(13).child(this.daemonBar(t))
+      .when(cards, (el) => el.child(v_flex().id("config-cards").flex_none().max_h(260).gap(8).overflow_y_scrollbar()
+        .when(Boolean(status()?.claude?.found?.length), (c) => c.child(this.claudeCard(t, status().claude)))
+        .when(notes.length > 0, (c) => c.child(this.pendingCard(t, notes)))
+        .when(overrides.length > 0, (c) => c.child(this.overridesCard(t, overrides)))))
+      .child(h_flex().flex_1().min_h(0).w_full().gap(8)
+      .child(v_flex().id("files").w(240).flex_none().h_full().min_h(0).p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()
         .child(div().px(8).pb(6).text_size(11).text_color(t.dim).child(".FACTORY"))
         .children(this.files.map(row))
         .when(Boolean(this.error), (el) => el.child(div().px(8).text_color(t.blocked).child(this.error))))
-      .child(v_flex().flex_1().min_w(0).h_full().rounded(10).bg(t.background).border(1).border_color(t.border)
+      .child(v_flex().flex_1().min_w(0).min_h(0).h_full().rounded(10).bg(t.background).border(1).border_color(t.border)
         .child(h_flex().h(36).px(14).gap(10).items_center().border_b(1).border_color(t.border)
           .child(div().flex_1().min_w_0().font_semibold().text_color(t.foreground).truncate().child(this.selected?.path ?? "No file"))
           .child(this.schemaLabel(t))
@@ -247,6 +252,6 @@ export default class FactoryConfig extends View {
             .child("Open in editor ⌘O")))
         .when(Boolean(this.checks[this.selected?.path]?.length), (el) => el.child(v_flex().px(14).py(8).gap(2).border_b(1).border_color(t.border)
           .text_size(12).text_color(t.blocked).children(this.checks[this.selected.path].map((e) => div().w_full().truncate().child(e)))))
-        .child(div().flex_1().p(4).when(Boolean(this.editor), (el) => el.child(Editor.new(this.editor).size_full())))));
+        .child(div().flex_1().min_h(0).p(4).when(Boolean(this.editor), (el) => el.child(Editor.new(this.editor).size_full())))));
   }
 }
