@@ -25,12 +25,14 @@ export const div = () => element("div");
 export const h_flex = () => element("h");
 export const v_flex = () => element("v");
 export const svg = () => element("div");
+export const image = () => element("div");
 export class View {}
 export const InputState = { new: () => ({ on() {}, value: () => "", focus() {} }) };
 export const Input = { new: () => element("div") };
 export const ScrollHandle = { new: () => ({ scroll_to_item() {}, release() {} }) };
 
 // herdr: lib/store.js reads the status from shared("factory.state"); that is fake.status.
+export const settings = () => ({ dark: true });
 export const theme = () => new Proxy({}, { get: (_t, k) => `color:${String(k)}` });
 export const checking = () => false;
 export const shared = (key) => (key === "factory.state" ? { at: 0, status: fake.status, errors: [] } : null);
