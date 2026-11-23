@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import { advance, loadBlueprint, mergeTicket, sh, startTicket, type Run } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
-import { ACCOUNT_PROPOSAL, applyMerged, proposeAccount, request } from "./maintainer.ts";
+import { ACCOUNT_PROPOSAL, applyMerged, proposeAccount, proposeExample, request } from "./maintainer.ts";
+import { examplesDir, installExamples } from "./agents.ts";
 import { learnerSuggest, promoteOverrides } from "./learner.ts";
 import { addLesson, setOverride } from "./learn.ts";
 import { buildStatus } from "./status.ts";
@@ -162,6 +163,38 @@ test("an account config change is checked, its diff rides on the PR, and it appl
   applyMerged(s.db, { dir: s.dir, run: s.run, now, log: (l) => log.push(l) });
   expect(log).toHaveLength(1);
   expect(readdirSync(process.env.FACTORY_HOME!).filter((f) => f.startsWith("config.yaml.bak-"))).toHaveLength(1);
+});
+
+test("the example library changes like the factory agents: a proposed copy, checked, applied only on merge; an emptied one removes the example", () => {
+  const s = setup();
+  installExamples();
+  const lib = examplesDir();
+  const { id } = request(s.db, { text: "Add a migrator example and drop the foreman one", kind: "agents", repo: "acme/api", run: s.run, now, dir: s.dir });
+  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
+  expect(() => proposeExample(s.dir, id, "migrator")).toThrow("--from");
+  const added = proposeExample(s.dir, id, "migrator", "builder");
+  expect(readFileSync(added, "utf8")).toBe(readFileSync(join(lib, "builder.md"), "utf8")); // started from the closest
+  writeFileSync(added, readFileSync(added, "utf8").replace(/^territory: .*$/m, 'territory: "Database migrations, one per ticket"'));
+  writeFileSync(proposeExample(s.dir, id, "foreman"), "");
+  expect(() => proposeExample(s.dir, id, "maintainer")).toThrow("factory agents propose");
+  s.finish(id);
+  expect(evidence(s.db, id).find((e) => e.check_name === "example library")).toMatchObject({ result: "PASS" });
+  expect(readFileSync(join(s.dir, "tickets", String(id), "EXAMPLES.md"), "utf8")).toContain("+territory: \"Database migrations, one per ticket\"");
+  // Nothing outside the repo changes until the request merges.
+  applyMerged(s.db, { dir: s.dir, run: s.run, now });
+  expect(existsSync(join(lib, "migrator.md"))).toBe(false);
+  expect(existsSync(join(lib, "foreman.md"))).toBe(true);
+  mergeTicket(s.db, { repo: s.repo, id, run: s.run, now, dir: s.dir });
+  applyMerged(s.db, { dir: s.dir, run: s.run, now });
+  expect(readFileSync(join(lib, "migrator.md"), "utf8")).toContain("Database migrations");
+  expect(existsSync(join(lib, "foreman.md"))).toBe(false);
+  expect(readdirSync(lib).filter((f) => f.startsWith("foreman.md.bak-"))).toHaveLength(1); // kept beside it
+  // A bad copy fails the check.
+  const two = request(s.db, { text: "Break an example", kind: "agents", repo: "acme/api", run: s.run, now, dir: s.dir });
+  startTicket(s.db, { dir: s.dir, repo: s.repo, id: two.id, run: s.run, now });
+  writeFileSync(proposeExample(s.dir, two.id, "planner"), "---\nrole: plan\ncolour: blue\n---\nx\n");
+  s.finish(two.id);
+  expect(evidence(s.db, two.id).find((e) => e.check_name === "example library")).toMatchObject({ result: "FAIL" });
 });
 
 test("a bad account config proposal fails the factory check and goes back to the maintainer", () => {

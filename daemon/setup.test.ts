@@ -9,6 +9,7 @@ import { buildStatus } from "./status.ts";
 import { migrateFlowStack, errRatio, parseProfile } from "./migrate.ts";
 import { validateStatus } from "../lib/status.js";
 import { validateDir } from "./validate.ts";
+import { neededAgents, SHIPPED_EXAMPLES } from "./agents.ts";
 
 const git = (cwd: string, ...a: string[]) => {
   const r = Bun.spawnSync(["git", "-C", cwd, ...a]);
@@ -93,6 +94,24 @@ test("setup write commits .factory/ on factory/setup and leaves the checkout alo
   expect(writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { budget: "2M/100k", merge: "auto", maxRunning: 2 } }).committed).toBe(false);
   expect(writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { maxRunning: 5 } }).committed).toBe(true);
   expect(git(repo, "rev-list", "--count", "factory/setup")).toBe("3");
+});
+
+test("setup write copies only the agents the blueprints name, from your examples first, then the shipped ones", () => {
+  const repo = repoWithCommit();
+  const before = process.env.FACTORY_HOME;
+  const home = (process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "setup-home-")));
+  try {
+    const lib = join(home, "examples", "agents");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(lib, "reviewer.md"), "---\nrole: review\nterritory: \"Our diffs\"\n---\nReview our way.\n");
+    writeFileSync(join(lib, "migrator.md"), "---\nrole: build\n---\nMigrate.\n"); // no blueprint names it
+    writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: {} });
+    const agents = git(repo, "ls-tree", "-r", "--name-only", "factory/setup", ".factory/agents/").split("\n").map((f) => f.slice(".factory/agents/".length, -3)).sort();
+    expect(agents).toEqual(neededAgents(join(import.meta.dir, "../fixtures/acme-api/.factory")));
+    expect(agents).not.toContain("migrator");
+    expect(git(repo, "show", "factory/setup:.factory/agents/reviewer.md")).toContain("Review our way.");
+    expect(git(repo, "show", "factory/setup:.factory/agents/builder.md")).toBe(readFileSync(join(SHIPPED_EXAMPLES, "builder.md"), "utf8").trim());
+  } finally { process.env.FACTORY_HOME = before; }
 });
 
 test("setup write refuses bad answers before touching git", () => {

@@ -1,4 +1,8 @@
 ---
+# Example spec agent: the file every later stage is judged against.
+# Territory: INTENT.md for its ticket. In: the issue, GROOMING.md, GATES.md, the code. Out: INTENT.md.
+# Asks: a product question that blocks a check (factory question); answers from the code what it can.
+# Never: write code or SLICES.md.
 role: spec
 territory: "INTENT.md for its ticket: what to build and its acceptance checks"
 model: claude-opus-5-5

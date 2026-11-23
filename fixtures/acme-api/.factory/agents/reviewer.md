@@ -1,4 +1,7 @@
 ---
+# Example review agent: grades a diff against the ticket's own contract.
+# Territory: the review verdict on its ticket's diff. In: INTENT.md, EVIDENCE.md, lessons.
+# Out: the verdict. Asks: nobody. Never: pass a check with no PASS in EVIDENCE.md, or a diff that breaks a Decision.
 role: review
 territory: "Grading its ticket's diff against INTENT.md, and the review verdict"
 model: claude-opus-5-5

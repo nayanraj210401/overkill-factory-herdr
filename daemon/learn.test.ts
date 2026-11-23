@@ -104,7 +104,7 @@ test("learn export prints the edits as a patch, for agent headers, nested keys a
   const before = readFileSync(join(r, ".factory/factory.yaml"), "utf8");
   const ov = (key: string, value: unknown) => ({ key, value, reason: null, at: NOW });
   const { patch, notes } = exportPatch(r, [ov("agents.reviewer.model", "sonnet"), ov("budget.handoff_at_context", "50%"), ov("agents.spec-writer.effort", "high"), ov("defaults.model", "opus"), ov("agents.ghost.model", "x")]);
-  expect(patch).toContain("--- a/.factory/agents/reviewer.md\n+++ b/.factory/agents/reviewer.md\n@@ -4 +4 @@\n-model: claude-opus-5-5\n+model: sonnet");
+  expect(patch).toContain("--- a/.factory/agents/reviewer.md\n+++ b/.factory/agents/reviewer.md\n@@ -7 +7 @@\n-model: claude-opus-5-5\n+model: sonnet");
   expect(patch).toContain("--- a/.factory/agents/spec-writer.md");
   expect(patch).toContain("+effort: high"); // not in the file: added to the header
   expect(patch).toContain("--- a/.factory/factory.yaml");

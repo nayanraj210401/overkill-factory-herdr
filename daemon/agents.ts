@@ -1,13 +1,17 @@
 // Agent files, in two tiers (plan: The agents). Repo agents (triage, spec, planner,
 // builder, reviewer…) live in each repo's .factory/agents/ and can differ per repo: a
-// stage's agent loads from the repo it works in, then the lead repo, then the defaults
-// shipped in fixtures/acme-api/.factory/agents/ (what setup copies into a repo). The
+// stage's agent loads from the repo it works in, then the lead repo, and nowhere else. The
 // factory agents (Overwatch, babysitter, maintainer, learner) are one set for every repo:
 // <FACTORY_HOME>/agents/<name>.md, else the default shipped in this repo's agents/. A
 // repo's own copy of a factory agent is never read; `factory validate` warns about it.
+//
+// The example library is what a repo agent starts from: examples/agents/ here, installed
+// into <FACTORY_HOME>/examples/agents/, where your own examples sit beside the shipped ones.
+// Setup copies the examples a repo's blueprints name into it, and the maintainer copies one
+// when it adds an agent. An example is never run: a stage only loads its repo's own file.
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { validateFile } from "./validate.ts";
 import type { Database } from "bun:sqlite";
 import { leadRepo, ticketRepos } from "./db.ts";
@@ -17,8 +21,10 @@ export type FactoryAgent = (typeof FACTORY_AGENTS)[number];
 export const isFactoryAgent = (name: string): name is FactoryAgent => (FACTORY_AGENTS as readonly string[]).includes(name);
 
 export const SHIPPED_AGENTS = join(import.meta.dir, "../agents");
-export const SHIPPED_REPO_AGENTS = join(import.meta.dir, "../fixtures/acme-api/.factory/agents");
-export const factoryAgentsDir = (home = process.env.FACTORY_HOME ?? join(homedir(), ".factory")) => join(home, "agents");
+export const SHIPPED_EXAMPLES = join(import.meta.dir, "../examples/agents");
+const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory");
+export const factoryAgentsDir = (home = factoryHome()) => join(home, "agents");
+export const examplesDir = (home = factoryHome()) => join(home, "examples", "agents");
 
 // Where a repo agent is looked for, in order. One path, or several: the repo the stage
 // works in first, then the lead repo (agentRepos). A null or repeated entry is skipped.
@@ -36,8 +42,7 @@ export function agentFile(repos: AgentRepos, name: string): { file: string; labe
     const file = join(repo, ".factory", "agents", `${name}.md`);
     if (existsSync(file)) return { file, label: i === 0 ? `.factory/agents/${name}.md` : `${file} (the lead repo's)` };
   }
-  const shipped = join(SHIPPED_REPO_AGENTS, `${name}.md`);
-  return existsSync(shipped) ? { file: shipped, label: `.factory/agents/${name}.md (shipped)` } : null;
+  return null; // never an example: a repo runs only the agents it holds
 }
 
 // The repos a ticket's stages load their agents from (plan: The agents). Every stage of a
@@ -80,11 +85,53 @@ export function installFactoryAgents(home?: string) {
   return written;
 }
 
+const mdFiles = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).sort().map((f) => join(dir, f)) : []);
+
 // The factory agents you have in <FACTORY_HOME>/agents/, for `factory validate`.
-export const factoryAgentFiles = (home?: string) => {
-  const dir = factoryAgentsDir(home);
-  return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).sort().map((f) => join(dir, f)) : [];
-};
+export const factoryAgentFiles = (home?: string) => mdFiles(factoryAgentsDir(home));
+
+// ---- the example library ---------------------------------------------------------------
+// Setup: the shipped examples into <FACTORY_HOME>/examples/agents/. Like the factory agents,
+// a file already there is yours and is never overwritten; one shipped later is added.
+export function installExamples(home?: string) {
+  const dir = examplesDir(home);
+  mkdirSync(dir, { recursive: true });
+  const written: string[] = [];
+  for (const from of mdFiles(SHIPPED_EXAMPLES)) {
+    const to = join(dir, basename(from));
+    if (existsSync(to)) continue;
+    copyFileSync(from, to);
+    written.push(basename(from, ".md"));
+  }
+  return written;
+}
+
+// The examples you have in <FACTORY_HOME>/examples/agents/ (yours and the shipped ones), for `factory validate`.
+export const exampleFiles = (home?: string) => mdFiles(examplesDir(home));
+
+// The example called `name`: yours in <FACTORY_HOME>/examples/agents/ first, then the shipped one.
+export function exampleFile(name: string, home?: string): { file: string; label: string } | null {
+  const own = join(examplesDir(home), `${name}.md`);
+  if (existsSync(own)) return { file: own, label: `~/.factory/examples/agents/${name}.md` };
+  const shipped = join(SHIPPED_EXAMPLES, `${name}.md`);
+  return existsSync(shipped) ? { file: shipped, label: `examples/agents/${name}.md (shipped)` } : null;
+}
+
+// The repo agents a .factory/ folder's blueprints and grooming name: every stage's agent and
+// orchestrator, and grooming.agent. Factory agents (the maintainer) aren't repo files.
+export function neededAgents(dir: string): string[] {
+  const parse = (p: string) => { try { return Bun.YAML.parse(readFileSync(p, "utf8")) as any; } catch { return null; } };
+  const names = new Set<string>();
+  const g = parse(join(dir, "factory.yaml"))?.grooming?.agent;
+  if (typeof g === "string") names.add(g);
+  const bps = join(dir, "blueprints");
+  for (const f of existsSync(bps) ? readdirSync(bps).filter((x) => /\.ya?ml$/.test(x)) : []) {
+    const b = parse(join(bps, f));
+    if (typeof b?.orchestrator === "string") names.add(b.orchestrator);
+    for (const s of Object.values<any>(b?.stages && typeof b.stages === "object" ? b.stages : {})) if (typeof s?.agent === "string") names.add(s.agent);
+  }
+  return [...names].filter((n) => !isFactoryAgent(n)).sort();
+}
 
 // ---- the neighbour map ---------------------------------------------------------------
 // Every brief opens with the factory's agents: name, tier, territory, and how to ask each.
@@ -102,7 +149,7 @@ const ROLE_TERRITORY: Record<string, string> = {
 const HOW: Record<FactoryAgent, string> = {
   overwatch: 'factory ask overwatch "<what the person should hear or decide>"; the only agent that talks to the person',
   babysitter: 'factory ask babysitter "<text>"; read on its next run',
-  maintainer: 'factory ask maintainer "<the change, and why>" --why "<evidence>"; it comes back as a PR',
+  maintainer: 'factory ask maintainer "<the change, and why>" --why "<evidence>"; any change to the factory, a new agent or blueprint included; it comes back as a PR',
   learner: 'factory ask learner "<text>" --why "<evidence>"; read on its next run',
 };
 

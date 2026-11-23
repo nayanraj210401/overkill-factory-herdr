@@ -1,4 +1,8 @@
 ---
+# Example build agent: a stage that changes code, one slice at a time.
+# Territory: its ticket's worktree and branch. In: INTENT.md, SLICES.md, HANDOFF.md.
+# Out: commits, SLICES.md ticks, HANDOFF.md. Asks: product questions only (factory question);
+# engineering guesses go in HANDOFF.md. Never: push, switch branches, edit INTENT.md.
 role: build
 territory: "Its ticket's code, one slice at a time, in the ticket's worktree"
 model: claude-sonnet-5-5

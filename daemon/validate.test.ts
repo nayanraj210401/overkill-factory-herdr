@@ -38,6 +38,11 @@ test("agents need a header with a role and a prompt; bad YAML and stray files ar
 });
 
 test("every agent, orchestrator, grooming blueprint and trigger blueprint a factory names has its file", () => {
+  const home = process.env.FACTORY_HOME;
+  process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "names-home-")); // no example library installed yet
+  try { namesCheck(); } finally { process.env.FACTORY_HOME = home; }
+});
+function namesCheck() {
   const dir = mkdtempSync(join(tmpdir(), "factory-names-"));
   const put = (p: string, text: string) => { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), text); };
   put("factory.yaml", "name: t\ngrooming: { agent: triager, blueprints: [feature, bugfix] }\n");
@@ -46,12 +51,23 @@ test("every agent, orchestrator, grooming blueprint and trigger blueprint a fact
   put("agents/builder.md", "---\nrole: build\n---\nBuild.\n");
   const errors = validateDir(dir).flatMap((f) => f.errors.map((e) => `${f.path}: ${e}`));
   expect(errors).toEqual([
-    "blueprints/feature.yaml: orchestrator: no file agents/foreman.md",
-    "factory.yaml: grooming.agent: no file agents/triager.md",
+    "blueprints/feature.yaml: orchestrator: no file agents/foreman.md; the example library has one: copy it from examples/agents/foreman.md in the factory's repo, or ask Overwatch",
+    "factory.yaml: grooming.agent: no file agents/triager.md; the example library has one: copy it from examples/agents/triager.md in the factory's repo, or ask Overwatch",
     "factory.yaml: grooming.blueprints: no file blueprints/bugfix.yaml",
     "triggers/t.yaml: blueprint: no file blueprints/nope.yaml",
   ]);
-});
+  // Installed, the library's copy is named (yours first); an agent no library has gets no hint.
+  const lib = join(process.env.FACTORY_HOME!, "examples", "agents");
+  mkdirSync(lib, { recursive: true });
+  writeFileSync(join(lib, "foreman.md"), "---\nrole: orchestrator\n---\nMine.\n");
+  writeFileSync(join(lib, "migrator.md"), "---\nrole: build\n---\nMigrate.\n");
+  put("blueprints/feature.yaml", "name: feature\norchestrator: foreman\nstart: a\nstages:\n  a: { agent: builder, next: [b] }\n  b: { agent: migrator, next: [c] }\n  c: { agent: ghost, next: [end] }\n");
+  expect(validateDir(dir).find((f) => f.path === "blueprints/feature.yaml")!.errors).toEqual([
+    "orchestrator: no file agents/foreman.md; the example library has one: copy it from ~/.factory/examples/agents/foreman.md, or ask Overwatch",
+    "stages.b.agent: no file agents/migrator.md; the example library has one: copy it from ~/.factory/examples/agents/migrator.md, or ask Overwatch",
+    "stages.c.agent: no file agents/ghost.md",
+  ]);
+}
 
 test("the default .factory/ that setup and init copy names only files it has", () => {
   const errors = validateDir(join(import.meta.dir, "../fixtures/acme-api/.factory")).flatMap((f) => f.errors.map((e) => `${f.path}: ${e}`));

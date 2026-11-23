@@ -62,7 +62,8 @@ factory setup           # run it until every line shows ✓
 - `--budget` is per ticket and `--budget-day` is for the whole day, as input/output tokens. Start low until you know what a ticket costs.
 - `--queue <owner>/<project number>` connects a GitHub Project's Ready column. Leave it out to make tickets by hand with `n`.
 - If `setup write` finds no test command, add one to `.factory/factory.yaml`, for example `quality_floor: [bun test]`. The tests check and its ready rule need it.
-- The first `factory init` or `factory setup` writes the factory agents to `~/.factory/agents/`. It never overwrites a file that is already there.
+- The first `factory init` or `factory setup` writes the factory agents to `~/.factory/agents/` and the example agents to `~/.factory/examples/agents/`. It never overwrites a file that is already there, and adds examples a newer factory ships.
+- `setup write` copies into the repo's `.factory/agents/` only the agents its blueprints and grooming name, each from your own example in `~/.factory/examples/agents/` if you wrote one, else the shipped one. The examples themselves never run.
 
 ## 4. Open it
 
