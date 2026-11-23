@@ -58,13 +58,13 @@ export default class FactoryPicker extends View {
         cx.stop_propagation();
         cx.notify();
       })
-      .size_full().min_h(0).p(14).gap(8).bg(t.popover).text_size(13)
+      .w_full().p(14).gap(8).bg(t.popover).text_size(13)
       .child(h_flex().items_center().px(4)
         .child(div().flex_1().text_size(15).font_semibold().text_color(t.foreground).child("Factories"))
         .child(div().id("fp-esc").px(6).py(2).rounded(5).text_size(11).text_color(t.dim).cursor_pointer()
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => this.close()).child("Esc")))
       .child(rows.length
-        ? v_flex().id("fp-list").flex_1().min_h(0).gap(2).overflow_y_scrollbar().children(rows.map(row))
+        ? v_flex().id("fp-list").max_h(300).gap(2).overflow_y_scrollbar().children(rows.map(row)) // natural height: a flex_1 list collapses to nothing when the popup sizes to its content
         : div().px(4).text_color(t.muted).child("No factories yet: run `factory init` in a repo."));
   }
 }
