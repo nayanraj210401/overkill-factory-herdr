@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 function setup(blueprint = "feature", floor = '"true"') {
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
-  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true, filter: (p) => !p.endsWith("triggers/maintenance.yaml") }); // no daily maintenance ticket in these ticks
+  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
   writeFileSync(join(repo, ".factory/factory.yaml"), `name: t\nquality_floor: [${floor}]\n`);
   sh(["git", "-C", repo, "add", "."]);
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
@@ -126,7 +126,7 @@ test("the evidence check runs the quality floor itself, and its own earlier fail
   const db = open(join(mkdtempSync(join(tmpdir(), "factory-")), "factory.db"));
   db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (1, 't', 'feature', '2026-11-21T10:00:00Z')").run();
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
-  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true, filter: (p) => !p.endsWith("triggers/maintenance.yaml") }); // no daily maintenance ticket in these ticks
+  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
   setRepo(db, { slug: "acme/api", path: repo, lead: true });
   let pass = false;
   writeFileSync(join(repo, ".factory/factory.yaml"), "name: t\nquality_floor: [bun test]\n");

@@ -59,7 +59,7 @@ export const KINDS: Record<string, Rule> = {
   },
   trigger: {
     required: ["on", "blueprint"],
-    object: { on: { enum: ["manual", "project_ready", "pr_review_comment", "schedule"] }, filter: open, blueprint: str, concurrency: num, schedule: str, every: str, run: { enum: ["ticket", "health"] }, setup: strs },
+    object: { on: { enum: ["manual", "project_ready", "pr_review_comment", "schedule"] }, filter: open, blueprint: str, concurrency: num, schedule: str, every: str, run: { enum: ["ticket", "health"] }, setup: strs, enabled: "boolean" },
   },
   benchmark: {
     required: ["target", "variants"],
@@ -301,11 +301,18 @@ export function validateDir(dir: string) {
     .sort();
   const dangling = danglingNames(dir, paths);
   return paths.map((path) => {
-    const r: { path: string; errors: string[]; warnings?: string[] } = { path, errors: [...validateFile(path, readFileSync(join(dir, path), "utf8")), ...(dangling[path] ?? [])] };
+    const text = readFileSync(join(dir, path), "utf8");
+    const r: { path: string; errors: string[]; warnings?: string[]; off?: true } = { path, errors: [...validateFile(path, text), ...(dangling[path] ?? [])] };
+    if (kindOf(path) === "trigger" && triggerOff(text)) r.off = true; // `factory validate` prints it "(off)"
     const w = [warningOf(path), ...gateWarnings(path, join(dir, path))].filter((x): x is string => !!x);
     if (w.length) r.warnings = w;
     return r;
   });
+}
+
+// A trigger file with `enabled: false`: valid, and never fires (triggers.ts).
+function triggerOff(text: string) {
+  try { return (Bun.YAML.parse(text) as any)?.enabled === false; } catch { return false; }
 }
 
 // A gate turned to auto: it passes without you, and for the merge gate the factory merges the PR
