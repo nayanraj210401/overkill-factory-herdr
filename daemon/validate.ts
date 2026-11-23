@@ -59,7 +59,7 @@ export const KINDS: Record<string, Rule> = {
   },
   trigger: {
     required: ["on", "blueprint"],
-    object: { on: { enum: ["manual", "project_ready", "pr_review_comment", "schedule"] }, filter: open, blueprint: str, concurrency: num, schedule: str, every: str },
+    object: { on: { enum: ["manual", "project_ready", "pr_review_comment", "schedule"] }, filter: open, blueprint: str, concurrency: num, schedule: str, every: str, run: { enum: ["ticket", "health"] }, setup: strs },
   },
   benchmark: {
     required: ["target", "variants"],
@@ -228,6 +228,8 @@ export function validateFile(path: string, text: string): string[] {
     const t = doc as any;
     if (t?.on === "schedule" && parseEvery(t.every) === null) errors.push("every: a schedule trigger needs every: 30m, 6h or 1d");
     if (t?.on !== "schedule" && t?.every !== undefined) errors.push("every: only a schedule trigger has it");
+    if (t?.run === "health" && !["schedule", "manual"].includes(t?.on)) errors.push("run: health runs on: schedule (or on: manual, by factory health only)");
+    if (t?.run !== "health" && t?.setup !== undefined) errors.push("setup: only a run: health trigger has it");
   }
   if (kind === "benchmark") benchmarkRefs(doc, errors);
   return errors;

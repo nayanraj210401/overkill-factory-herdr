@@ -10,7 +10,8 @@ import { recordVerdict, RULE_MARK } from "./ready.ts";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { open, setMeta } from "./db.ts";
-import { capsOf, intervalOf, isDue, readTriggers, runningByTrigger } from "./triggers.ts";
+import { capsOf, intervalOf, isDue, isHealth, readTriggers, runningByTrigger } from "./triggers.ts";
+import { dueHealth, healthTrigger, runHealth } from "./health.ts";
 import { buildStatus, writeStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
 import { parseTokens } from "../lib/model.js";
@@ -128,6 +129,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
                                      write .factory/ on branch factory/setup (a temporary worktree; your checkout is untouched)
   migrate flow-stack [--dry-run] [--propose <id>]  import past tasks, decisions and lessons from ~/.flow-stack and .flow/ (once each); --propose writes the profile, calibration and feature map into a maintainer request
   setup migrate                      accept setup's flow-stack offer: a maintainer request that migrates it, as a PR
+  health [trigger]                   run the full suite on each repo's default branch now, in a throwaway worktree; a failure files one bugfix ticket, a pass closes it
   bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
   claude [--json]                    which claude every factory session runs (claude.path in config.yaml, else the newest), and the others found
   validate [dir] [--json]            check .factory/ files (default ./.factory)
@@ -268,6 +270,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   }
   if (cmd === "run" && all) return runAll(interval, log);
   if (cmd === "bench") return bench(p, args.filter((a) => !a.startsWith("--"))[1], args.includes("--dry-run"), log);
+  if (cmd === "health") return health(p, sub, log);
   // Only init makes a factory: a typo'd --name (or the window pointed at sample data)
   // must not leave a stray database for `run --all` to serve.
   if (cmd !== "init" && !existsSync(p.db)) throw new Error(`no factory "${name}" in ${dirname(p.dir)}; run factory init first`);
@@ -845,10 +848,28 @@ async function bench(p: ReturnType<typeof paths>, name: string | undefined, dryR
   }
 }
 
+// `factory health [trigger]`: the full suite on every repo's default branch, now (health.ts).
+// A suite takes minutes, so it owns its database handle and writes only at the end.
+function health(p: ReturnType<typeof paths>, name: string | undefined, log: (s: string) => void) {
+  if (!existsSync(p.db)) throw new Error(`no factory in ${p.dir}; run factory init first`);
+  const db = open(p.db);
+  try {
+    const lead = needLead(db);
+    const t = healthTrigger(lead.path, name);
+    setMeta(db, `trigger_at:${t.name}`, new Date().toISOString()); // the schedule counts from this run
+    for (const r of runHealth(db, { dir: p.dir, repo: lead.path, trigger: t, run: sh, now: () => new Date().toISOString(), commit: (fn) => change(db, fn) }))
+      log(`${r.repo} ${r.branch ?? ""}: ${r.ok === true ? "passes" : r.ok === false ? `fails: ${r.command}${r.ticket ? ` (#${r.ticket})` : ""}` : `couldn't run: ${r.error}`}`);
+    writeStatus(db, p.status);
+  } finally {
+    db.close();
+  }
+}
+
 // Each trigger on its own clock (daemon/triggers.ts). The stamp is written outside the
 // change: a failing gh waits its turn like a working one.
 export function runTriggers(db: Database, o: { dir: string; repo: string; slug: string; run: typeof sh; now: string; log: (s: string) => void }) {
   for (const t of readTriggers(o.repo).triggers) {
+    if (isHealth(t)) continue; // its own process, launched beside the benchmarks (health.ts)
     const ms = intervalOf(t);
     const key = `trigger_at:${t.name}`;
     if (ms === null || !isDue(getMeta(db, key), Date.parse(o.now), ms)) continue;
@@ -1142,6 +1163,11 @@ function runAll(interval: number, log: (s: string) => void) {
         deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(sh), name });
         const lead = leadRepo(db);
         if (lead) runScheduledBenchmarks(db, { dir: p.dir, repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
+        // Repo health: each due run:health trigger as its own `factory health` process, like a suite.
+        if (lead) for (const t of dueHealth(db, lead.path, new Date().toISOString())) {
+          try { spawnDetached(["bun", import.meta.path, "health", t, "--name", name]); log(`factory ${name}: health check ${t} started`); }
+          catch (e) { log(`factory ${name}: health check ${t}: ${(e as Error).message}`); }
+        }
         writeAll(db, p);
       } catch (e) {
         log(`factory ${name}: ${(e as Error).message}`);

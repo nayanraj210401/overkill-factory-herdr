@@ -30,6 +30,10 @@
       "output": 2000000
     }
   },
+  "health": [
+    { "repo": "acme/api", "ok": true, "at": "2026-11-21T06:00:00Z", "branch": "main", "commit": "4f2a9c1", "command": null, "failure": null, "error": null, "ticket": null },
+    { "repo": "acme/web", "ok": false, "at": "2026-11-21T06:04:00Z", "branch": "main", "commit": "b81e07d", "command": "npm test", "failure": "FAIL src/cart.test.ts > applies the discount once\n  expected 90, got 81", "error": null, "ticket": null }
+  ],
   "away": {
     "on": false,
     "since": "2026-11-20T18:30:00Z",

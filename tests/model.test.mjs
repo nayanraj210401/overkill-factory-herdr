@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { prLinks, watchNote, groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks } from "../lib/model.js";
+import { prLinks, watchNote, groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks, healthLine } from "../lib/model.js";
 
 const status = JSON.parse(readFileSync(new URL("../fixtures/acme-api/status.json", import.meta.url)));
 const now = Date.parse("2026-11-21T10:00:00Z");
@@ -282,4 +282,22 @@ test("the contract checks a PR's url and state; watchNote is the watched badge",
   assert.ok(errors.some((e) => e.startsWith("tickets[4].pr.url")), errors.join("\n"));
   assert.equal(watchNote({ pr: { number: 1, watched: true, checked_at: "2026-11-21T09:58:00Z" } }, now), "watching · checked 2m ago");
   assert.equal(watchNote({ pr: { number: 1, watched: false, checked_at: null } }, now), null);
+});
+
+test("Home's repo health line: passed, failed with its ticket and first failure, couldn't run", () => {
+  const at = "2026-11-21T07:00:00Z";
+  assert.deepEqual(healthLine({ repo: "acme/api", ok: true, at, branch: "main" }, now), { tone: "pass", text: "acme/api · main · full suite passed 3h ago", detail: null });
+  assert.deepEqual(healthLine({ repo: "acme/api", ok: false, at, branch: "main", command: "npm test", failure: "\nFAIL a.test.ts\n  boom", ticket: 10004 }, now),
+    { tone: "fail", text: "acme/api · main · `npm test` failed 3h ago · #10004", detail: "FAIL a.test.ts" });
+  assert.deepEqual(healthLine({ repo: "acme/web", ok: null, at, branch: null, error: "no quality_floor commands in its factory.yaml" }, now),
+    { tone: "none", text: "acme/web · couldn't run 3h ago", detail: "no quality_floor commands in its factory.yaml" });
+});
+
+test("the contract checks health entries: a failure names its command and failure, a skipped run its error", () => {
+  const h = { repo: "acme/api", ok: false, at: "2026-11-21T07:00:00Z", branch: "main", commit: "abc", command: "npm test", failure: "FAIL", error: null, ticket: 10004 };
+  assert.deepEqual(validateStatus({ ...status, health: [h] }), []);
+  assert.equal(validateStatus({ ...status, health: [{ ...h, failure: null }] }).length, 1);
+  assert.equal(validateStatus({ ...status, health: [{ ...h, ok: null }] }).length, 1);
+  assert.equal(validateStatus({ ...status, health: [{ ...h, ok: "yes" }] }).length, 1);
+  assert.equal(validateStatus({ ...status, health: {} }).length, 1);
 });
