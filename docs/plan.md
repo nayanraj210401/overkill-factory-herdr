@@ -78,7 +78,7 @@ Each page is drawn below the table. All share one sidebar.
 | Blueprint | Each blueprint as a graph, with run counts and gates per stage; `y` shows its YAML |
 | Metrics | Throughput, Cost, Quality, Learning and Benchmarks tabs over a date range |
 | Config | The `.factory/` files: a list, a readable view of the one selected, its schema check, and `o` to open it in your editor |
-| Reviews | Teammates' PRs waiting on you, by risk, fast lane on top. Opening one shows what the factory found, the independent check results, and a link to your pending review on GitHub, where you finish and submit it |
+| Reviews | Teammates' PRs, grouped by what each needs from you: Ready for you, Reviewing now, Waiting to start (risk and cost first, "⚠ may not fit"), Submitted. A review is a ticket, so opening one is its Ticket page with review tabs: Findings, Story, Checks, Questions, Rounds |
 
 **Metrics.** Throughput: time to PR, human interactions per PR, PRs merged, and cycle time split into pickup to PR, PR to your first review, and review to merge. Cost: cost per PR, spend per day against budget, spend by agent and model. Quality: revert rate per blueprint, ready rules passing on the first try, retries per ticket. Learning: the target over time, each tuning shift with an undo, experiments, the lesson store. Benchmarks: the latest report per stage and per blueprint. An All factories toggle (⇧A, or the chip in the tab row; remembered across reloads) combines every factory on the machine: counts, tokens and spend summed per day, rates recomputed from their counts, medians and the Learning and Benchmarks tabs shown per factory.
 
@@ -120,7 +120,39 @@ Each page is drawn below the table. All share one sidebar.
 
 #### Reviews
 
-![Reviews · low-risk lane, risk-ordered queue, a prepared pending review](layouts/08-reviews.png)
+Redesigned on 2026-11-23 for peer review as the user redesigned it (below): a review is a ticket on a peer-review blueprint, the agent decides the verdict, the output follows the risk level, and cost comes before tokens. The old page (a low-risk fast lane, then a risk-ordered list with must-fix/suggestion/noise) no longer fits, so the page is two views, both built from Herdr's own parts.
+
+**The queue** (`g r`). One row per PR, grouped by what it needs from you, not by risk:
+
+| Group | Rows show | Your keys |
+| --- | --- | --- |
+| Ready for you | risk, title, author and size, the agent's verdict (Request changes, Comment, Approve), the findings by severity | `enter` opens it · `o` your pending review on GitHub · `a` approve, only a low-risk PR with an Approve verdict |
+| Reviewing now | the live stage with Herdr's agent dot, tokens used against the PR's budget, "round 2" on a re-review | `enter` opens it, with its live terminal |
+| Waiting to start | the estimate; "⚠ may not fit" when it's over what is left of the 5-hour window, the week or today's budget, with one line saying by how much | `r` run anyway · `t` story only · `w` wait for the reset. Nothing starts while the warning stands |
+| Submitted this week | folded; one line of outcomes: kept as written, edited, missed, your minutes | `enter` unfolds |
+
+A strip on top says what the whole queue needs against the 5-hour window, with All, Requested and Teammates filters (`review.queue`). Columns have fixed widths and a title is cut to its column, never pushing the others. A card at the foot previews the selected PR: the main point, the story's tiers, the output, the checks run here and the cost.
+
+**The review** (`enter`). A review is a ticket, so it opens on the Ticket page with review tabs in place of Plan, Checks, Questions and PR:
+
+- **On top:** the agent's verdict and why ("1 blocker, kept by both votes"), and the output the level allows ("Pending on GitHub", or "Submits as Comment" when `submit` is on). Below it, the blueprint's stages as a strip, with tokens against the budget.
+- **1 Findings:** by severity (blocker, major, minor, nit), each with its file and line, the evidence (the input that breaks it, run, or `not reproduced`), the verify vote (kept ✓✓, split ✓✗), and new or pre-existing from `git blame`. A line under the list counts what was dropped by vote and what stays as noise in REVIEW-DRAFT.md (`h` shows them).
+- **2 Story:** the chapters in reading order, each tagged read, skim or skip with its size and its why, linked to where it was written. A why nobody wrote down is marked and becomes a question. `s` opens the full story, the private artifact.
+- **3 Checks:** the author's evidence re-run here, the affected tests, scenarios and lint.
+- **4 Questions:** questions for the author, from the story.
+- **5 Rounds:** on a re-review, each earlier finding as fixed (with the commit), pushed back (with the author's words and what verify made of them) or still open.
+- **The right side:** while the reviewer runs, its live Herdr terminal (type to steer it, as on any ticket). Once it's done, the selected finding in Herdr's read-only code view, with the comment drawn on its line as it will read on GitHub, in your `review.format`. The reviewer's last lines sit below it, and `e` opens its terminal.
+- **Message box:** at the foot, as on every ticket: tell the reviewer to drop a finding or ask something, and it updates the pending review.
+
+The sidebar's To review group shows the same groups as counts (ready, reviewing, may not fit), and opening a review lists it there like a running ticket.
+
+![Reviews · the queue grouped by what each PR needs from you](layouts/08-reviews.png)
+
+![Review · verdict, findings with verify votes, the comment as it will read on GitHub](layouts/08b-review.png)
+
+![Review · round 2: the story's chapters, what round 1's findings became, the live reviewer](layouts/08c-review-round.png)
+
+The mockups' HTML is in `docs/layouts/src/`; `sh docs/layouts/src/render.sh` renders them.
 
 ### The mods
 
@@ -163,7 +195,7 @@ Every action is a click or a key, and each one is a single call to the daemon. T
 | `u` | Answer a question and restart a waiting ticket |
 | `p` | Pause or resume a ticket |
 | `shift-c / shift-l` | Move the ticket to a cloud session / bring it back to local |
-| `g r, then a / o` | Reviews; approve a low-risk PR / open the PR (`s` too) on github.com. `h` shows the hidden noise |
+| `g r` | Reviews. `o` your pending review on GitHub, `a` approve (low risk, Approve verdict), `r` / `t` / `w` run, story only or wait on a PR that may not fit; in a review, `1`–`5` its tabs, `s` the story, `h` the noise |
 | `b` | Change the ticket's budget |
 
 ## Architecture
@@ -466,7 +498,7 @@ Metrics gets a Reviews tab: comments kept unchanged, accepted, pushed back, miss
 
 ### Replaces
 
-This replaces the earlier draft of this section (the low-risk `human`/`auto` gate and the noise-filter training). `reviews.json` keeps its shape in `lib/reviews.js` and gains `level`, `verdict`, `story_url`, `budget` (estimate, fits) and per-finding `severity` (blocker, major, minor, nit, pre-existing).
+This replaces the earlier draft of this section (the low-risk `human`/`auto` gate and the noise-filter training). `reviews.json` keeps its home in `lib/reviews.js` and moves to version 2 for the redesigned page: per PR `ticket`, `group` (ready, reviewing, waiting, submitted), `level`, `verdict`, `output` (pending, submit), `round`, `stage`, `story_url`, `budget` (`used`, `limit`, `estimate`, `fits`, `short_by`), `chapters` (title, tier, size, why, `why_url`), `questions`, `rounds` (finding, state: fixed, pushed back, open; commit or reply), and per finding `severity` (blocker, major, minor, nit), `vote` (kept, split), `new` (from blame), `evidence` and `comment` (as it will read on GitHub). `low_risk` and the must-fix, suggestion and noise kinds go; noise is a count and a pointer to REVIEW-DRAFT.md.
 
 ## Learning loop
 
