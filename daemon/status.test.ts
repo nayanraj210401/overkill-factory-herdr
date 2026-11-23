@@ -26,6 +26,19 @@ test("session N counts the live agent's sessions in its own stage, and is null w
   expect(stageDetail({ state: "now", detail: "" }, { session: session() }).text).toBe("");
 });
 
+test("a running ticket carries its stage's start, its live agent and the slice in hand, for the sidebar", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "status-")), "factory.db"));
+  db.query("INSERT INTO tickets (id, title, state, updated_at) VALUES (1, 'Slugify', 'running', '2026-11-21T00:00:00Z'), (2, 'Queued', 'queued', '2026-11-21T00:00:00Z')").run();
+  db.query("INSERT INTO stages (ticket, name, detail, started_at, ended_at) VALUES (1, 'Plan', 'planner agent', '2026-11-21T00:00:00Z', '2026-11-21T00:05:00Z')").run();
+  db.query("INSERT INTO stages (ticket, name, detail, started_at) VALUES (1, 'Implement', 'builder agent · slice 2 of 3', '2026-11-21T00:05:00Z')").run();
+  db.query("INSERT INTO sessions (ticket, stage, agent, argv, started_at) VALUES (1, 'implement', 'builder', '[]', '2026-11-21T00:06:00Z')").run();
+  const s = buildStatus(db);
+  expect(validateStatus(s)).toEqual([]);
+  const [t, q] = s.tickets as any[];
+  expect([t.stage_started_at, t.agent, t.slice]).toEqual(["2026-11-21T00:05:00Z", "builder", { n: 2, of: 3 }]);
+  expect(["stage_started_at", "agent", "slice"].filter((k) => k in q)).toEqual([]); // nothing when there's none
+});
+
 test("status.json carries each PR's url and state, one per repo for a cross-repo ticket", () => {
   const db = open(join(mkdtempSync(join(tmpdir(), "st-")), "factory.db"));
   setRepo(db, { slug: "acme/api", path: "/src/api", lead: true });
