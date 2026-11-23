@@ -7,10 +7,25 @@ import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
 import { status, act, root } from "./lib/store.js";
 
+const runTitle = (r) => (r.ticket == null ? r.title : `#${r.ticket} ${r.title}`);
 const open = (id) => { setShared("factory.ticket", id); run("layout.select", { stack: STACK, child: "ticket" }); };
 const DOT = { needs: "blocked", running: "working", ready: "done", queue: "dim" };
 const COLS = [["Stage", 230], ["PR", 150], ["Blueprint", 100], ["Tokens in", 90], ["Cost", 70]];
 const RUN_COLS = [["Kind", 140], ["Harness · model", 190], ["Started", 100], ["Time", 70], ["Tokens in / out", 110], ["Cost", 60]];
+// The narrowest the ticket/run column gets. A pane narrower than that column plus the fixed
+// ones scrolls the table sideways (header and rows together) instead of squeezing it.
+const TITLE_MIN = 280;
+const tableWidth = (cols) => TITLE_MIN + cols.reduce((n, [, w]) => n + w + 8, 0) + 16;
+
+// Header and rows in one sideways scroll area, so they move in step; the rows scroll down on their own.
+// The first column takes what the fixed ones leave and can shrink (min_w_0): a long title is cut
+// with an ellipsis there and never pushes the other columns out of line with their headings.
+const table = (t, cols, rows) => div().id("table").flex_1().min_h(0).w_full().overflow_x_scrollbar()
+  .child(v_flex().size_full().min_w(tableWidth(cols))
+    .child(h_flex().px(8).pb(4).gap(8).border_b(1).border_color(t.border).text_size(11.5).text_color(t.dim)
+      .child(div().flex_1().min_w_0().child("Ticket"))
+      .children(cols.map(([name, w]) => div().w(w).flex_none().child(name))))
+    .child(rows));
 
 // The Tickets page: every ticket, chips by state, search (docs/layouts/03-tickets.png).
 // r swaps it for the Runs view: every agent session, newest first, with its transcript.
@@ -104,22 +119,19 @@ export default class FactoryList extends View {
         .child(div().id("tickets").px(10).py(4).rounded(6).border(1).border_color(t.border).text_color(t.muted).text_size(12).cursor_pointer()
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).hover((st) => st.bg(t.hover))
           .on_click((_e, cx) => { this.view = "tickets"; this.at = 0; cx.notify(); }).child("Tickets  r")))
-      .child(h_flex().px(8).pb(4).gap(8).border_b(1).border_color(t.border).text_size(11.5).text_color(t.dim)
-        .child(div().flex_1().child("Ticket"))
-        .children(RUN_COLS.map(([name, w]) => div().w(w).flex_none().child(name))))
-      .child(v_flex().id("rows").flex_1().overflow_y_scroll()
+      .child(table(t, RUN_COLS, v_flex().id("rows").flex_1().min_h(0).overflow_y_scroll()
         .children(rows.map((r, i) => h_flex().id(`run-${r.id}`).h(34).px(8).gap(8).items_center().rounded(6).cursor_pointer()
           .when(focused && i === this.at, (el) => el.bg(t.selected))
           .hover((st) => st.bg(t.hover))
           .on_click(() => this.openTranscript(r))
-          .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(r.ticket == null ? r.title : `#${r.ticket} ${r.title}`))
+          .child(div().id(`run-title-${r.id}`).flex_1().min_w_0().truncate().text_color(t.foreground).tooltip(runTitle(r)).child(runTitle(r)))
           .child(cell(140, runWhat(r), t.muted))
           .child(cell(190, runModel(r), t.muted))
           .child(cell(100, startedAt(r.started_at), t.muted))
           .child(cell(70, duration(r.duration_s), r.duration_s == null ? t.accent : t.muted))
           .child(cell(110, `${compact(r.tokens_in)} / ${compact(r.tokens_out)}`, t.muted))
           .child(cell(60, r.usd ? `$${r.usd.toFixed(2)}` : "–", t.foreground))))
-        .when(!rows.length, (el) => el.child(div().p(12).text_color(t.dim).child(this.error ?? "No runs yet."))));
+        .when(!rows.length, (el) => el.child(div().p(12).text_color(t.dim).child(this.error ?? "No runs yet.")))));
   }
 
   render() {
@@ -173,10 +185,7 @@ export default class FactoryList extends View {
       .when(repos.length > 1, (el) => el.child(h_flex().gap(4).items_center()
         .child(div().pr(4).text_size(11.5).text_color(t.dim).child("Repo"))
         .children([null, ...repos].map(repoChip))))
-      .child(h_flex().px(8).pb(4).gap(8).border_b(1).border_color(t.border).text_size(11.5).text_color(t.dim)
-        .child(div().flex_1().child("Ticket"))
-        .children(COLS.map(([name, w]) => div().w(w).flex_none().child(name))))
-      .child(v_flex().id("rows").flex_1().overflow_y_scroll()
+      .child(table(t, COLS, v_flex().id("rows").flex_1().min_h(0).overflow_y_scroll()
         .children(rows.map((x, i) => {
           const g = groupOf(x);
           const done = x.state === "merged" || x.state === "closed";
@@ -184,9 +193,10 @@ export default class FactoryList extends View {
             .when(focused && i === this.at, (el) => el.bg(t.selected))
             .hover((st) => st.bg(t.hover))
             .on_click(() => open(x.id))
-            .child(h_flex().flex_1().gap(8).items_center()
+            .child(h_flex().flex_1().min_w_0().gap(8).items_center()
               .child(div().size(7).flex_none().rounded_full().bg(done ? t.done : t[DOT[g]]).opacity(done ? 0.5 : 1))
-              .child(div().truncate().text_color(done ? t.muted : t.foreground).child(`#${x.id} ${x.title}`))
+              .child(div().id(`title-${x.id}`).flex_1().min_w_0().truncate().text_color(done ? t.muted : t.foreground)
+                .tooltip(`#${x.id} ${x.title}`).child(`#${x.id} ${x.title}`))
               .when(!!warnMark(x), (el) => el.child(div().flex_none().px(6).rounded(8).text_size(11).border(1).border_color(t.blocked).text_color(t.blocked).child(warnMark(x))))
               .when(!!repoBadge(s, x), (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child(repoBadge(s, x)))))
             .child(cell(230, subtitle(x, now), g === "needs" ? t.blocked : x.where === "cloud" ? t.accent : t.muted))
@@ -195,6 +205,6 @@ export default class FactoryList extends View {
             .child(cell(90, x.tokens.input ? `${(x.tokens.input / 1e6).toFixed(1)}M` : "–", t.muted))
             .child(cell(70, x.usd ? `$${x.usd.toFixed(2)}` : "–", t.foreground));
         }))
-        .when(!rows.length, (el) => el.child(div().p(12).text_color(t.dim).child("No tickets match."))));
+        .when(!rows.length, (el) => el.child(div().p(12).text_color(t.dim).child("No tickets match.")))));
   }
 }
