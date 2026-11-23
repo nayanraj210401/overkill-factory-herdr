@@ -4,7 +4,7 @@ import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { worktreeRoot } from "./herdr.ts";
 import { getMeta, setMeta } from "./db.ts";
 import { readFactory, sh } from "./runner.ts";
@@ -31,13 +31,18 @@ export function findFlowStack(o: { home: string | null; repo: string; plugins: s
 }
 const pluginsDir = () => (process.env.CLAUDE_CONFIG_DIR ? join(process.env.CLAUDE_CONFIG_DIR, "plugins") : join(homedir(), ".claude", "plugins"));
 
-// Accepting the offer: one maintainer request, which runs the migration and turns its
-// proposals into changes in the same PR. Asking again while one is open returns it.
+// Accepting the offer asks the maintainer, which runs the migration in place. The offer is
+// done once a migration ran (`factory migrate flow-stack` sets flow_migrated_at), and waits
+// while the request is open; a request handled without migrating offers it again.
 export const MIGRATION_META = "flow_migration_request";
 export const MIGRATION_REQUEST = "Migrate flow-stack into this factory: import its past tasks, decisions and lessons, and turn its profile, calibration and feature map into configuration";
-export function migrationRequest(db: Database) {
+export type Migration = { id: number | null; state: "asked" | "migrated"; at: string };
+export function migrationRequest(db: Database): Migration | null {
+  const done = getMeta(db, "flow_migrated_at");
+  if (done) return { id: null, state: "migrated", at: done };
   const id = Number(getMeta(db, MIGRATION_META));
-  return id ? (db.query("SELECT id, state FROM tickets WHERE id = ?").get(id) as { id: number; state: string } | null) : null;
+  const a = id ? (db.query("SELECT id, at FROM asks WHERE id = ? AND done_at IS NULL AND to_agent = 'maintainer'").get(id) as { id: number; at: string } | null) : null;
+  return a ? { id: a.id, state: "asked", at: a.at } : null;
 }
 
 // What this machine has. Cached for 30 s: the daemon asks on every tick while setup shows.
@@ -96,7 +101,7 @@ export function skipStep(db: Database, id: string, skip: boolean) {
   setMeta(db, "setup_skipped", (skip ? [...rest, id] : rest).join(","));
 }
 
-export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe; migration?: { id: number; state: string } | null }): Step[] {
+export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe; migration?: Migration | null }): Step[] {
   const probe = o.probe ?? realProbe();
   const written = existsSync(join(o.repo, ".factory", "factory.yaml"));
   const f = written ? readFactory(o.repo) : {};
@@ -118,11 +123,12 @@ export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe;
   add("queue", "The queue is set in factory.yaml", !!f.queue?.github_project, "set queue: { github_project: owner/<n or title>, column: Ready, assignee: me } in .factory/factory.yaml");
   add("basics", "Budgets, merge gate and max_running are set", written && lacks.length === 0, "factory setup write --budget 3M/150k --merge human --max-running 3", written ? lacks.join(", ") || null : null);
   add("factory-dir", ".factory/ is written", written, "factory setup write");
-  // Offered only when there is something to migrate; the maintainer does it, as a PR.
+  // Offered only when there is something to migrate; the maintainer does it, in place.
   const flow = probe.flowStack?.(o.repo) ?? [];
-  const m = o.migration?.state === "closed" ? null : o.migration; // closed unmerged: offered again
+  const m = o.migration;
   if (flow.length)
-    add("flow-stack", "flow-stack's history and settings are migrated (by the maintainer, as a PR)", !!m, "factory setup migrate", m ? `#${m.id}, ${m.state}` : `found ${flow.join(", ")}`);
+    add("flow-stack", "flow-stack's history and settings are migrated (by the maintainer, in place)", m?.state === "migrated", "factory setup migrate",
+      m?.state === "migrated" ? `migrated ${m.at.slice(0, 10)}` : m ? `asked the maintainer: note #${m.id}` : `found ${flow.join(", ")}`);
   return steps;
 }
 
@@ -199,7 +205,9 @@ export function writeSetup(o: { repo: string; name: string; slug: string; basics
   try {
     const dir = join(tmp, ".factory");
     mkdirSync(dir, { recursive: true });
-    for (const sub of ["blueprints", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true });
+    // Not the global agents' templates: Overwatch and the maintainer are one for every repo, and a repo's copy is ignored.
+    const global = new Set(["overwatch.md", "maintainer.md"]);
+    for (const sub of ["blueprints", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true, filter: (f) => sub !== "prompts" || !global.has(basename(f)) });
     // The maintenance agent's daily trigger, shipped with enabled: false so it stays off until you turn it on;
     // the built-in queue and review-comment triggers still run beside it.
     mkdirSync(join(dir, "triggers"), { recursive: true });

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import { liveFile, liveRoster, rosterText, writeLive } from "./live.ts";
-import { stateFile } from "./overwatch.ts";
+import { stateFile } from "./globals.ts";
 import type { Run } from "./runner.ts";
 
 const now = "2026-11-23T10:00:00Z";

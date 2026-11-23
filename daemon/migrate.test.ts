@@ -1,16 +1,16 @@
-// The flow-stack migration through the maintainer: setup offers it, accepting files one
-// request, and `factory migrate flow-stack --propose <id>` writes the configuration into
-// that request (account profile, factory.yaml budget and verify), safely again and again.
+// The flow-stack migration through the maintainer: setup offers it, accepting asks the
+// maintainer, and `factory migrate flow-stack` writes the configuration in place (account
+// profile, factory.yaml budget and verify), with backups, safely again and again.
 import { test, expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, paths } from "./cli.ts";
 import { open } from "./db.ts";
-import { advance, runCheck, sh, startTicket, type Run } from "./runner.ts";
-import { request } from "./maintainer.ts";
+import { runCheck, sh, startTicket, type Run } from "./runner.ts";
+import { newTicket } from "./intake.ts";
 import { areaOf, migrateFlowStack, readLessons, withProfile } from "./migrate.ts";
-import { findFlowStack, setupSteps, type Probe } from "./setup.ts";
+import { findFlowStack, migrationRequest, setupSteps, type Probe } from "./setup.ts";
 import { validateAccount, validateDir } from "./validate.ts";
 
 const FIX = join(import.meta.dir, "../fixtures/flow-stack");
@@ -45,20 +45,11 @@ function world(o: { ignoreFlow?: boolean; driver?: boolean } = {}) {
   const db = open(paths("acme-api").db);
   const dir = paths("acme-api").dir;
   let term = 0;
-  const bodies: string[] = [];
-  const run: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: `{"address":"t${++term}"}` }
-    : argv[0] === "gh" ? (argv[2] === "create" ? (bodies.push(readFileSync(argv[argv.indexOf("--body-file") + 1], "utf8")), { code: 0, out: "https://github.com/acme/api/pull/7" }) : { code: 1, out: "gh is stubbed" })
-    : argv[0] === "git" && argv.includes("push") ? { code: 0, out: "" } : sh(argv, cwd));
-  const migrate = (id: number, log: string[] = []) =>
-    migrateFlowStack(db, { home, repo, dir, blueprints: ["feature"], dryRun: false, now: NOW, log: (s) => log.push(s), propose: id, run: sh });
+  const run: Run = (argv, cwd) => (argv[0] === "hc" ? { code: 0, out: `{"address":"t${++term}"}` } : argv[0] === "gh" ? { code: 1, out: "gh is stubbed" } : sh(argv, cwd));
+  const migrate = (log: string[] = [], now = NOW) =>
+    migrateFlowStack(db, { home, repo, dir, blueprints: ["feature"], dryRun: false, now, log: (s) => log.push(s), run: sh });
   const ticket = (id: number) => db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as any;
-  return { home, repo, db, dir, run, bodies, migrate, ticket };
-}
-
-function migrationTicket(w: ReturnType<typeof world>) {
-  const { id } = request(w.db, { text: "Migrate flow-stack", repo: "acme/api", run: w.run, now: NOW, dir: w.dir });
-  startTicket(w.db, { dir: w.dir, repo: w.repo, id, run: w.run, now: NOW });
-  return id;
+  return { home, repo, db, dir, run, migrate, ticket };
 }
 
 test("lessons are scoped by the paths they name, else load for every ticket", () => {
@@ -86,69 +77,62 @@ test("the profile goes into the account config's profile:, keeping the file and 
   expect(Bun.YAML.parse(withProfile("", ["a: b"], []))).toEqual({ profile: { rules: ["a: b"] } });
 });
 
-test("--propose writes the profile, calibration and feature map into the maintainer's request; the factory check passes; again changes nothing", () => {
+test("the migration writes the profile, calibration and feature map in place, with backups; again changes nothing; nothing is committed", () => {
   const w = world();
-  const id = migrationTicket(w);
-  const wt = w.ticket(id).worktree;
+  const accountFile = join(process.env.FACTORY_HOME!, "config.yaml");
+  writeFileSync(accountFile, "# mine\nplan: { pause_at: 85% }\n");
+  const head = git(w.repo, "rev-parse", "HEAD").out;
   const log: string[] = [];
-  w.migrate(id, log);
-  const folder = join(w.dir, "tickets", String(id));
-  // Past tasks and lessons: imported now, as before; the scoped lesson has its area.
+  w.migrate(log);
+  // Past tasks and lessons: imported, as before; the scoped lesson has its area.
   expect((w.db.query("SELECT COUNT(*) AS n FROM tickets WHERE state = 'merged'").get() as any).n).toBe(2);
   expect(w.db.query("SELECT area, text FROM lessons ORDER BY id").all()).toEqual([
     { area: "**", text: "tests need TZ=UTC" }, { area: "src/auth/", text: "`src/auth/session.ts` must rotate the id after login" },
   ]);
-  // Rules and taste: the proposed account config, cleaned of flow-stack's dates and sources.
-  const account = Bun.YAML.parse(readFileSync(join(folder, "ACCOUNT-CONFIG.yaml"), "utf8")) as any;
+  // Rules and taste: the account config itself, cleaned of flow-stack's dates and sources; the rest of it kept.
+  const account = Bun.YAML.parse(readFileSync(accountFile, "utf8")) as any;
+  expect(account.plan).toEqual({ pause_at: "85%" });
   expect(account.profile.rules).toEqual(["Never push, merge, deploy, or publish without asking.", "Never run destructive database operations without asking."]);
   expect(account.profile.taste).toEqual(["small functions, no comments that restate the code", "prefer early returns", "terse, answer first"]);
-  expect(existsSync(join(process.env.FACTORY_HOME!, "config.yaml"))).toBe(false); // nothing applied before the PR merges
-  // Calibration and the front matter: factory.yaml in the worktree; the feature map wired into verify.
-  const f = Bun.YAML.parse(readFileSync(join(wt, ".factory", "factory.yaml"), "utf8")) as any;
+  // Calibration and the front matter: the lead checkout's own factory.yaml; the feature map wired into verify.
+  const f = Bun.YAML.parse(readFileSync(join(w.repo, ".factory", "factory.yaml"), "utf8")) as any;
   expect(f).toMatchObject({ max_running: 2, budget: { headroom: 1.6 }, verify: { features: ".flow/features" } });
-  expect(validateDir(join(wt, ".factory")).filter((r) => r.errors.length)).toEqual([]);
-  const md = readFileSync(join(folder, "MIGRATION.md"), "utf8");
+  expect(validateDir(join(w.repo, ".factory")).filter((r) => r.errors.length)).toEqual([]);
+  // Each file it changed has its backup, once, as it was before.
+  const md = readFileSync(join(w.dir, "MIGRATION.md"), "utf8");
+  const backups = [...md.matchAll(/^- (\S+) \(factory restore/gm)].map((m) => m[1]);
+  expect(backups.map((b) => b.endsWith("/config.yaml") || b.endsWith("/.factory/factory.yaml"))).toEqual([true, true]);
+  expect(readFileSync(backups.find((b) => b.endsWith("/config.yaml"))!, "utf8")).toBe("# mine\nplan: { pause_at: 85% }\n");
+  expect(readFileSync(backups.find((b) => b.endsWith("factory.yaml"))!, "utf8")).toContain("headroom: 1.5\n");
   expect(md).toContain("`verify.features: .flow/features`");
   expect(md).toContain("Features with no scenario, so verify can't prove them yet: billing");
   expect(md).toContain("set `defaults.model`");
-  expect(log.join("\n")).toContain("written for #");
+  expect(log.join("\n")).toContain("written:");
+  // Nothing committed, no ticket, no PR.
+  expect(git(w.repo, "rev-parse", "HEAD").out).toBe(head);
+  expect(w.db.query("SELECT COUNT(*) AS n FROM tickets WHERE blueprint = 'factory'").get()).toEqual({ n: 0 });
 
   // Again: no lesson, task, rule or setting twice.
-  const before = { account: readFileSync(join(folder, "ACCOUNT-CONFIG.yaml"), "utf8"), factory: readFileSync(join(wt, ".factory", "factory.yaml"), "utf8") };
-  w.migrate(id);
+  const before = { account: readFileSync(accountFile, "utf8"), factory: readFileSync(join(w.repo, ".factory", "factory.yaml"), "utf8") };
+  w.migrate([], new Date(Date.parse(NOW) + 1000).toISOString());
   expect((w.db.query("SELECT COUNT(*) AS n FROM lessons").get() as any).n).toBe(2);
   expect((w.db.query("SELECT COUNT(*) AS n FROM tickets WHERE state = 'merged'").get() as any).n).toBe(2);
-  expect(readFileSync(join(folder, "ACCOUNT-CONFIG.yaml"), "utf8")).toBe(before.account);
-  expect(readFileSync(join(wt, ".factory", "factory.yaml"), "utf8")).toBe(before.factory);
-
-  // The maintainer commits and writes PR.md: the factory check passes, and the PR carries the report and the diff.
-  git(wt, "add", "-A", ".factory");
-  git(wt, "commit", "-q", "-m", "migrate flow-stack");
-  writeFileSync(join(folder, "PR.md"), "Migrates flow-stack.\n\n## What changed\n- x\n## Why\nx\n## How it was verified\nx\n## Risk\nLow.\n");
-  advance(w.db, { dir: w.dir, repo: w.repo, id, run: w.run, now: NOW });
-  const ev = w.db.query("SELECT check_name, result FROM evidence WHERE ticket = ? ORDER BY id").all(id) as any[];
-  expect(ev.filter((e) => e.result !== "PASS")).toEqual([]);
-  expect(ev.map((e) => e.check_name)).toContain("account config");
-  expect(w.bodies[0]).toContain("## Migrated from flow-stack");
-  expect(w.bodies[0]).toContain("## The account config (~/.factory/config.yaml)");
-  expect(w.bodies[0]).toContain('+    - "prefer early returns"');
+  expect(readFileSync(accountFile, "utf8")).toBe(before.account);
+  expect(readFileSync(join(w.repo, ".factory", "factory.yaml"), "utf8")).toBe(before.factory);
 });
 
 test("a feature map outside git is copied under .factory/; scenarios whose driver isn't committed stay a to-do", () => {
   const w = world({ ignoreFlow: true });
-  const id = migrationTicket(w);
-  w.migrate(id);
-  const wt = w.ticket(id).worktree;
-  expect((Bun.YAML.parse(readFileSync(join(wt, ".factory", "factory.yaml"), "utf8")) as any).verify).toEqual({ features: ".factory/features" });
-  expect(readFileSync(join(wt, ".factory", "features", "auth.login.md"), "utf8")).toBe(LOGIN);
-  expect(validateDir(join(wt, ".factory")).filter((r) => r.errors.length)).toEqual([]);
+  w.migrate();
+  expect((Bun.YAML.parse(readFileSync(join(w.repo, ".factory", "factory.yaml"), "utf8")) as any).verify).toEqual({ features: ".factory/features" });
+  expect(readFileSync(join(w.repo, ".factory", "features", "auth.login.md"), "utf8")).toBe(LOGIN);
+  expect(validateDir(join(w.repo, ".factory")).filter((r) => r.errors.length)).toEqual([]);
 
   const v = world({ driver: false });
-  const id2 = migrationTicket(v);
-  v.migrate(id2);
-  const f = Bun.YAML.parse(readFileSync(join(v.ticket(id2).worktree, ".factory", "factory.yaml"), "utf8")) as any;
+  v.migrate();
+  const f = Bun.YAML.parse(readFileSync(join(v.repo, ".factory", "factory.yaml"), "utf8")) as any;
   expect(f.verify).toBeUndefined();
-  expect(readFileSync(join(v.dir, "tickets", String(id2), "MIGRATION.md"), "utf8"))
+  expect(readFileSync(join(v.dir, "MIGRATION.md"), "utf8"))
     .toContain("Not wired into verify: these scenarios use files that aren't committed, so a ticket's worktree can't run them: auth.login: .claude/skills/verify-acme/scenarios/login.sh");
 });
 
@@ -157,7 +141,7 @@ test("verify.features: the tests check runs the scenario of each feature the tic
   const f = join(w.repo, ".factory", "factory.yaml");
   writeFileSync(f, readFileSync(f, "utf8").replace(/^quality_floor:.*$/m, 'quality_floor: ["true"]') + "verify:\n  features: .flow/features\n");
   git(w.repo, "commit", "-qam", "wire verify");
-  const { id } = request(w.db, { text: "x", repo: "acme/api", run: w.run, now: NOW }); // any ticket with a worktree
+  const { id } = newTicket(w.db, { text: "x", repo: "acme/api", blueprint: "chore", run: w.run, now: NOW }); // any ticket with a worktree
   startTicket(w.db, { dir: w.dir, repo: w.repo, id, run: w.run, now: NOW });
   const wt = w.ticket(id).worktree;
   const check = () => { runCheck(w.db, { id, repo: w.repo, worktree: wt, check: "tests", run: sh, now: NOW }); return w.db.query("SELECT check_name, result FROM evidence WHERE ticket = ? AND check_name LIKE 'feat:%' ORDER BY id").all(id); };
@@ -170,7 +154,7 @@ test("verify.features: the tests check runs the scenario of each feature the tic
   expect(runCheck(w.db, { id, repo: w.repo, worktree: wt, check: "tests", run: sh, now: NOW })).toBe(false);
 });
 
-test("setup offers the migration when it finds flow-stack, and accepting files one maintainer request", () => {
+test("setup offers the migration when it finds flow-stack; accepting asks the maintainer once, and a migration that ran is done", () => {
   expect(findFlowStack({ home: null, repo: mkdtempSync(join(tmpdir(), "none-")), plugins: null })).toEqual([]);
   const plugins = mkdtempSync(join(tmpdir(), "plugins-"));
   writeFileSync(join(plugins, "installed_plugins.json"), JSON.stringify({ plugins: { "flow-stack@flow-stack": [{}] } }));
@@ -178,25 +162,31 @@ test("setup offers the migration when it finds flow-stack, and accepting files o
   expect(findFlowStack({ home: w.home, repo: w.repo, plugins })).toEqual(["~/.flow-stack/profile.md", ".flow/", "the flow-stack plugin"]);
 
   const probe: Probe = { has: () => true, ghLoggedIn: () => true, service: () => "running", trusted: () => true, flowStack: () => [".flow/"] };
-  const step = () => setupSteps({ repo: w.repo, probe, migration: (w.db.query("SELECT id, state FROM tickets WHERE id = (SELECT value FROM meta WHERE key = 'flow_migration_request')").get() as any) ?? null }).find((s) => s.id === "flow-stack");
+  const step = () => setupSteps({ repo: w.repo, probe, migration: migrationRequest(w.db) }).find((s) => s.id === "flow-stack");
   expect(step()).toMatchObject({ status: "missing", fix: "factory setup migrate", detail: "found .flow/" });
   expect(setupSteps({ repo: w.repo, probe: { ...probe, flowStack: () => [] } }).find((s) => s.id === "flow-stack")).toBeUndefined();
 
   // The CLI (the repo has .flow/, which the sandboxed probe sees).
   const out: string[] = [];
   main(["setup", "migrate", "--name", "acme-api"], (s) => out.push(s));
-  const id = Number(out[0].match(/^#(\d+)/)![1]);
-  expect(w.ticket(id)).toMatchObject({ blueprint: "factory", trigger_name: "maintainer" });
-  const req = readFileSync(join(w.dir, "tickets", String(id), "REQUEST.md"), "utf8");
-  expect(req).toContain("Migrate flow-stack into this factory");
-  expect(req).toContain("factory migrate flow-stack --propose <this ticket's id>");
-  expect(step()).toMatchObject({ status: "ok", detail: `#${id}, queued` });
+  const id = Number(out[0].match(/^note #(\d+): the maintainer migrates flow-stack/)![1]);
+  const note = w.db.query("SELECT to_agent, from_agent, text, why FROM asks WHERE id = ?").get(id) as any;
+  expect(note).toMatchObject({ to_agent: "maintainer", from_agent: "you" });
+  expect(note.text).toContain("Migrate flow-stack into this factory");
+  expect(note.why).toContain("factory migrate flow-stack --name acme-api");
+  expect(w.db.query("SELECT COUNT(*) AS n FROM tickets WHERE blueprint = 'factory'").get()).toEqual({ n: 0 });
+  expect(step()).toMatchObject({ status: "missing", detail: `asked the maintainer: note #${id}` });
   out.length = 0;
   main(["setup", "migrate", "--name", "acme-api"], (s) => out.push(s));
-  expect(out[0]).toBe(`#${id} already asks the maintainer to migrate flow-stack (queued)`);
-  // Closed without merging: offered again.
-  w.db.query("UPDATE tickets SET state = 'closed' WHERE id = ?").run(id);
-  expect(step()).toMatchObject({ status: "missing" });
+  expect(out[0]).toBe(`note #${id} already asks the maintainer to migrate flow-stack`);
+  // Handled without migrating: offered again. Migrated: done.
+  w.db.query("UPDATE asks SET done_at = ? WHERE id = ?").run(NOW, id);
+  expect(step()).toMatchObject({ status: "missing", detail: "found .flow/" });
   rmSync(join(w.repo, ".flow"), { recursive: true });
   expect(() => main(["setup", "migrate", "--name", "acme-api"], () => {})).toThrow(/no flow-stack here/);
+  w.migrate(); // the profile alone still migrates
+  expect(step()).toMatchObject({ status: "ok" });
+  out.length = 0;
+  main(["setup", "migrate", "--name", "acme-api"], (s) => out.push(s));
+  expect(out[0]).toMatch(/^flow-stack is migrated already/);
 });

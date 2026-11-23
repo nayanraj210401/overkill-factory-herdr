@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import { triageBrief } from "./groom.ts";
 import { overwatchBrief } from "./overwatch.ts";
+import { maintainerBrief } from "./maintainer.ts";
 import { BUILT_IN_PROMPTS, PLACEHOLDERS, loadPrompt, render, templateErrors } from "./prompts.ts";
 import { brief, sh, startTicket, type Run } from "./runner.ts";
 import { validateDir, validateFile } from "./validate.ts";
@@ -31,19 +32,24 @@ test("the built-in templates give the briefs the code used to build", () => {
   matchBrief("stageHoldout", brief({ id: 1, title: "t" }, "verify", "P", "/f", "verify"));
   matchBrief("stageReview", brief({ id: 1, title: "t" }, "review", "P", "/f", "review"));
   matchBrief("stageFix", brief({ id: 1, title: "t" }, "implement", "P", dir, "build", repos).split(dir).join("/f"));
-  // The maintainer's brief: its whole territory and the request kinds (maintainer.md).
-  const maintainer = readFileSync(join(import.meta.dir, "../agents/maintainer.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
-  matchBrief("stageMaintainer", brief({ id: 10001, title: "Use a warmer accent" }, "maintain", maintainer, "/f", "maintain"));
   // One Overwatch for every factory: its brief lists each, with its repos and data folder.
   const acme = { name: "acme-api", dir: "/h/acme-api", repos: [{ slug: "acme/api", path: "/src/api", lead: true }, { slug: "acme/web", path: "/src/web", lead: false }] };
   const shop = { name: "shop", dir: "/h/shop", repos: [{ slug: "acme/shop", path: "/src/shop", lead: true }] };
   matchBrief("overwatchNone", overwatchBrief({ home: "/h", factories: [], neighbours: "MAP" }));
   matchBrief("overwatchTwo", overwatchBrief({ home: "/h", factories: [acme, shop], neighbours: "MAP" }));
+  // The maintainer, a live global session like Overwatch: its whole territory, the direct-edit
+  // flow (maintainer.md), every factory, the app's checkout and the requests waiting for it.
+  const prev = process.env.FACTORY_APP_REPO;
+  process.env.FACTORY_APP_REPO = "/src/factory-app";
+  const waiting = [{ id: 4, from: "learner", to: "maintainer", toRepo: null, text: "Make max_running 3 permanent", why: "held for 30 tickets", about: null, request: null, at: "", delivered_at: null, done_at: null }];
+  try {
+    matchBrief("maintainerTwo", maintainerBrief({ home: "/h", factories: [acme, shop], neighbours: "MAP", notes: waiting, name: "acme-api" }));
+  } finally { if (prev === undefined) delete process.env.FACTORY_APP_REPO; else process.env.FACTORY_APP_REPO = prev; }
 });
 
 test("the fixture's default templates are the built-in ones, and each passes the validator", () => {
   expect(BUILT_IN_PROMPTS).toBe(join(FIXTURE, "prompts"));
-  expect(readdirSync(BUILT_IN_PROMPTS).sort()).toEqual(["groom.md", "handoff.md", "overwatch.md", "stage.md"]);
+  expect(readdirSync(BUILT_IN_PROMPTS).sort()).toEqual(["groom.md", "handoff.md", "maintainer.md", "overwatch.md", "stage.md"]);
   for (const name of Object.keys(PLACEHOLDERS)) {
     const text = readFileSync(join(BUILT_IN_PROMPTS, `${name}.md`), "utf8");
     expect(validateFile(`prompts/${name}.md`, text)).toEqual([]);
@@ -125,8 +131,8 @@ test("a stage's `prompt:` picks its own template; other stages keep stage.md", (
 
 test("a note left for a repo agent with no live session comes last in its next brief in that repo, once", () => {
   const { dir, db, calls, run, repo } = stageSetup();
-  const note = ask(db, { to: "spec-writer", text: "Keep the API names stable", from: "overwatch", slug: "acme/api", dir, run, now: "2026-11-21T09:00:00Z", name: basename(dir) });
-  expect(note).toMatchObject({ kind: "note", delivered: false });
+  const note = ask(db, { to: "spec-writer", text: "Keep the API names stable", from: "overwatch", slug: "acme/api", run, now: "2026-11-21T09:00:00Z", name: basename(dir) });
+  expect(note).toMatchObject({ delivered: false });
   startTicket(db, { dir, repo, id: 412, run, now: "2026-11-21T10:00:00Z" });
   const text = calls[0].at(-1)!;
   expect(text.endsWith(`\n\n## Notes other agents left you\n\n- Note #${note.ask.id} from overwatch: Keep the API names stable. When it's handled: factory asks done ${note.ask.id} --name ${basename(dir)}`)).toBe(true);

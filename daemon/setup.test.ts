@@ -76,7 +76,7 @@ test("setup write puts .factory/ in the checkout, never in git, and keeps a file
   expect(files).toContain(".factory/factory.yaml");
   expect(files.some((f) => f.startsWith(".factory/blueprints/"))).toBe(true);
   expect(files.some((f) => f.startsWith(".factory/agents/"))).toBe(true);
-  expect(files.filter((f) => f.startsWith(".factory/prompts/")).sort()).toEqual([".factory/prompts/groom.md", ".factory/prompts/handoff.md", ".factory/prompts/overwatch.md", ".factory/prompts/stage.md"]);
+  expect(files.filter((f) => f.startsWith(".factory/prompts/")).sort()).toEqual([".factory/prompts/groom.md", ".factory/prompts/handoff.md", ".factory/prompts/stage.md"]);
   const yaml = readFileSync(join(repo, ".factory/factory.yaml"), "utf8");
   expect(yaml).toContain("per_ticket: { input: 2M, output: 100k }");
   expect(yaml).toContain("merge: auto");
@@ -224,7 +224,7 @@ test("migration copies past tasks as merged tickets with their .md files, and th
   expect(log.join("\n")).toContain("already imported as #10001");
 });
 
-test("migration prints proposals and the lessons count, never edits factory.yaml, and changes nothing in flow-stack", () => {
+test("migration prints what it carries over and the lessons count, writes factory.yaml in place, and changes nothing in flow-stack", () => {
   const { home, repo, db, dir } = flowWorld();
   mkdirSync(join(repo, ".factory"));
   writeFileSync(join(repo, ".factory", "factory.yaml"), "name: acme-api\n");
@@ -244,7 +244,7 @@ test("migration prints proposals and the lessons count, never edits factory.yaml
   expect(text).toContain("prefer early returns");
   expect(text).toContain("feature: 3 tasks, avg $ error +60%");
   expect(text).toContain("budget.headroom: 1.6");
-  expect(readFileSync(join(repo, ".factory", "factory.yaml"), "utf8")).toBe("name: acme-api\n");
+  expect(readFileSync(join(repo, ".factory", "factory.yaml"), "utf8")).toBe("name: acme-api\nmax_running: 2\nbudget:\n  headroom: 1.6\n");
   expect({ ...snapshot(join(home, ".flow-stack")), ...snapshot(join(repo, ".flow")) }).toEqual(flowBefore);
   // Again: every lesson is already in the store.
   log.length = 0;

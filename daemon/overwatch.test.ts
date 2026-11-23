@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
-import { factoriesOf, liveOverwatch, overwatch, stateFile } from "./overwatch.ts";
+import { liveOverwatch, overwatch } from "./overwatch.ts";
+import { factoriesOf, stateFile } from "./globals.ts";
 import type { Run } from "./runner.ts";
 
 // Two factories under one FACTORY_HOME, each with its repos.

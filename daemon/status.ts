@@ -14,7 +14,6 @@ import { setupField } from "./setup.ts";
 import { activeOverrides, fileValue } from "./learn.ts";
 import { isLastGate, loadBlueprint, readFactory } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
-import { BLUEPRINT, requestedBy } from "./maintainer.ts";
 import { askTarget, openAsks } from "./ask.ts";
 import { healthOf } from "./health.ts";
 import { trackedFactory, UNTRACK } from "./local.ts";
@@ -58,8 +57,6 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
     ...(r.resume_at ? { resume_at: r.resume_at } : {}),
     terminal: r.terminal ?? null,
     session: r.sessions || null, // "session 3 of #412": the live agent's session in its stage; null with no live agent
-    // A request for the maintainer: who asked (you in Overwatch, the learner, another agent), for Config's Pending changes.
-    ...(r.blueprint === BLUEPRINT ? { requested_by: r.requester ?? requestedBy(r.trigger_name) } : {}),
   };
 }
 
@@ -86,7 +83,6 @@ export function buildStatus(db: Database, now = new Date()) {
     -- the live agent's session number within its stage: a handoff starts the next one in the same stage
     (SELECT COUNT(*) FROM sessions s, (SELECT stage FROM sessions l WHERE l.ticket = t.id AND l.ended_at IS NULL AND l.agent IS NOT 'cloud' ORDER BY l.id DESC LIMIT 1) live
        WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions
-    , (SELECT from_agent FROM asks a WHERE a.request = t.id ORDER BY a.id LIMIT 1) AS requester
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ({
     ...ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null),
     // The open grooming questions, numbered as the `A1:` answers are.

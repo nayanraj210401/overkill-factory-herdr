@@ -120,7 +120,6 @@ test("the dry run counts a step's max_retries, and the Blueprint page names the 
   expect(() => loadDraft("name: chore\nstart: a\nstages:\n  a: { step: ghost, next: [end] }\n", undefined, repo)).toThrow(/invalid:\n  stages\.a\.step: no step "ghost"/);
   const feature = buildBlueprints(null, repo).blueprints.find((b) => b.name === "feature")!;
   expect(feature.stages.find((s) => s.id === "spec")).toMatchObject({ step: "write-spec", agent: "spec-writer", role: "spec" });
-  expect(buildBlueprints(null, repo).blueprints.find((b) => b.name === "factory")!.stages.every((s) => s.step === null)).toBe(true);
 });
 
 test("a gate a step sets warns like an inline one", () => {
