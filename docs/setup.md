@@ -22,11 +22,9 @@ bun --version && node --version && gh auth status && claude --version && hc --ve
 
 ## 2. Get the factory
 
-The repo is private, so `gh` must be logged in to an account that can read it.
-
 ```sh
-gh repo clone nayanraj210401/overkill-factory-herdr ~/Project/overkill-factory-herdr
-cd ~/Project/overkill-factory-herdr
+git clone https://github.com/nayanraj210401/overkill-factory-herdr ~/overkill-factory-herdr
+cd ~/overkill-factory-herdr
 git checkout develop
 scripts/check.sh   # unit tests, generated files, and herdr-app check on every mod
 scripts/sync.sh    # installs the layout, mods, theme and keys into ~/.config/herdr-app
@@ -38,7 +36,7 @@ Nothing in the repo puts `factory` on your PATH. Make a small wrapper:
 
 ```sh
 mkdir -p ~/.local/bin
-printf '#!/bin/sh\nexec "%s" "%s/daemon/cli.ts" "$@"\n' "$(command -v bun)" "$HOME/Project/overkill-factory-herdr" > ~/.local/bin/factory
+printf '#!/bin/sh\nexec "%s" "%s/daemon/cli.ts" "$@"\n' "$(command -v bun)" "$HOME/overkill-factory-herdr" > ~/.local/bin/factory
 chmod +x ~/.local/bin/factory
 factory help       # ~/.local/bin must be on PATH
 ```
@@ -78,17 +76,17 @@ factory setup           # run it until every line shows ✓
 - **Lesson upkeep:** every day near-duplicate lessons are merged and unused ones are retired. `factory learn restore <id>` undoes either.
 - **The maintenance agent is off.** When it is on, it makes one small drift fix a day (a patch bump, lint drift, dead config) as a normal PR. To turn it on, ask Overwatch ("turn on the maintenance agent"), or set `enabled: true` in `.factory/triggers/maintenance.yaml`. Its merge gate stays `human` until you change it.
 
-## On a work machine
+## On a managed machine
 
 - **Device management.** A managed Mac may block LaunchAgents, ad-hoc `codesign` or `clang`. If `factory service install` fails, `factory run --all` runs the daemon in a terminal instead. Without the sleep helper, only `cloud.on_sleep` stops working.
-- **Whose accounts.** Agents push branches and open PRs as the account `gh` is logged in to, and spend the plan `claude` is logged in to. Check both are allowed for your work repos, and keep `--merge human`.
+- **Whose accounts.** Agents push branches and open PRs as the account `gh` is logged in to, and spend the plan `claude` is logged in to. Check both are allowed for the repos you point it at, and keep `--merge human`.
 - **PATH is fixed at install.** The service keeps the PATH from when you ran `factory service install`. After installing a new tool, run it again.
 - **Nothing carries over.** `~/.factory` (the database, logs and agents) is per machine, so a new Mac starts with an empty history.
 
 ## Updating
 
 ```sh
-cd ~/Project/overkill-factory-herdr
+cd ~/overkill-factory-herdr
 git pull --ff-only
 cp ~/.factory/<factory>/factory.db ~/.factory/<factory>/factory.db.bak-$(date +%s)
 scripts/check.sh && scripts/sync.sh   # sync.sh restarts the service
