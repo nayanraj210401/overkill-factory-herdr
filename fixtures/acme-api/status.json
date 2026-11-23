@@ -159,6 +159,9 @@
       "pr": null,
       "blocked_by": null,
       "needs": null,
+      "stage_started_at": "2026-11-21T09:36:00Z",
+      "agent": "builder",
+      "slice": { "n": 2, "of": 3 },
       "session": 2,
       "terminal": "t7",
       "artifacts": [
@@ -207,6 +210,8 @@
       "pr": null,
       "blocked_by": null,
       "needs": null,
+      "stage_started_at": "2026-11-21T09:24:00Z",
+      "agent": "checker",
       "session": 3
     },
     {

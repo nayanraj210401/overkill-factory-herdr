@@ -57,8 +57,18 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
     ...(r.resume_at ? { resume_at: r.resume_at } : {}),
     terminal: r.terminal ?? null,
     session: r.sessions || null, // "session 3 of #412": the live agent's session in its stage; null with no live agent
+    // The sidebar's Working row (lib/sidebar.js): when the current stage began, the live agent's name, and the
+    // slice it builds ("slice 2 of 3", from the stage's detail: runner.ts startStage). Only when there is one.
+    ...(r.stage_started_at ? { stage_started_at: r.stage_started_at } : {}),
+    ...(r.agent && r.agent !== "cloud" ? { agent: r.agent } : {}),
+    ...sliceOf(r.stage_detail),
   };
 }
+
+const sliceOf = (detail: string | null | undefined) => {
+  const m = (detail ?? "").match(/\bslice (\d+) of (\d+)\b/);
+  return m ? { slice: { n: Number(m[1]), of: Number(m[2]) } } : {};
+};
 
 // Tuned settings, each beside the value the files give (null when it can't be read).
 function overridesOf(db: Database, repo: string | undefined) {
@@ -82,7 +92,10 @@ export function buildStatus(db: Database, now = new Date()) {
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal,
     -- the live agent's session number within its stage: a handoff starts the next one in the same stage
     (SELECT COUNT(*) FROM sessions s, (SELECT stage FROM sessions l WHERE l.ticket = t.id AND l.ended_at IS NULL AND l.agent IS NOT 'cloud' ORDER BY l.id DESC LIMIT 1) live
-       WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions
+       WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions,
+    (SELECT agent FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS agent,
+    (SELECT started_at FROM stages st WHERE st.ticket = t.id AND st.ended_at IS NULL ORDER BY st.id DESC LIMIT 1) AS stage_started_at,
+    (SELECT detail FROM stages st WHERE st.ticket = t.id AND st.ended_at IS NULL ORDER BY st.id DESC LIMIT 1) AS stage_detail
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ({
     ...ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null),
     // The open questions of a ticket in grooming, or parked on one (u talks it through), numbered as the `A1:` answers are.

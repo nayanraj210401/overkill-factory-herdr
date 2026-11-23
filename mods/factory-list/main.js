@@ -1,6 +1,6 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, run, setShared, readTextFile, watchFolder, checking, props, exec, notify } from "herdr";
+import { theme, run, setShared, shared, readTextFile, watchFolder, checking, props, exec, notify } from "herdr";
 import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subtitle, prLinks, prColor, warnMark, compact } from "./lib/model.js";
 import { validateRuns, kindCounts, filterRuns, duration, runWhat, startedAt, runModel } from "./lib/runs.js";
 import { STACK } from "./lib/pages.js";
@@ -134,10 +134,23 @@ export default class FactoryList extends View {
         .when(!rows.length, (el) => el.child(div().p(12).text_color(t.dim).child(this.error ?? "No runs yet.")))));
   }
 
+  // The sidebar's Search row and queue line open this page with a request (factory.list-ask):
+  // focus the search, or pick a filter. Each request is followed once.
+  follow() {
+    const ask = shared("factory.list-ask");
+    if (!ask?.at || ask.at === this.asked) return;
+    this.asked = ask.at;
+    this.view = "tickets";
+    this.at = 0;
+    if (ask.filter) this.filter = ask.filter;
+    if (ask.search) this.input.focus();
+  }
+
   render() {
     const t = theme();
     const s = status();
     if (!s) return div().size_full().bg(t.background);
+    this.follow();
     if (this.view === "runs") return this.renderRuns(t);
     const repos = factoryRepos(s);
     if (!repos.includes(this.repo)) this.repo = null;
