@@ -201,6 +201,21 @@ test("a ticket's space and its worktree's space show their factory, not a factor
   assert.equal(factoryOf(undefined, h), null);
 });
 
+test("with the machine's factories, any repo of a factory, or a folder in one, shows that factory", async () => {
+  const { factoryOf } = await import("../lib/model.js");
+  const h = "/Users/me";
+  const factories = [
+    { name: "acme-api", repos: [{ slug: "acme/api", path: `${h}/src/api`, lead: true }, { slug: "acme/web", path: `${h}/src/web`, lead: false }] },
+    { name: "shop", repos: [{ slug: "other/api", path: `${h}/work/api`, lead: true }] },
+  ];
+  assert.equal(factoryOf(`${h}/src/web`, h, factories), "acme-api", "a second repo shows its factory, not a factory named web");
+  assert.equal(factoryOf(`${h}/src/api/packages/core`, h, factories), "acme-api", "a folder inside a repo");
+  assert.equal(factoryOf(`${h}/work/api`, h, factories), "shop", "same folder name, other factory");
+  assert.equal(factoryOf(`${h}/.herdr/worktrees/web/factory-7-fix`, h, factories), "acme-api", "a worktree of the second repo");
+  assert.equal(factoryOf(`${h}/.factory/shop/tickets/3`, h, factories), "shop");
+  assert.equal(factoryOf(`${h}/elsewhere/tool`, h, factories), "tool", "an unknown folder still falls back to its name");
+});
+
 test("planPct shows a dash when nothing reports the plan's usage", async () => {
   const { planPct } = await import("../lib/model.js");
   const assert = (await import("node:assert/strict")).default;
