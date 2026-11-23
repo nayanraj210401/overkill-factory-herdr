@@ -48,6 +48,7 @@ import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { liveOverwatch, overwatch } from "./overwatch.ts";
+import { liveRoster, rosterText, writeLive } from "./live.ts";
 import { ask as askAgent, askerOf, deliverToOverwatch, doneAsk, doneAsks, noteText, openAsks, type AskResult } from "./ask.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, restoreLesson, retireLesson, setOverride, undoOverride, UPKEEP_EVERY, upkeepLessons } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
@@ -70,6 +71,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
                                      kinds: config (.factory/, the account config), blueprint, agents (repo or factory agents),
                                      cleanup (housekeeping), look (the factory app's pages and colours, a PR to its develop); guessed from the words
   account propose <id>               the maintainer's copy of ~/.factory/config.yaml to edit, in the request's folder (applied when the request merges)
+  agents live [--json]               every agent running for every factory (repo, ticket, PR, stage, status, terminal, tokens) and every repo; the daemon writes it to ~/.factory/agents-live.json each tick
   agents propose <id> <name>         the maintainer's copy of a factory agent (~/.factory/agents/<name>.md) to edit, in the request's folder (applied when it merges)
   examples propose <id> <name> [--from <example>]  the maintainer's copy of an example agent (~/.factory/examples/agents/<name>.md) to edit; a new one starts
                                      from --from; emptied, it removes the example (applied when it merges)
@@ -234,6 +236,11 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     for (const f of c.found) log(`  ${f.path === c.path ? "▸" : " "} ${f.path}  ${f.version ?? "?"}`);
     if (c.found.length > 1) log("to use another, ask Overwatch (\"use <path> for claude\"); the maintainer sets claude.path in ~/.factory/config.yaml");
     return;
+  }
+  // Every factory's, not only --name's: Overwatch's answer to "what's running" (live.ts).
+  if (cmd === "agents" && sub === "live") {
+    const r = liveRoster({ run: sh, now: now() });
+    return log(json ? JSON.stringify(r, null, 2) : rosterText(r));
   }
   if (cmd === "validate") {
     // An account config (the maintainer's ACCOUNT-CONFIG.yaml proposal) is checked as one.
@@ -829,7 +836,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     } else if (cmd === "run") {
       // A tick that fails (a locked database, a gh hiccup) is logged; the next one tries again.
       const tick = () => {
-        try { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); }
+        try { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); writeLive(liveRoster({ run: sh, now: now(), db: (n) => (n === name ? db : undefined) })); }
         catch (e) { log(`factory: tick failed: ${(e as Error).message}`); }
       };
       tick();
@@ -1188,6 +1195,9 @@ function runAll(interval: number, log: (s: string) => void) {
         log(`factory ${name}: ${(e as Error).message}`);
       }
     }
+    // Every agent of every factory, for Overwatch (live.ts): after the ticks, so it sees what they started.
+    try { writeLive(liveRoster({ run: sh, now: new Date().toISOString(), db: (name) => (open_[name] ??= open(paths(name).db)) })); }
+    catch (e) { log(`factory: writing the live roster: ${(e as Error).message}`); }
   };
   tick();
   log(`factory: serving ${factories().join(", ") || "no factories yet"} under ${factoryHome()}, every ${interval}s`);

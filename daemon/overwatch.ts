@@ -47,7 +47,7 @@ const alive = (run: Run, terminal: string) => {
   try { return r.code === 0 && JSON.parse(r.out).exit_code == null; } catch { return false; }
 };
 
-const readState = (home: string): { terminal?: string; started_at?: string } => {
+export const readState = (home: string): { terminal?: string; started_at?: string } => {
   try { return JSON.parse(readFileSync(stateFile(home), "utf8")); } catch { return {}; }
 };
 
