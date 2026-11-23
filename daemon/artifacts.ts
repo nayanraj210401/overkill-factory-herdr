@@ -3,7 +3,7 @@
 // that writes one of the listed files (INTENT.md, SLICES.md, PR.md, HANDOFF.md) also publishes
 // it to claude.ai as the last step of its stage, and records the link with
 // `factory artifact <id> <file> <url>`. Later sessions republish to the same link, and every
-// brief that points at those files (stage, handoff, CLOUD.md, ROUTINE.md) gives the links too,
+// brief that points at those files (stage, handoff, the cloud brief, ROUTINE.md) gives the links too,
 // so a cloud session reads the plan without anyone uploading it.
 //
 // Only an agent session can publish: the Artifact tool and the Claude Docs connector exist

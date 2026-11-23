@@ -154,22 +154,18 @@ test("best-effort: a stage that didn't publish still passes, and the gap is logg
   expect(notePublishGap(off.db, { repo: off.repo, id: 7, now: "2026-11-21T10:05:00Z" })).toBe(false);
 });
 
-test("CLOUD.md gives the cloud session the shared plan by link, beside the pack's copies", () => {
+test("the cloud brief gives the session the shared plan by link, beside the pack's copies", () => {
   const { db, dir, repo, run, folder } = setup();
   writeFileSync(join(folder, "INTENT.md"), "# Intent\n");
   recordArtifact(db, { id: 7, file: "INTENT.md", url: INTENT, now: "2026-11-21T10:05:00Z" });
   recordArtifact(db, { id: 7, file: "SLICES.md", url: SLICES, now: "2026-11-21T10:05:00Z" });
-  toCloud(db, { dir, repo, id: 7, run, now: "2026-11-21T11:00:00Z" });
-  const wt = (db.query("SELECT worktree FROM ticket_lead WHERE id = 7").get() as any).worktree;
-  const md = readFileSync(join(wt, ".factory-run/7/CLOUD.md"), "utf8");
+  const md = toCloud(db, { dir, repo, id: 7, run, now: "2026-11-21T11:00:00Z" }).brief;
   expect(md).toContain(`- The plan is shared on claude.ai too: INTENT.md ${INTENT}, SLICES.md ${SLICES}. Read it there with your Artifact tool (action read) if the copy in \`.factory-run/7/\` is missing`);
   expect(md).toContain("republish it to the same link (best-effort");
-  // with sharing off, CLOUD.md doesn't mention claude.ai
+  // with sharing off, the brief doesn't mention claude.ai
   const off = setup("");
   recordArtifact(off.db, { id: 7, file: "INTENT.md", url: INTENT, now: "2026-11-21T10:05:00Z" });
-  toCloud(off.db, { dir: off.dir, repo: off.repo, id: 7, run: off.run, now: "2026-11-21T11:00:00Z" });
-  const owt = (off.db.query("SELECT worktree FROM ticket_lead WHERE id = 7").get() as any).worktree;
-  expect(readFileSync(join(owt, ".factory-run/7/CLOUD.md"), "utf8")).not.toContain("claude.ai");
+  expect(toCloud(off.db, { dir: off.dir, repo: off.repo, id: 7, run: off.run, now: "2026-11-21T11:00:00Z" }).brief).not.toContain("claude.ai");
 });
 
 test("ROUTINE.md lists each watched PR's shared plan, as data to read", () => {

@@ -1,9 +1,10 @@
 // M3 local ⇄ cloud (plan: Local and cloud). `⇧C` hands a running ticket to a Claude
-// Code cloud session: the work in progress is committed with a handoff pack
-// (.factory-run/<id>/: HANDOFF.md plus the ticket's files) and pushed, and
-// `claude --cloud` starts from it. The factory can't see a cloud session, so the
-// ticket shows "in cloud" and the daemon leaves it alone until `⇧L` fetches the
-// branch, imports RESULT.md (evidence, notes, PR.md), and resumes locally.
+// Code cloud session: the work in progress is committed with a pack of the ticket's files
+// (.factory-run/<id>/) and pushed, and `claude --cloud` starts with the brief as its
+// description. .factory/ stays local (local.ts), so nothing from it goes on the branch: the
+// agents' prompts, the stages and the rules ride in the brief, never in the pack. The factory
+// can't see a cloud session, so the ticket shows "in cloud" and the daemon leaves it alone
+// until `⇧L` fetches the branch, imports RESULT.md (evidence, notes, PR.md), and resumes locally.
 import { STOPS } from "./guard.ts";
 import type { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -12,8 +13,10 @@ import { getMeta, ticketRepos } from "./db.ts";
 import { openAgent } from "./herdr.ts";
 import { pushbackGate } from "./agreement.ts";
 import { artifactPolicy, sharedLinks, type Kind, type Link } from "./artifacts.ts";
+import { agentRepos, loadAgent } from "./agents.ts";
+import { LOCAL_REASON } from "./local.ts";
 import { enterStage } from "./ticket.ts";
-import { loadBlueprint, plannedPath, readFactory, restartStage, startStage, title, type Run } from "./runner.ts";
+import { loadBlueprint, localChanges, plannedPath, readFactory, restartStage, startStage, title, type Run } from "./runner.ts";
 
 const TICKET_FILES = ["STATUS.md", "EVIDENCE.md", "GATES.md", "REVIEW.md", "INTENT.md", "SLICES.md", "HANDOFF.md", "GROOMING.md", "PR.md"];
 const RULES: Record<string, string> = {
@@ -25,25 +28,36 @@ const RULES: Record<string, string> = {
   budget: "the ticket stays within its token budget",
 };
 
+// The brief is one argument to `claude --cloud`; Linux caps one argument at 128 KiB. The
+// stage now always gets its agent's prompt; a later stage's goes in only while it fits.
+export const BRIEF_CAP = 100_000;
+
+// A stage of the path the cloud session walks, with its agent as the checkout holds it.
+export type CloudStage = { stage: string; agent: string | null; prompt: string | null; skills: string[] };
+
 export const runDir = (id: number) => join(".factory-run", String(id));
 
-export function handoffMd(o: { id: number; title: string; branch: string; blueprint: string; stage: string; left: string[]; agent: string | null;
-  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[]; noPushbacks?: string | null; shared?: Link[]; as?: Kind }) {
+// The cloud session's whole brief, passed as its description: where the ticket stands, the
+// rules, what to report, then each stage's agent prompt. Nothing in it points at .factory/,
+// which isn't on the branch.
+export function cloudBrief(o: { id: number; title: string; branch: string; blueprint: string; stages: CloudStage[];
+  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[]; noPushbacks?: string | null; shared?: Link[]; as?: Kind; cap?: number }) {
   const here = runDir(o.id);
   const others = o.others ?? [];
   const shared = o.shared ?? [];
+  const [now, ...left] = o.stages;
   const tool = o.as === "doc" ? "the Claude Docs connector (mcp__claude_ai_Claude_Docs__read)" : "your Artifact tool (action read)";
-  return `# #${o.id} ${o.title}: continue in the cloud
+  const head = `# #${o.id} ${o.title}: continue in the cloud
 
-You're continuing a ticket the local factory was running. The factory isn't reachable from here (there is no \`factory\` command), so you report through files. Work only on the branch \`${o.branch}\`. Never push to main, and never open, edit or merge a pull request.
+You're continuing a ticket the local factory was running. The factory isn't reachable from here (there is no \`factory\` command), so you report through files. Work only on the branch \`${o.branch}\`. Never push to main, and never open, edit or merge a pull request. The factory's own files (\`.factory/\`) stay on the person's machine and aren't on this branch: everything you need from them is in this brief. Don't create \`.factory/\` here.
 ${others.length ? `
 This ticket changes ${others.length + 1} repos, each on the same branch \`${o.branch}\`, already pushed: this one and ${others.map((r) => `\`${r}\``).join(", ")}. Clone each other repo on that branch (\`gh repo clone ${others[0]} -- -b ${o.branch}\`), change it where the work needs, and push it to that branch too. The pack and RESULT.md stay in this repo.
 ` : ""}
 ## Where it stands
 
-- Blueprint: \`${o.blueprint}\` (\`.factory/blueprints/${o.blueprint}.yaml\`).
-- Stage now: **${o.stage}**${o.agent ? `, run by the \`${o.agent}\` agent: follow \`.factory/agents/${o.agent}.md\`` : ""}.
-- Stages left after it: ${o.left.length ? o.left.join(" → ") : "none"}. For each stage with an agent, follow that agent's prompt in \`.factory/agents/\`.
+- Blueprint: \`${o.blueprint}\`.
+- Stage now: **${now.stage}**${now.agent ? `, run by the \`${now.agent}\` agent: follow its prompt below` : ""}.
+- Stages left after it: ${left.length ? left.map((s) => s.stage).join(" → ") : "none"}. For each stage with an agent, follow that agent's prompt below.
 - The ticket's files from the factory are in \`${here}/\`: ${o.files.length ? o.files.join(", ") : "none yet"}. Act on every note in REVIEW.md and GATES.md.
 ${shared.length ? `- The plan is shared on claude.ai too: ${shared.map((l) => `${l.file} ${l.url}`).join(", ")}. Read it there with ${tool} if the copy in \`${here}/\` is missing; the two hold the same text. If you change one of those files, republish it to the same link (best-effort: carry on if the publish fails).
 ` : ""}
@@ -54,6 +68,7 @@ ${shared.length ? `- The plan is shared on claude.ai too: ${shared.map((l) => `$
 - Hard stops: ${o.hardStops.length ? o.hardStops.join(", ") : "push-to-main, outside-worktree, destructive-commands, secrets-in-output"}.
 - A product question (what to build, for whom, wording, scope) isn't yours to answer: write it under Questions and stop.
 ${o.noPushbacks ? `- Don't push back on a review comment: ${o.noPushbacks}. Fix a comment only when the fix is clear-cut; put every other one under Questions.\n` : ""}- When the work is ready for review, write \`${here}/PR.md\`: one plain sentence, then **What changed:**, **Why:**, **How it was verified:**, **Risk:**.
+- Where an agent's prompt below says to run a \`factory\` command, there is none here: write what it would have recorded in RESULT.md instead.
 
 ## When you stop
 
@@ -73,6 +88,26 @@ Stage: <the stage you reached, from the list above>
 <anything that needs the person; empty if none>
 \`\`\`
 `;
+  const cap = o.cap ?? BRIEF_CAP;
+  const block = (s: CloudStage, prompt: string) => [`### ${s.stage}: the \`${s.agent}\` agent`, prompt,
+    s.skills.length ? `Its skills (${s.skills.join(", ")}) are on the person's machine, not in this session: do the work without them.` : ""].filter(Boolean).join("\n\n");
+  const withAgent = o.stages.filter((s) => s.agent);
+  if (!withAgent.length) return head;
+  const parts = [head, "## The agents' prompts"];
+  const size = () => parts.join("\n\n").length;
+  const cut: string[] = [];
+  for (const s of withAgent) {
+    const prompt = s.prompt ?? "(no prompt: the checkout has no file for this agent; do the stage from its name and the rules above)";
+    const full = block(s, prompt);
+    if (s === now) {
+      // The stage now always gets its prompt, cut short only if it alone overflows the brief.
+      const room = cap - size() - 200;
+      parts.push(full.length <= room ? full : `${full.slice(0, Math.max(0, room))}\n\n(The rest of this prompt didn't fit in the brief.)`);
+    } else if (!cut.length && size() + full.length + 2 <= cap) parts.push(full);
+    else cut.push(s.stage);
+  }
+  if (cut.length) parts.push(`The prompts for ${cut.join(", ")} didn't fit in this brief. Stop before ${cut[0]}: write RESULT.md with the stage you reached, and the factory runs the rest locally.`);
+  return parts.join("\n\n") + "\n";
 }
 
 function launch(run: Run, t: Record<string, any>, argv: string[]) {
@@ -103,34 +138,47 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   const b = loadBlueprint(o.repo, t.blueprint);
   const stage = t.stage as string;
   const repos = ticketRepos(db, o.id);
-  // The pack: HANDOFF.md and copies of the ticket's files, inside the worktree.
+  // .factory/ stays local (local.ts): a branch that committed to it can't go up, or the push would carry it.
+  const local = localChanges(o.run, repos, t.base ?? undefined);
+  if (local.length) throw new Error(`${LOCAL_REASON} (${local.slice(0, 3).join(", ")}), so it can't go to the cloud: the push would carry it`);
+  // The pack: copies of the ticket's files, inside the worktree. Never anything from .factory/.
   const pack = join(t.worktree, runDir(o.id));
   mkdirSync(pack, { recursive: true });
+  rmSync(join(pack, "CLOUD.md"), { force: true }); // an older factory's brief, which named .factory/ paths
   const folder = join(o.dir, "tickets", String(o.id));
   const files = TICKET_FILES.filter((f) => existsSync(join(folder, f)));
   for (const f of files) copyFileSync(join(folder, f), join(pack, f));
   const f = readFactory(o.repo) as any;
-  writeFileSync(join(pack, "CLOUD.md"), handoffMd({
-    id: o.id, title: t.title, branch: t.branch, blueprint: t.blueprint, stage, left: plannedPath(b, stage), agent: b.stages[stage]?.agent ?? null,
+  // Each stage's agent as the local runner loads it (the checkout's .factory/agents/), inlined.
+  const from = agentRepos(db, o.id, o.repo);
+  const stages: CloudStage[] = [stage, ...plannedPath(b, stage)].map((s) => {
+    const name = b.stages[s]?.agent ?? null;
+    const a = name ? loadAgent(from, name) : null;
+    return { stage: s, agent: name, prompt: a?.prompt ?? null, skills: Array.isArray(a?.skills) ? a.skills.filter((x: unknown): x is string => typeof x === "string") : [] };
+  });
+  const brief = cloudBrief({
+    id: o.id, title: t.title, branch: t.branch, blueprint: t.blueprint, stages,
     ready: f.ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], floor: f.quality_floor ?? [], hardStops: f.hard_stops ?? [...STOPS], files,
     others: repos.slice(1).map((r) => r.repo), noPushbacks: gate.ok ? null : gate.why,
     shared: sharedLinks(db, o.id, artifactPolicy(f)), as: artifactPolicy(f).as,
-  }));
+  });
   // Every repo's work in progress goes up on its branch while the local agent is still alive; the pack
   // rides in the lead's. A retry commits nothing new when nothing changed, so it never duplicates the commit.
+  // .factory/ is unstaged, so it stays out even where a repo isn't adopted yet (no exclude line).
   const snapshot = () => {
     for (const r of repos) {
       git(o.run, r.worktree!, ["add", "-A"], `git add in ${r.repo}`);
+      o.run(["git", "-C", r.worktree!, "reset", "-q", "--", ".factory"]);
       if (o.run(["git", "-C", r.worktree!, "diff", "--cached", "--quiet"]).code !== 0)
         git(o.run, r.worktree!, ["commit", "-q", "-m", `factory: hand #${o.id} to a cloud session at ${stage}`], `git commit in ${r.repo}`);
       git(o.run, r.worktree!, ["push", "-u", "origin", r.branch!], `git push in ${r.repo}`);
     }
   };
-  const dirty = () => repos.some((r) => o.run(["git", "-C", r.worktree!, "status", "--porcelain"]).out.trim() !== "");
+  const dirty = () => repos.some((r) => o.run(["git", "-C", r.worktree!, "status", "--porcelain", "--", ".", ":(exclude).factory"]).out.trim() !== "");
   snapshot();
   // The agent may have written while the push ran; snapshot again until the tree is quiet.
   for (let i = 0; i < 3 && dirty(); i++) snapshot();
-  const argv = ["claude", "--cloud", `Continue the work described in ${runDir(o.id)}/CLOUD.md on branch ${t.branch}.`, "-n", `factory #${o.id} ${t.title}`.slice(0, 60)];
+  const argv = ["claude", "--cloud", brief, "-n", `factory #${o.id} ${t.title}`.slice(0, 60)];
   const l = launch(o.run, t, argv); // throws with the local agent still running and the ticket still local
   // Safe now: the work is pushed and the cloud session started. Stop the local agent.
   const open = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
@@ -144,7 +192,7 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   db.query("UPDATE stages SET detail = 'in a cloud session' WHERE ticket = ? AND ended_at IS NULL").run(o.id);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)")
     .run(o.id, o.reason ? "daemon" : "you", `moved to the cloud at ${stage}`, o.reason ?? t.branch, o.now);
-  return { terminal: l.terminal, stage };
+  return { terminal: l.terminal, stage, brief };
 }
 
 // A move that failed leaves the ticket local with its agent running; say why on the ticket.
@@ -153,7 +201,7 @@ export const noteCloudFailure = (db: Database, id: number, why: string, now: str
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', ?, ?, ?)")
     .run(id, `couldn't move to the cloud${reason ? ` for ${reason}` : ""}; the agent keeps running here`, why.slice(0, 300), now);
 
-// RESULT.md, as CLOUD.md asks for it.
+// RESULT.md, as the cloud brief asks for it.
 export function parseResult(md: string) {
   const stage = md.match(/^Stage:\s*([\w-]+)/im)?.[1]?.toLowerCase() ?? null;
   const evidence = [...md.matchAll(/^\s*-\s*(PASS|FAIL)\s+([^:\n]+?)\s*:\s*(.*)$/gim)].map((m) => ({ result: m[1].toUpperCase(), check: m[2].trim(), detail: m[3].trim() }));
