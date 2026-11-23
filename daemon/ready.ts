@@ -7,6 +7,7 @@ import type { Run } from "./runner.ts";
 import { needLead } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { repairFor } from "./broken.ts";
+import { journal } from "./journal.ts";
 
 // "broken": a check the rule counts can't run (broken.ts). It doesn't block the PR, which
 // says so; gate: auto won't merge it.
@@ -35,6 +36,7 @@ export function recordVerdict(db: Database, o: { id: number; kind: VerdictKind; 
   const voter = o.by ?? s?.agent ?? "you";
   db.query("INSERT INTO verdicts (ticket, session, kind, voter, result, detail, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run(o.id, s?.id ?? null, o.kind, voter, o.result, o.detail, o.now);
+  journal(db, { ticket: o.id, session: s?.id ?? null, kind: "verdict", text: `${o.kind} ${o.result} from ${voter}${o.detail ? `: ${o.detail}` : ""}`, at: o.now });
   return voter;
 }
 

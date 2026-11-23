@@ -24,6 +24,7 @@ import { compact } from "../lib/model.js";
 import { loadPrompt, render } from "./prompts.ts";
 import { splitGate } from "./split.ts";
 import { ASK_IN_TERMINAL } from "./attention.ts";
+import { claudeSession, endSessions, journal, journalSessionStart } from "./journal.ts";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
 
@@ -99,7 +100,9 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
     triageBrief(t as any, { slug: lead, repo: o.repo, folder, blueprints: g.blueprints, prompt: withSkillsLine(agent?.prompt, agent), others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db, lead) }),
     earlierQuestions(earlier), briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n")), agent, join(folder, ".skills", g.agent), from);
   // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
-  const cmd = withFactory(withHandoffHook(argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir, { agent: g.agent, ticket: o.id, repo: lead });
+  // A known Claude session id: the row names the triager's transcript (journal.ts).
+  const cs = claudeSession(argv, folder);
+  const cmd = withFactory(withHandoffHook(cs.argv, o.dir, o.id, null, readFactory(o.repo).quality_floor ?? [], [folder, o.repo, ...listRepos(db).map((r) => r.path)]), o.dir, { agent: g.agent, ticket: o.id, repo: lead });
   // In the window: a groom tab in the ticket's space (made here; its stage tabs join it
   // later), so you can watch the triage agent and answer it. No window: a background terminal.
   const made = openAgent(o.run, { folder, space: t.space ?? null, name: "groom", argv: cmd });
@@ -116,8 +119,9 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   }
   db.query("UPDATE tickets SET state = 'grooming', needs_kind = NULL, needs_text = NULL, groomed_at = NULL, updated_at = ? WHERE id = ?").run(o.now, o.id);
   enterStage(db, o.id, "Groom", `${g.agent} agent`, [], o.now);
-  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, 'groom', ?, ?, ?, ?, ?, ?)")
-    .run(o.id, g.agent, terminal, JSON.stringify(argv), o.now, made ? 1 : 0, folder);
+  const session = Number(db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd, claude_session, transcript) VALUES (?, 'groom', ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(o.id, g.agent, terminal, JSON.stringify(cs.argv), o.now, made ? 1 : 0, folder, cs.id, cs.transcript).lastInsertRowid);
+  journalSessionStart(db, { ticket: o.id, session, stage: "groom", agent: g.agent, transcript: cs.transcript, at: o.now, why: earlier.length ? `${earlier.length} earlier question${earlier.length > 1 ? "s" : ""} carried over` : undefined });
   deliveredInBrief(db, notes, o.now);
   return terminal;
 }
@@ -132,6 +136,7 @@ export function pick(db: Database, o: { repo: string; id: number; blueprint: str
   const s = db.query("SELECT agent FROM sessions WHERE ticket = ? AND ended_at IS NULL").get(o.id) as { agent: string } | null;
   db.query("UPDATE tickets SET blueprint = ?, updated_at = ? WHERE id = ?").run(o.blueprint, o.now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, ?, ?, ?)").run(o.id, s?.agent ?? "you", `picked the ${o.blueprint} blueprint`, o.now);
+  journal(db, { ticket: o.id, kind: "blueprint", text: `${s?.agent ?? "you"}: picked the ${o.blueprint} blueprint`, at: o.now });
 }
 
 // `factory repos <id> owner/name…`: the repos a cross-repo ticket works in, grooming's
@@ -162,6 +167,7 @@ export function ask(db: Database, o: { id: number; kind: string; text: string; n
   if (!o.text.trim()) throw new Error("type the question");
   const n = ((db.query("SELECT MAX(n) AS m FROM questions WHERE ticket = ?").get(o.id) as { m: number | null }).m ?? 0) + 1;
   db.query("INSERT INTO questions (ticket, n, kind, text, asked_at) VALUES (?, ?, ?, ?, ?)").run(o.id, n, o.kind, o.text.trim(), o.now);
+  journal(db, { ticket: o.id, kind: "question", text: `Q${n} (${o.kind}): ${o.text.trim()}`, ref: `question:${n}`, at: o.now });
   return n;
 }
 
@@ -193,7 +199,7 @@ export function questionsComment(open: Question[], po: string | null) {
 
 // The triage agent's session is over (stage-done, or its terminal exited).
 export function finishGrooming(db: Database, o: { dir: string; repo: string; id: number; run: Run; now: string }) {
-  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  endSessions(db, { ticket: o.id, at: o.now, why: "triage done" });
   // The triager's last step is GROOMING.md. Without it, triage stopped early (killed, crashed,
   // closed): the ticket waits for you rather than start as if groomed. Parked, not retried,
   // so a triager that keeps dying doesn't loop; `factory groom <id>` runs it again.
@@ -202,6 +208,7 @@ export function finishGrooming(db: Database, o: { dir: string; repo: string; id:
     db.query("UPDATE tickets SET needs_kind = 'parked', needs_text = ?, updated_at = ? WHERE id = ?").run(why, o.now, o.id);
     db.query("UPDATE stages SET detail = ? WHERE ticket = ? AND ended_at IS NULL").run("triage stopped early", o.id);
     db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', 'triage stopped before GROOMING.md; parked', ?)").run(o.id, o.now);
+    journal(db, { ticket: o.id, kind: "parked", text: why, at: o.now });
     return { parked: why, stage: "groom" };
   }
   const open = openQuestions(db, o.id);
@@ -246,6 +253,7 @@ export function answerQuestions(db: Database, o: { dir: string; repo: string; id
     db.query("UPDATE questions SET answer = ?, answered_by = ?, answered_at = ? WHERE ticket = ? AND n = ?").run(a.text, o.by, o.now, o.id, q.n);
     done.push(q);
     given.set(q.n, a.text);
+    journal(db, { ticket: o.id, kind: "answer", text: `A${q.n} from ${o.by}${o.where === "issue" ? " on the issue" : ""}: ${a.text}`, ref: `question:${q.n}`, at: o.now });
     note(o.dir, o.id, `Q${q.n} · answered by ${o.by} ${o.where === "issue" ? "on the issue" : "in Herdr"} · ${o.now.slice(0, 16).replace("T", " ")}`, `${q.text}\n\n**Answer:** ${a.text}`);
   }
   if (!done.length) throw new Error(o.text.trim() ? `no open question matches; open: ${open.map((q) => `Q${q.n}`).join(", ")}` : "type an answer");
@@ -272,6 +280,7 @@ function groomed(db: Database, o: { dir: string; repo: string; id: number; run: 
   db.query("UPDATE tickets SET state = 'queued', stage = NULL, detail = NULL, needs_kind = NULL, needs_text = NULL, groomed_at = ?, updated_at = ? WHERE id = ?").run(o.now, o.now, o.id);
   const b = (db.query("SELECT blueprint FROM ticket_lead WHERE id = ?").get(o.id) as { blueprint: string }).blueprint;
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(o.id, `groomed: runs the ${b} blueprint`, o.now);
+  journal(db, { ticket: o.id, kind: "groomed", text: `groomed: runs the ${b} blueprint`, ref: `file:${join(o.dir, "tickets", String(o.id), "GROOMING.md")}`, at: o.now });
   // Grooming sets the budget, unless you already set one yourself while it was groomed.
   const mine = db.query("SELECT 1 FROM decisions WHERE ticket = ? AND who = 'you' AND what LIKE 'set the budget to %'").get(o.id);
   const est = mine ? null : estimateBudget(db, o.repo, b);

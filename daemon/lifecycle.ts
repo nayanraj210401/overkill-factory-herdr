@@ -16,6 +16,7 @@ import { json, login, projectNumber, LOCAL_IDS } from "./intake.ts";
 import { ask, needsText, questionsComment, grooming } from "./groom.ts";
 import { closeSpace } from "./herdr.ts";
 import { pause, readFactory, resume, type Run } from "./runner.ts";
+import { decisionKind, endSessions, journal } from "./journal.ts";
 
 export const LIFECYCLE_MS = 300_000; // each issue is a gh call: every 5 minutes
 
@@ -72,8 +73,10 @@ export function scopeQuestions(intent: string, issue: string) {
   ].slice(0, 6);
 }
 
-const note = (db: Database, id: number, who: string, what: string, why: string | null, now: string) =>
-  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(id, who, what, why, now);
+const note = (db: Database, id: number, who: string, what: string, why: string | null, now: string) => {
+  const d = db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(id, who, what, why, now).lastInsertRowid;
+  journal(db, { ticket: id, kind: decisionKind(what), text: `${who}: ${what}${why ? ` (${why})` : ""}`, ref: `decision:${d}`, at: now });
+};
 
 const onCloud = (t: Row) => t.location === "cloud";
 
@@ -236,7 +239,7 @@ export function dropTicket(db: Database, o: { id: number; run: Run; now: string 
 export function closeTicket(db: Database, o: { id: number; run: Run; now: string; who: string; what: string; why?: string }) {
   const space = (db.query("SELECT space FROM tickets WHERE id = ?").get(o.id) as Row).space;
   const live = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
-  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  endSessions(db, { ticket: o.id, at: o.now, why: o.what });
   db.query("UPDATE stages SET ended_at = ?, detail = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.what, o.id);
   db.query("DELETE FROM planned WHERE ticket = ?").run(o.id);
   db.query("UPDATE tickets SET state = 'closed', detail = NULL, needs_kind = NULL, needs_text = NULL, blocked_by = NULL, updated_at = ? WHERE id = ?").run(o.now, o.id);

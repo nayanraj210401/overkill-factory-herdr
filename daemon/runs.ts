@@ -12,7 +12,7 @@ import { transcriptDir } from "./usage.ts";
 export const RUNS_CAP = 200;
 
 type Row = { id: number; ticket: number; title: string | null; stage: string; argv: string; started_at: string; ended_at: string | null;
-  tokens_in: number; tokens_out: number; cwd: string | null; usd: number | null; used_model: string | null };
+  tokens_in: number; tokens_out: number; cwd: string | null; usd: number | null; used_model: string | null; transcript: string | null };
 type Files = Map<string, { path: string; born: number }[]>;
 
 // Claude Code names each session's file by a new id, created when the session starts:
@@ -32,7 +32,7 @@ function transcriptOf(r: Row, harness: string, nextStart: string | undefined, fi
 }
 
 export function buildRuns(db: Database, now = new Date()) {
-  const rows = db.query(`SELECT s.id, s.ticket, t.title, s.stage, s.argv, s.started_at, s.ended_at, s.tokens_in, s.tokens_out, s.cwd,
+  const rows = db.query(`SELECT s.id, s.ticket, t.title, s.stage, s.argv, s.started_at, s.ended_at, s.tokens_in, s.tokens_out, s.cwd, s.transcript,
       (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd,
       (SELECT model FROM usage u WHERE u.session = s.id GROUP BY model ORDER BY SUM(output) DESC LIMIT 1) AS used_model
     FROM sessions s JOIN tickets t ON t.id = s.ticket ORDER BY s.started_at DESC, s.id DESC LIMIT ?`).all(RUNS_CAP) as Row[];
@@ -50,7 +50,8 @@ export function buildRuns(db: Database, now = new Date()) {
       started_at: r.started_at, ended_at: r.ended_at,
       duration_s: r.ended_at ? Math.round((Date.parse(r.ended_at) - Date.parse(r.started_at)) / 1000) : null,
       tokens_in: r.tokens_in, tokens_out: r.tokens_out, usd: r.usd == null ? null : +r.usd.toFixed(4),
-      transcript: transcriptOf(r, harness, next?.started_at, files),
+      // A session started with a known id names its transcript (journal.ts); older ones are found by birth time.
+      transcript: r.transcript && existsSync(r.transcript) ? r.transcript : transcriptOf(r, harness, next?.started_at, files),
     };
   });
   const bench = (db.query(`SELECT r.*, b.suite, b.target FROM bench_runs r JOIN bench_batches b ON b.id = r.batch WHERE r.status != 'skipped' ORDER BY r.started_at DESC, r.id DESC LIMIT ?`).all(RUNS_CAP) as any[]).map((r) => ({

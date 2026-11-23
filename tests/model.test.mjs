@@ -26,6 +26,21 @@ test("the validator names each broken field in one line", () => {
   assert.deepEqual(validateStatus(null), ["status.json: not a JSON object"]);
 });
 
+test("a ticket's journal events are optional, and each needs kind, text and at", () => {
+  const t412 = status.tickets.find((t) => t.id === 412);
+  assert.ok(t412.events.length > 0 && t412.events.length <= 8, "the fixture shows #412's newest events");
+  const bad = structuredClone(status);
+  const t = bad.tickets.find((x) => x.id === 412);
+  t.events = [{ kind: "stage", text: "", at: "2026-11-21T09:06:00Z" }, { kind: "check", text: "tests PASS", at: "yesterday" }];
+  const errors = validateStatus(bad);
+  assert.ok(errors.some((e) => /tickets\[\d+\]\.events\[0\]: needs \{kind, text, at\}/.test(e)), errors.join("\n"));
+  assert.ok(errors.some((e) => /tickets\[\d+\]\.events\[1\]: needs \{kind, text, at\}/.test(e)), errors.join("\n"));
+  t.events = "lots";
+  assert.ok(validateStatus(bad).some((e) => e.endsWith(".events: needs an array")));
+  delete t.events;
+  assert.deepEqual(validateStatus(bad), []);
+});
+
 test("sidebar groups match the Home mockup", () => {
   const g = groupTickets(status.tickets);
   const ids = (k) => g[k].map((t) => t.id);

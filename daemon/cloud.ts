@@ -17,6 +17,7 @@ import { agentRepos, loadAgent } from "./agents.ts";
 import { LOCAL_REASON } from "./local.ts";
 import { enterStage } from "./ticket.ts";
 import { loadBlueprint, localChanges, plannedPath, readFactory, restartStage, startStage, title, type Run } from "./runner.ts";
+import { endSessions, journal } from "./journal.ts";
 
 const TICKET_FILES = ["STATUS.md", "EVIDENCE.md", "GATES.md", "REVIEW.md", "INTENT.md", "SLICES.md", "HANDOFF.md", "GROOMING.md", "PR.md"];
 const RULES: Record<string, string> = {
@@ -182,12 +183,13 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
   const l = launch(o.run, t, argv); // throws with the local agent still running and the ticket still local
   // Safe now: the work is pushed and the cloud session started. Stop the local agent.
   const open = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND ended_at IS NULL AND terminal IS NOT NULL").all(o.id) as { terminal: string }[];
-  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  endSessions(db, { ticket: o.id, at: o.now, why: "handed to a cloud session" });
   for (const s of open) o.run(["hc", "kill", s.terminal]);
   // Anything written in the last instant stays in the worktree and the local branch; push it best-effort.
   try { if (dirty()) snapshot(); } catch {}
-  db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, 'cloud', 'cloud', ?, ?, ?, ?, ?)")
-    .run(o.id, l.terminal, JSON.stringify(argv), o.now, l.inSpace, t.worktree);
+  const session = Number(db.query("INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, in_space, cwd) VALUES (?, 'cloud', 'cloud', ?, ?, ?, ?, ?)")
+    .run(o.id, l.terminal, JSON.stringify(argv), o.now, l.inSpace, t.worktree).lastInsertRowid);
+  journal(db, { ticket: o.id, session, kind: "cloud", text: `moved to a cloud session at ${stage}${o.reason ? ` (${o.reason})` : ""}`, ref: `session:${session}`, at: o.now });
   db.query("UPDATE tickets SET location = 'cloud', space = ?, detail = 'in a cloud session', updated_at = ? WHERE id = ?").run(l.space, o.now, o.id);
   db.query("UPDATE stages SET detail = 'in a cloud session' WHERE ticket = ? AND ended_at IS NULL").run(o.id);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)")
@@ -238,7 +240,8 @@ export function toLocal(db: Database, o: { dir: string; repo: string; id: number
     git(o.run, t.worktree, ["commit", "-q", "-m", `factory: #${o.id} back from the cloud`], "git commit");
   rmSync(join(t.worktree, ".factory-run"), { recursive: true, force: true });
   const cloud = db.query("SELECT terminal FROM sessions WHERE ticket = ? AND stage = 'cloud' AND ended_at IS NULL").all(o.id) as { terminal: string }[];
-  db.query("UPDATE sessions SET ended_at = ? WHERE ticket = ? AND ended_at IS NULL").run(o.now, o.id);
+  endSessions(db, { ticket: o.id, at: o.now, why: "back from the cloud" });
+  journal(db, { ticket: o.id, kind: "cloud", text: `brought back from the cloud${o.reason ? ` (${o.reason})` : ""}: ${r.evidence.length} checks; reached ${r.stage ?? "unknown"}`, at: o.now });
   for (const s of cloud) o.run(["hc", "kill", s.terminal]);
   db.query("UPDATE tickets SET location = 'local', detail = NULL, updated_at = ? WHERE id = ?").run(o.now, o.id);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)")
@@ -249,7 +252,8 @@ export function toLocal(db: Database, o: { dir: string; repo: string; id: number
     // As open questions, so u talks them through in a fresh local session instead of an answer box.
     let n = ((db.query("SELECT MAX(n) AS m FROM questions WHERE ticket = ?").get(o.id) as { m: number | null }).m ?? 0);
     for (const q of r.questions.split("\n").map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim()).filter(Boolean))
-      db.query("INSERT INTO questions (ticket, n, kind, text, asked_at) VALUES (?, ?, 'engineering', ?, ?)").run(o.id, ++n, q, o.now);
+      { db.query("INSERT INTO questions (ticket, n, kind, text, asked_at) VALUES (?, ?, 'engineering', ?, ?)").run(o.id, ++n, q, o.now);
+        journal(db, { ticket: o.id, kind: "question", text: `Q${n} (engineering, from the cloud): ${q}`, ref: `question:${n}`, at: o.now }); }
     return { stage: t.stage, terminal: null, parked: true };
   }
   const at = r.stage && b.stages[r.stage] ? r.stage : t.stage;

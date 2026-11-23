@@ -3,6 +3,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { backfillJournal } from "./journal.ts";
 
 // A column a migration adds unless it is there already: an abandoned branch's migration added
 // some (tickets.resume_at) to live databases without the repo knowing.
@@ -289,6 +290,23 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
      INSERT INTO memories_fts (memories_fts, rowid, input, output) VALUES ('delete', old.id, old.input, old.output);
      INSERT INTO memories_fts (rowid, input, output) VALUES (new.id, new.input, new.output);
    END;`,
+  // Ticket memory, layer 1 (journal.ts): each session's Claude Code id and transcript file, and each
+  // ticket's journal, append-only, with full-text search over its text.
+  `ALTER TABLE sessions ADD COLUMN claude_session TEXT;
+   ALTER TABLE sessions ADD COLUMN transcript TEXT;
+   CREATE TABLE ticket_events (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL, session INTEGER, kind TEXT NOT NULL, text TEXT NOT NULL, ref TEXT, at TEXT NOT NULL
+   );
+   CREATE INDEX ticket_events_ticket ON ticket_events(ticket, at);
+   CREATE VIRTUAL TABLE ticket_events_fts USING fts5(text, content = 'ticket_events', content_rowid = 'id');
+   CREATE TRIGGER ticket_events_ai AFTER INSERT ON ticket_events BEGIN INSERT INTO ticket_events_fts (rowid, text) VALUES (new.id, new.text); END;
+   CREATE TRIGGER ticket_events_ad AFTER DELETE ON ticket_events BEGIN INSERT INTO ticket_events_fts (ticket_events_fts, rowid, text) VALUES ('delete', old.id, old.text); END;
+   CREATE TRIGGER ticket_events_au AFTER UPDATE OF text ON ticket_events BEGIN
+     INSERT INTO ticket_events_fts (ticket_events_fts, rowid, text) VALUES ('delete', old.id, old.text);
+     INSERT INTO ticket_events_fts (rowid, text) VALUES (new.id, new.text);
+   END;`,
+  // The journal of every ticket from before it, out of the rows the database kept (journal.ts).
+  (db: Database) => { backfillJournal(db); },
 ];
 
 export function open(path: string): Database {

@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LOCAL_IDS } from "./intake.ts";
+import { journal } from "./journal.ts";
 
 export type CheckResult = "pass" | "fail" | "broken";
 // The evidence table's word for each result.
@@ -53,6 +54,7 @@ export function fileRepair(db: Database, o: { dir?: string; check: string; detai
   db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, groomed_at, updated_at) VALUES (?, ?, 'queued', 'chore', ?, ?, ?)")
     .run(id, repairTitle(o.check), REPAIR_TRIGGER, o.now, o.now);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, 'daemon', 'filed: a check is broken', ?, ?)").run(id, `seen on #${o.from}: ${o.detail}`, o.now);
+  journal(db, { ticket: id, kind: "created", text: `filed: the ${o.check} check is broken, seen on #${o.from}: ${o.detail}`, at: o.now });
   if (o.dir) {
     const folder = join(o.dir, "tickets", String(id));
     mkdirSync(folder, { recursive: true });
