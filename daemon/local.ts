@@ -4,7 +4,7 @@
 // writes or commits a .gitignore there. A repo that already tracks .factory/ keeps it: the
 // factory says how to stop (UNTRACK) and marks those files skip-worktree in the checkout, so
 // a local edit is never staged; a ticket branch that changes .factory/ never reaches a PR.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { sh, type Run } from "./runner.ts";
 
@@ -12,8 +12,18 @@ export const EXCLUDE_LINE = "/.factory/";
 export const UNTRACK = 'git rm -r --cached .factory && git commit -m "Stop tracking .factory/"';
 export const LOCAL_REASON = "this ticket changed .factory/, which stays local";
 
-// The exclude file every worktree of `repo` reads; null when `repo` isn't a git checkout.
+// True when `repo` is a checkout's top folder. A folder inside another repo (a fixture, a
+// subfolder) is not: git resolves `.factory` against it, so skip-worktree and the exclude line
+// would land in the enclosing repo and hide its tracked files from git.
+export function isCheckout(repo: string, run: Run = sh) {
+  const r = run(["git", "-C", repo, "rev-parse", "--show-toplevel"]);
+  if (r.code !== 0 || !r.out.trim()) return false;
+  try { return realpathSync(r.out.trim()) === realpathSync(repo); } catch { return false; }
+}
+
+// The exclude file every worktree of `repo` reads; null when `repo` isn't a checkout's top folder.
 export function excludeFile(repo: string, run: Run = sh) {
+  if (!isCheckout(repo, run)) return null;
   const r = run(["git", "-C", repo, "rev-parse", "--git-common-dir"]);
   return r.code === 0 && r.out.trim() ? join(resolve(repo, r.out.trim()), "info", "exclude") : null;
 }
@@ -39,6 +49,7 @@ export function trackedFactory(repo: string, run: Run = sh) {
 // Tracked files get skip-worktree in this checkout only: `git status` and `git add -A` there
 // pass over your local edits; `git update-index --no-skip-worktree <file>` undoes it.
 export function keepLocal(repo: string, run: Run = sh) {
+  if (!isCheckout(repo, run)) return { excluded: false, tracked: [] as string[] };
   const excluded = excludeFactory(repo, run);
   const tracked = trackedFactory(repo, run);
   if (tracked.length) run(["git", "-C", repo, "update-index", "--skip-worktree", "--", ...tracked]);
