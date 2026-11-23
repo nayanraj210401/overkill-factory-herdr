@@ -77,7 +77,8 @@ Each page is drawn below the table. All share one sidebar.
 | Overwatch | The overwatch agent (PRD 7.1) in a live Herdr terminal: ask what's blocked, start, pause or reorder tickets, and ask for changes to the factory, which it hands to the maintainer |
 | Blueprint | Each blueprint as a graph, with run counts and gates per stage; `y` shows its YAML |
 | Metrics | Throughput, Cost, Quality, Learning and Benchmarks tabs over a date range |
-| Config | The `.factory/` files: a list, a readable view of the one selected, its schema check, and `o` to open it in your editor |
+| Repo config | One repo of the shown factory at a time (a switcher, the lead first): its own `.factory/` files, a readable view of the one selected, its schema check, what each file overrides, and ⌘O to open it in your editor |
+| Config | The factory's global settings: the daemon's controls on top, then the files in `~/.factory` every repo shares (factory agents, skills, shared steps, `config.yaml`, `maintainer.json`, `overwatch.json`, `plan.json`), read-only, with ⌘O |
 | Reviews | Teammates' PRs, grouped by what each needs from you: Ready for you, Reviewing now, Waiting to start (risk and cost first, "⚠ may not fit"), Submitted. A review is a ticket, so opening one is its Ticket page with review tabs: Findings, Story, Checks, Questions, Rounds |
 
 **Metrics.** Throughput: time to PR, human interactions per PR, PRs merged, and cycle time split into pickup to PR, PR to your first review, and review to merge. Cost: cost per PR, spend per day against budget, spend by agent and model. Quality: revert rate per blueprint, ready rules passing on the first try, retries per ticket. Learning: the target over time, each tuning shift with an undo, experiments, the lesson store. Benchmarks: the latest report per stage and per blueprint. An All factories toggle (⇧A, or the chip in the tab row; remembered across reloads) combines every factory on the machine: counts, tokens and spend summed per day, rates recomputed from their counts, medians and the Learning and Benchmarks tabs shown per factory.
@@ -114,7 +115,23 @@ Each page is drawn below the table. All share one sidebar.
 
 ![Metrics · Cost tab in tokens and plan windows](layouts/06b-metrics-cost.png)
 
+#### Repo config
+
+Repo config (⌘7) shows one repo's `.factory/`. A row of chips above the files picks the repo: every repo of the shown factory (agents-live.json's `factories[].repos`), the lead marked and shown first. A line on the right says the folder is "Local to this machine, never pushed" (`.factory/` sits in `.git/info/exclude`). A repo with no `.factory/` gets an empty state instead of the list.
+
+Each file says where it stands, as the daemon reads it (`lib/configfiles.js` mirrors `agentFile`, `skillDir`, `loadPrompt` and `stepFile`, and `daemon/configfiles.test.ts` checks it against them):
+
+- **overrides built-in / global / lead repo** (accent): the repo's copy runs instead of another one. A lead repo's `prompts/<x>.md` over the built-in prompt; its `steps/<x>.yaml` over `~/.factory/steps/`; a `skills/<x>/` over the lead repo's and `~/.factory/skills/`; another repo's `agents/<x>.md` over the lead repo's.
+- **not used** (blocked): the daemon never reads it. A repo copy of a factory agent (overwatch, babysitter, maintainer, learner: those load from `~/.factory/agents/`, else the shipped one), and another repo's `factory.yaml`, blueprints, prompts and steps (those load from the lead repo).
+- **from global example / from built-in example** (dim): a repo agent or step copied from the example library. Only the repo's copy runs.
+
+Under the badge, "differs from built-in" (or global, lead repo, example) when the two texts differ. Nothing judges which is older.
+
 #### Config
+
+Config (⌘8) is the factory's global page. The daemon bar, Claude Code, pending changes and tuned settings stay on top in their own capped, scrolling area. Below them, `~/.factory`'s config: `agents/*.md`, `skills/**`, `steps/*.yaml`, then `config.yaml`, `maintainer.json`, `overwatch.json` and `plan.json` when present. Logs, backups, examples and each factory's own folder aren't listed. A global factory agent shows "overrides built-in" over the shipped one; skills and steps compare with the shipped examples. The schema check comes from `factory validate --json`'s `~/.factory` rows.
+
+Both pages are read-only. A line on each says the maintainer makes every change there, with an **Ask maintainer** button: the `factory-ask` dialog takes the change and runs `factory request` (with `--repo <slug>` on another repo's Repo config), which types it into the maintainer's terminal. ⌘O goes to `factory-header`, which every page shows, and opens the file the shown page selected (`shared("factory.open-file")`), since a `<mod>.<command>` reaches only shown copies.
 
 ![Config · factory.yaml as readable settings](layouts/07-config.png)
 
@@ -172,6 +189,7 @@ All mods carry a `factory-` prefix, since a mod folder's name is its identity in
 | `factory-list` | new | The Tickets page |
 | `factory-blueprint` | new | Blueprint graphs and their YAML |
 | `factory-metrics` | new | The five Metrics tabs |
+| `factory-repo-config` | new | The Repo config page |
 | `factory-config` | new | The Config page |
 | `factory-reviews` | new | The review queue, each PR's findings and check results, and the link to its pending review |
 
@@ -186,7 +204,7 @@ Every action is a click or a key, and each one is a single call to the daemon. T
 | `cmd-shift-f` | Switch to factory mode and back |
 | `g f` | The factory picker: every factory on this machine; pick one to switch to its space |
 | `]` / `[` | The next / previous other factory that needs you |
-| `g h`, `g t`, `g o`, `g b`, `g m`, `g c` | Home, Tickets, Overwatch, Blueprint, Metrics, Config |
+| `g h`, `g t`, `g o`, `g b`, `g m`, `g c` | Home, Tickets, Overwatch, Blueprint, Metrics, Config (built as ⌘1–⌘8: Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Repo config, Config) |
 | `j` / `k`, `enter` | Move through tickets, open one |
 | `e` | The ticket's live agent terminal |
 | `d` | The ticket's diff, in Herdr's `changes` panel |

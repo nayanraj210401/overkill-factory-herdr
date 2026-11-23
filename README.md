@@ -50,7 +50,7 @@ Start small: one ticket at a time, a low daily budget, and a human merge gate. A
 | Key | Does |
 | --- | --- |
 | ⌘⇧F | factory mode on and off |
-| ⌘1–⌘7 | Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Config |
+| ⌘1–⌘8 | Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Repo config, Config |
 | `n` | new ticket from an issue, `#number` or a one-line goal |
 | `e` | peek at the ticket's live agent terminal |
 | `m` | merge a ready PR |

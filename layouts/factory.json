@@ -54,7 +54,7 @@
           "id": "sidebar-menu",
           "type": "block",
           "size": {
-            "px": 250
+            "px": 280
           },
           "content": {
             "mod": "factory-menu"
@@ -157,6 +157,13 @@
               "type": "block",
               "content": {
                 "mod": "factory-metrics"
+              }
+            },
+            {
+              "id": "repo-config",
+              "type": "block",
+              "content": {
+                "mod": "factory-repo-config"
               }
             },
             {

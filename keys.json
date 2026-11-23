@@ -9,7 +9,7 @@
   },
   "layout:factory": {
     "cmd-shift-f": "layout.switch:main",
-    "cmd-o": "factory-config.open",
+    "cmd-o": "factory-header.open",
     "cmd-alt-1": "factory-ticket.tab-1",
     "cmd-alt-2": "factory-ticket.tab-2",
     "cmd-alt-3": "factory-ticket.tab-3",
@@ -57,6 +57,13 @@
       }
     },
     "cmd-7": {
+      "command": "layout.select",
+      "args": {
+        "stack": "pages",
+        "child": "repo-config"
+      }
+    },
+    "cmd-8": {
       "command": "layout.select",
       "args": {
         "stack": "pages",

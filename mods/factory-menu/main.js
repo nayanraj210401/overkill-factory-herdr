@@ -6,7 +6,7 @@ import { reviewCount } from "./lib/reviews.js";
 import { status, readReviews, root } from "./lib/store.js";
 
 // The factory menu at the foot of the sidebar. The highlight comes from the
-// live layout, so ⌘1–⌘7 and clicks agree. Reviews carries a count of teammates' PRs waiting.
+// live layout, so the ⌘ keys and clicks agree. Reviews carries a count of teammates' PRs waiting.
 export default class FactoryMenu extends View {
   init(_props, cx) {
     this.reviews = null; // reviews.json's doc, the Reviews page's data; null falls back to status.json's count
