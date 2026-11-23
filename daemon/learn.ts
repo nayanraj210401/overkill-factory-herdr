@@ -124,16 +124,30 @@ export function exportPatch(repo: string, overrides: Override[]) {
 
 // ---- lessons -----------------------------------------------------------------------
 
-export type Lesson = { id: number; area: string; text: string; source: string; hits: number; created_at: string; retired_at: string | null; dup_of: number | null };
+export type Lesson = {
+  id: number; area: string; text: string; source: string; hits: number; created_at: string; retired_at: string | null; dup_of: number | null;
+  hit_at: string | null; moved_hits: number; restored_at: string | null;
+};
 
 // Lowercase words only, so wording and punctuation don't hide a repeat.
 const normal = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const SAME_WORDS = 0.75;
 
-// An active lesson in the same area that says the same thing (or whose text holds the other's).
+// Two lessons say the same thing: the same words in order, one's text holds the other's, or
+// (four words or more each) they share at least three quarters of their distinct words.
+export function similar(a: string, b: string): boolean {
+  const m = normal(a), n = normal(b);
+  if (m === n || (Math.min(m.length, n.length) >= 20 && (m.includes(n) || n.includes(m)))) return true;
+  const x = new Set(m.split(" ")), y = new Set(n.split(" "));
+  if (x.size < 4 || y.size < 4) return false;
+  const shared = [...x].filter((w) => y.has(w)).length;
+  return shared / (x.size + y.size - shared) >= SAME_WORDS;
+}
+
+// An active lesson in the same area that says the same thing.
 export function nearDuplicate(db: Database, area: string, text: string): Lesson | null {
-  const n = normal(text);
   const rows = db.query("SELECT * FROM lessons WHERE area = ? AND retired_at IS NULL AND dup_of IS NULL ORDER BY id").all(area) as Lesson[];
-  return rows.find((l) => { const m = normal(l.text); return m === n || (Math.min(m.length, n.length) >= 20 && (m.includes(n) || n.includes(m))); }) ?? null;
+  return rows.find((l) => similar(l.text, text)) ?? null;
 }
 
 export function addLesson(db: Database, o: { area: string; text: string; source?: string; now: string }) {
@@ -148,6 +162,59 @@ export function retireLesson(db: Database, id: number, now: string) {
   if (r.changes === 0) throw new Error(`no active lesson ${id}`);
 }
 
+// ---- lesson upkeep -----------------------------------------------------------------
+
+export const RETIRE_AFTER = 30; // days, learn.retire_after
+export const UPKEEP_EVERY = 86_400_000;
+const note = (db: Database, who: string, what: string, why: string, at: string) =>
+  db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (NULL, ?, ?, ?, ?)").run(who, what, why, at);
+const latest = (...at: (string | null)[]) => at.filter((x): x is string => !!x).sort().at(-1)!;
+
+export type Upkeep = { at: string; merged: { id: number; into: number; hits: number }[]; retired: number[] };
+
+// The daily lesson upkeep. Near-duplicates in an area merge into the one kept (the most hits,
+// then the oldest): the repeat gets dup_of and its hits move to the kept one. A lesson no brief
+// has carried for retireAfter days (since it was added, last hit or restored) retires. Each
+// merge and retirement is a decision row; `factory learn restore <id>` undoes one, and a
+// restored lesson is out of merging for good, either way (it can still retire after another
+// quiet stretch).
+export function upkeepLessons(db: Database, o: { now: string; retireAfter?: number }): Upkeep {
+  const days = o.retireAfter ?? RETIRE_AFTER;
+  const out: Upkeep = { at: o.now, merged: [], retired: [] };
+  const rows = db.query("SELECT * FROM lessons WHERE retired_at IS NULL AND dup_of IS NULL ORDER BY area, hits DESC, id").all() as Lesson[];
+  const kept = new Map<string, Lesson[]>();
+  for (const l of rows) {
+    const area = kept.get(l.area) ?? [];
+    const into = l.restored_at ? undefined : area.find((k) => !k.restored_at && similar(k.text, l.text));
+    if (!into) { kept.set(l.area, [...area, l]); continue; }
+    db.query("UPDATE lessons SET dup_of = ?, moved_hits = hits WHERE id = ?").run(into.id, l.id);
+    into.hits += l.hits;
+    into.hit_at = l.hit_at && (!into.hit_at || l.hit_at > into.hit_at) ? l.hit_at : into.hit_at;
+    db.query("UPDATE lessons SET hits = ?, hit_at = ? WHERE id = ?").run(into.hits, into.hit_at, into.id);
+    note(db, "daemon", `merged lesson ${l.id} into ${into.id}`, `a near-duplicate in ${l.area}; ${l.hits} hit${l.hits === 1 ? "" : "s"} moved. factory learn restore ${l.id} undoes it`, o.now);
+    out.merged.push({ id: l.id, into: into.id, hits: l.hits });
+  }
+  const cutoff = new Date(Date.parse(o.now) - days * 86_400_000).toISOString();
+  for (const l of [...kept.values()].flat()) {
+    const last = latest(l.created_at, l.hit_at, l.restored_at);
+    if (last >= cutoff) continue;
+    db.query("UPDATE lessons SET retired_at = ? WHERE id = ?").run(o.now, l.id);
+    note(db, "daemon", `retired lesson ${l.id}`, `no brief has carried it since ${last.slice(0, 10)} (learn.retire_after: ${days} days). factory learn restore ${l.id} undoes it`, o.now);
+    out.retired.push(l.id);
+  }
+  return out;
+}
+
+// Undo a merge (the moved hits go back) or a retirement, by hand or by upkeep.
+export function restoreLesson(db: Database, id: number, now: string): Lesson {
+  const l = db.query("SELECT * FROM lessons WHERE id = ?").get(id) as Lesson | null;
+  if (!l || (l.dup_of == null && l.retired_at == null)) throw new Error(`lesson ${id} isn't merged or retired`);
+  if (l.dup_of != null) db.query("UPDATE lessons SET hits = MAX(0, hits - ?) WHERE id = ?").run(l.moved_hits, l.dup_of);
+  db.query("UPDATE lessons SET dup_of = NULL, retired_at = NULL, moved_hits = 0, restored_at = ? WHERE id = ?").run(now, id);
+  note(db, "you", `restored lesson ${id}`, l.dup_of != null ? `was merged into ${l.dup_of}; ${l.moved_hits} hit${l.moved_hits === 1 ? "" : "s"} went back` : `was retired ${l.retired_at!.slice(0, 10)}`, now);
+  return l;
+}
+
 // Newest first, active before retired; a query matches the text and area through FTS5.
 export function listLessons(db: Database, query?: string): Lesson[] {
   if (!query) return db.query("SELECT * FROM lessons ORDER BY retired_at IS NOT NULL, id DESC").all() as Lesson[];
@@ -160,11 +227,11 @@ const BRIEF_LESSONS = 5;
 
 // The lessons a ticket's brief carries: active, not a repeat, whose area matches a file it has
 // touched or a path INTENT.md names; the most used first, a handful at most, each hit counted.
-export function lessonsFor(db: Database, paths: string[]): Lesson[] {
+export function lessonsFor(db: Database, paths: string[], now: string): Lesson[] {
   if (!paths.length) return [];
   const rows = db.query("SELECT * FROM lessons WHERE retired_at IS NULL AND dup_of IS NULL ORDER BY hits DESC, id").all() as Lesson[];
   const hit = rows.filter((l) => { const g = areaGlob(l.area); return paths.some((p) => g.match(p)); }).slice(0, BRIEF_LESSONS);
-  for (const l of hit) db.query("UPDATE lessons SET hits = hits + 1 WHERE id = ?").run(l.id);
+  for (const l of hit) db.query("UPDATE lessons SET hits = hits + 1, hit_at = ? WHERE id = ?").run(now, l.id);
   return hit;
 }
 

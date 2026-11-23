@@ -48,7 +48,7 @@ import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { liveOverwatch, overwatch } from "./overwatch.ts";
 import { ask as askAgent, askerOf, deliverToOverwatch, doneAsk, doneAsks, noteText, openAsks, type AskResult } from "./ask.ts";
-import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, retireLesson, setOverride, undoOverride } from "./learn.ts";
+import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, restoreLesson, retireLesson, setOverride, undoOverride, UPKEEP_EVERY, upkeepLessons } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, holdSuite, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
@@ -102,6 +102,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   learn suggest <the change…> --why <evidence>  the learner files a change outside learn.tunable as a maintainer request, with its evidence
   learn digest [--json]              what the learner agent reads: outcomes by setting, the target's trend, lessons, repeated comments
   learn run                          run the learner agent now (budget.learning, warmup and learn.pause_above still apply)
+  learn restore <id>                 undo the daily lesson upkeep (or lesson retire): a merged lesson takes its hits back, a retired one goes back into briefs
   lesson add <area> <text…> [--source s]  a lesson for code matching the area glob (src/auth/**); loaded when a ticket touches it
   lesson list [words…] | lesson retire <id>  the store (--json), searched by words / take one out of briefs
   overwatch [--json]                 start the overwatch agent, or print the live one's terminal
@@ -730,7 +731,12 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         log(`learner run: ${r.status}${r.status === "done" ? "" : ` (${r.why})`}`);
         for (const f of r.filed) { log(`#${f.id}: ${f.title}`); writeTicketFiles(db, p.dir, f.id); }
         for (const x of r.skipped) log(`already asked: ${x}`);
-      } else throw new Error("usage: factory learn set|undo|list|export|suggest|digest|run");
+      } else if (sub === "restore") {
+        if (!Number.isInteger(Number(rest[0])) || !rest[0]) throw new Error("usage: factory learn restore <id>");
+        let l!: ReturnType<typeof restoreLesson>;
+        change(db, () => { l = restoreLesson(db, Number(rest[0]), now()); });
+        log(l.dup_of != null ? `lesson ${l.id} restored: no longer merged into ${l.dup_of}; ${l.moved_hits} hit${l.moved_hits === 1 ? "" : "s"} back` : `lesson ${l.id} restored: back in briefs`);
+      } else throw new Error("usage: factory learn set|undo|list|export|suggest|digest|run|restore");
     } else if (cmd === "lesson") {
       if (sub === "add") {
         const [area, ...text] = rest;
@@ -977,6 +983,18 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     if (r.ran) log(`factory: learner run ${r.status}${r.status === "done" ? `: ${r.filed.length} request${r.filed.length === 1 ? "" : "s"} for the maintainer` : ` (${r.why})`}`);
     for (const f of r.filed) log(`factory: #${f.id}: the learner asks the maintainer to ${f.title}`);
   } catch (e) { log(`factory: the learner agent: ${(e as Error).message}`); }
+  // Lesson upkeep, daily: near-duplicates merge, lessons unused for learn.retire_after days retire.
+  const lastUpkeep = getMeta(db, "lessons_upkeep_at");
+  if (!lastUpkeep || Date.now() - Date.parse(lastUpkeep) >= UPKEEP_EVERY) {
+    setMeta(db, "lessons_upkeep_at", nowIso);
+    try {
+      change(db, () => {
+        const u = upkeepLessons(db, { now: nowIso, retireAfter: readFactory(repoDir).learn?.retire_after });
+        setMeta(db, "lessons_upkeep", JSON.stringify({ at: u.at, merged: u.merged.length, retired: u.retired.length }));
+        if (u.merged.length || u.retired.length) log(`factory: lesson upkeep: ${u.merged.length} merged, ${u.retired.length} retired`);
+      });
+    } catch (e) { log(`factory: lesson upkeep: ${(e as Error).message}`); }
+  }
   // Merged PRs someone reverted, every 10 minutes, for the revert rate.
   const lastReverts = getMeta(db, "reverts_checked_at");
   if (!lastReverts || Date.now() - Date.parse(lastReverts) >= 600_000) {

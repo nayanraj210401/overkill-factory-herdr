@@ -28,6 +28,7 @@ import { activeOverrides, fileValue, setOverride, undoOverride, type Lesson } fr
 import { learnerHold, learningCap, learningSpent, ticketMetric, WARMUP_TICKETS } from "./learner.ts";
 import { loadAgent } from "./agents.ts";
 import { readFactory } from "./runner.ts";
+import { getMeta } from "./db.ts";
 import { MODELS, pinModel } from "./models.ts";
 import { parseTokens } from "../lib/model.js";
 
@@ -262,9 +263,17 @@ export type LearningMetrics = {
   overrides: { id: number; key: string; value: Value; since: string; reason: string | null; from_experiment: boolean }[];
   shifts: { at: string; key: string; context: string; from: Value; to: Value; override: number | null; why: string }[];
   lessons: { id: number; area: string; text: string; source: string; hits: number; since: string }[];
+  // The daily lesson upkeep: its last run and what it did, and how many lessons sit merged or retired now.
+  upkeep: { last: { at: string; merged: number; retired: number } | null; merged: number; retired: number };
 };
 
 const tokens = (t: Tokens | null) => (t ? { input: Number.isFinite(t.input) ? Math.round(t.input) : 0, output: Number.isFinite(t.output) ? Math.round(t.output) : 0 } : null);
+
+function lessonUpkeep(db: Database): LearningMetrics["upkeep"] {
+  const last = JSON.parse(getMeta(db, "lessons_upkeep") ?? "null") as LearningMetrics["upkeep"]["last"];
+  const n = (db.query("SELECT COUNT(dup_of) AS merged, COUNT(retired_at) AS retired FROM lessons").get() as { merged: number; retired: number });
+  return { last, merged: n.merged, retired: n.retired };
+}
 
 // What the Metrics page's Learning tab reads: each experiment with its arms, counts, means and the
 // floor; the value in force; the overrides; every shift with its time; and the lesson store (the
@@ -296,6 +305,6 @@ export function learningMetrics(db: Database, repo: string, now = new Date()): L
     target, hold: experimentHold(db, repo, now),
     warmup: { merged, needed: learn.warmup_tickets ?? WARMUP_TICKETS },
     budget: { spent: tokens(spent)!, cap: tokens(learningCap(repo)) },
-    experiments, overrides, shifts, lessons,
+    experiments, overrides, shifts, lessons, upkeep: lessonUpkeep(db),
   };
 }

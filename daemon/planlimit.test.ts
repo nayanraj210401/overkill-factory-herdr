@@ -258,7 +258,7 @@ test("the migration: a database that already has resume_at from the abandoned at
   const dir = mkdtempSync(join(tmpdir(), "migrate-"));
   const file = join(dir, "factory.db");
   const old = new Database(file, { create: true, strict: true });
-  const at = MIGRATIONS.findLastIndex((m) => typeof m !== "string"); // resume_at's, with migrations after it
+  const at = MIGRATIONS.findIndex((m) => (m as any).column === "tickets.resume_at"); // with migrations after it
   for (const m of MIGRATIONS.slice(0, at)) typeof m === "string" ? old.exec(m) : m(old);
   old.exec("ALTER TABLE tickets ADD COLUMN resume_at TEXT; ALTER TABLE sessions ADD COLUMN outcome TEXT; ALTER TABLE sessions ADD COLUMN prompt_since TEXT;");
   old.exec(`PRAGMA user_version = ${at}`);

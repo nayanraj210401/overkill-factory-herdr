@@ -6,10 +6,11 @@ import { dirname } from "node:path";
 
 // A column a migration adds unless it is there already: an abandoned branch's migration added
 // some (tickets.resume_at) to live databases without the repo knowing.
-const addColumn = (table: string, column: string, type: string) => (db: Database) => {
+// Each carries the column it adds (tickets.resume_at), so a test can find its migration.
+const addColumn = (table: string, column: string, type: string) => Object.assign((db: Database) => {
   const cols = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-};
+}, { column: `${table}.${column}` });
 
 // Each migration is SQL, or a function for one that must look before it changes anything.
 export const MIGRATIONS: (string | ((db: Database) => void))[] = [
@@ -263,6 +264,12 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
    INSERT INTO evidence_new (id, ticket, check_name, result, detail, at) SELECT id, ticket, check_name, result, detail, at FROM evidence;
    DROP TABLE evidence;
    ALTER TABLE evidence_new RENAME TO evidence;`,
+  // Lesson upkeep (learn.ts upkeepLessons): when a lesson last went into a brief, the hits a
+  // merge moved from it to the lesson it repeats (so a restore takes them back), and when
+  // `factory learn restore` brought it back (upkeep never merges it again).
+  addColumn("lessons", "hit_at", "TEXT"),
+  addColumn("lessons", "moved_hits", "INTEGER NOT NULL DEFAULT 0"),
+  addColumn("lessons", "restored_at", "TEXT"),
 ];
 
 export function open(path: string): Database {

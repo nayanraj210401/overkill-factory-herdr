@@ -3,11 +3,13 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
-import { main, paths } from "./cli.ts";
+import { main, paths, watchSessions } from "./cli.ts";
+import { learningMetrics } from "./experiments.ts";
+import { validateMetrics } from "../lib/metrics.js";
 import { buildStatus } from "./status.ts";
 import { validateFile } from "./validate.ts";
 import { validateStatus } from "../lib/status.js";
-import { activeOverrides, addLesson, exportPatch, lessonsFor, listLessons, retireLesson, setOverride, settingOf } from "./learn.ts";
+import { activeOverrides, addLesson, exportPatch, lessonsFor, listLessons, restoreLesson, retireLesson, setOverride, settingOf, similar, upkeepLessons } from "./learn.ts";
 import { brief, sh, startTicket, type Run } from "./runner.ts";
 
 const TUNABLE = ["agents.spec-writer.model", "agents.reviewer.model", "budget.handoff_at_context"];
@@ -199,16 +201,16 @@ test("a stage's brief carries the lessons whose area matches touched files or IN
   const wt = (db.query("SELECT worktree FROM ticket_lead WHERE id = 1").get() as any).worktree;
   mkdirSync(join(wt, "src/auth"), { recursive: true });
   writeFileSync(join(wt, "src/auth/login.ts"), "export {}\n");
-  expect(lessonsFor(db, ["src/auth/login.ts"]).map((l) => l.id)).toEqual([auth]);
+  expect(lessonsFor(db, ["src/auth/login.ts"], NOW).map((l) => l.id)).toEqual([auth]);
   expect(hits(auth)).toBe(1);
   // No paths, no lessons: nothing is loaded for a ticket that touched nothing.
-  expect(lessonsFor(db, [])).toEqual([]);
+  expect(lessonsFor(db, [], NOW)).toEqual([]);
 });
 
 test("at most five lessons go into a brief", () => {
   const db = open(join(mkdtempSync(join(tmpdir(), "les-")), "factory.db"));
   for (let i = 0; i < 8; i++) addLesson(db, { area: "src/**", text: `Lesson number ${i} says something different.`, now: NOW });
-  expect(lessonsFor(db, ["src/a.ts"])).toHaveLength(5);
+  expect(lessonsFor(db, ["src/a.ts"], NOW)).toHaveLength(5);
   expect(brief({ id: 1, title: "t" }, "spec", null, "/f", undefined, [], ["(src/**) one"])).toContain("Lessons for the code this ticket touches");
   expect(brief({ id: 1, title: "t" }, "spec", null, "/f")).not.toContain("Lessons");
 });
@@ -227,4 +229,97 @@ test("factory lesson: add, list, retire from the CLI", () => {
   run("lesson", "retire", "1");
   expect(() => run("lesson", "retire", "1")).toThrow("no active lesson 1");
   expect(() => run("lesson", "add", "src/**")).toThrow("usage");
+});
+
+// ---- lesson upkeep ----------------------------------------------------------------
+
+const DAY = 86_400_000;
+const daysAfter = (n: number) => new Date(Date.parse(NOW) + n * DAY).toISOString();
+// A lesson as an older store holds it: written straight in, so add's duplicate check never saw it.
+const raw = (db: any, area: string, text: string, hits = 0, at = NOW) =>
+  Number(db.query("INSERT INTO lessons (area, text, source, hits, created_at, hit_at) VALUES (?, ?, 'you', ?, ?, ?)").run(area, text, hits, at, hits ? at : null).lastInsertRowid);
+const row = (db: any, id: number) => db.query("SELECT * FROM lessons WHERE id = ?").get(id) as any;
+const decisions = (db: any) => (db.query("SELECT ticket, who, what FROM decisions ORDER BY id").all() as any[]);
+
+test("similar: the same words, one holding the other, or three quarters of the words shared", () => {
+  expect(similar("Hash tokens first.", "hash tokens first")).toBe(true);
+  expect(similar("Always run migrations before tests in src/db", "Run the migrations before tests in src/db")).toBe(true);
+  expect(similar("Always run migrations before tests in src/db", "Never run seeds after deploys in src/web")).toBe(false);
+  expect(similar("Use a b c", "Use a b d")).toBe(false); // too short to judge by shared words
+});
+
+test("upkeep merges near-duplicates into the most used one, moving their hits, with a decision row each", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "up-")), "factory.db"));
+  const a = raw(db, "src/db/**", "Always run migrations before tests in src/db", 2);
+  const b = raw(db, "src/db/**", "Run the migrations before tests in src/db", 5);
+  const other = raw(db, "src/web/**", "Run the migrations before tests in src/db", 1); // another area stays
+  const u = upkeepLessons(db, { now: daysAfter(1) });
+  expect(u.merged).toEqual([{ id: a, into: b, hits: 2 }]);
+  expect(u.retired).toEqual([]);
+  expect([row(db, a).dup_of, row(db, b).hits, row(db, other).dup_of]).toEqual([b, 7, null]);
+  expect(decisions(db)).toEqual([{ ticket: null, who: "daemon", what: `merged lesson ${a} into ${b}` }]);
+  // Run again: nothing left to merge.
+  expect(upkeepLessons(db, { now: daysAfter(2) }).merged).toEqual([]);
+
+  // Restore takes the hits back, and the lesson is never merged again.
+  restoreLesson(db, a, daysAfter(3));
+  expect([row(db, a).dup_of, row(db, a).hits, row(db, b).hits]).toEqual([null, 2, 5]);
+  expect(decisions(db).at(-1)).toEqual({ ticket: null, who: "you", what: `restored lesson ${a}` });
+  expect(upkeepLessons(db, { now: daysAfter(4) }).merged).toEqual([]);
+  expect(() => restoreLesson(db, a, daysAfter(4))).toThrow(`lesson ${a} isn't merged or retired`);
+});
+
+test("upkeep retires lessons no brief carried for learn.retire_after days; restore brings one back for another stretch", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "up-")), "factory.db"));
+  const quiet = raw(db, "src/a/**", "Quiet lesson that nothing touched");
+  const used = raw(db, "src/b/**", "A lesson briefs keep loading");
+  lessonsFor(db, ["src/b/x.ts"], daysAfter(20));
+  expect(upkeepLessons(db, { now: daysAfter(29) }).retired).toEqual([]); // the default is 30 days
+  expect(upkeepLessons(db, { now: daysAfter(31) }).retired).toEqual([quiet]);
+  expect(row(db, quiet).retired_at).toBe(daysAfter(31));
+  expect(decisions(db).at(-1)).toEqual({ ticket: null, who: "daemon", what: `retired lesson ${quiet}` });
+  expect(upkeepLessons(db, { now: daysAfter(45), retireAfter: 10 }).retired).toEqual([used]); // hit on day 20
+  restoreLesson(db, quiet, daysAfter(46));
+  expect(row(db, quiet).retired_at).toBeNull();
+  expect(lessonsFor(db, ["src/a/x.ts"], daysAfter(47)).map((l) => l.id)).toEqual([quiet]);
+  expect(upkeepLessons(db, { now: daysAfter(60) }).retired).toEqual([]); // hit on day 47
+  expect(upkeepLessons(db, { now: daysAfter(78) }).retired).toEqual([quiet]);
+});
+
+test("the daemon's tick runs the upkeep once a day and the Learning tab reads its counts", () => {
+  const dir = mkdtempSync(join(tmpdir(), "factory-"));
+  const db = open(join(dir, "factory.db"));
+  const r = repo();
+  setRepo(db, { slug: "acme/api", path: r, lead: true });
+  const old = new Date(Date.now() - 40 * DAY).toISOString();
+  const quiet = raw(db, "src/a/**", "Quiet lesson that nothing touched", 0, old);
+  raw(db, "src/b/**", "Always run migrations before tests in src/db", 3, new Date().toISOString());
+  raw(db, "src/b/**", "Run the migrations before tests in src/db", 1, new Date().toISOString());
+  const fake: Run = (argv, cwd) => (argv[0] === "hc" || argv[0] === "gh" ? { code: 0, out: "[]" } : sh(argv, cwd));
+  const logs: string[] = [];
+  const p = { dir, db: join(dir, "factory.db"), status: join(dir, "status.json") } as any;
+  watchSessions(db, p, fake, (s) => logs.push(s));
+  expect(logs).toContain("factory: lesson upkeep: 1 merged, 1 retired");
+  expect(row(db, quiet).retired_at).not.toBeNull();
+  const u = learningMetrics(db, r).upkeep;
+  expect([u.last?.merged, u.last?.retired, u.merged, u.retired]).toEqual([1, 1, 1, 1]);
+  expect(validateMetrics({ ...JSON.parse(readFileSync(join(import.meta.dir, "../fixtures/acme-api/metrics.json"), "utf8")), learning: learningMetrics(db, r) })).toEqual([]);
+  // Not again the same day.
+  logs.length = 0;
+  raw(db, "src/c/**", "Another quiet one", 0, old);
+  watchSessions(db, p, fake, (s) => logs.push(s));
+  expect(logs.filter((l) => l.includes("lesson upkeep"))).toEqual([]);
+});
+
+test("factory learn restore from the CLI", () => {
+  process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "factory-"));
+  const out: string[] = [];
+  const run = (...a: string[]) => main([...a, "--name", "acme-api"], (s) => out.push(s));
+  run("init", "--repo", "acme/api", "--path", repo());
+  run("lesson", "add", "src/auth/**", "Hash", "tokens", "first.");
+  run("lesson", "retire", "1");
+  run("learn", "restore", "1");
+  expect(out.at(-1)).toBe("lesson 1 restored: back in briefs");
+  expect(() => run("learn", "restore", "1")).toThrow("lesson 1 isn't merged or retired");
+  expect(() => run("learn", "restore")).toThrow("usage: factory learn restore <id>");
 });

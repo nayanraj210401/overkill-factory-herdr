@@ -206,7 +206,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const guard = guardSettings({ stops: readFactory(o.repo).hard_stops ?? [...STOPS], roots: [...repos.flatMap((r) => r.worktree ?? []), join(o.dir, "tickets", String(o.id))], log: hardStopLog(o.dir, o.id) });
   const folder = join(o.dir, "tickets", String(o.id));
   const intent = existsSync(join(folder, "INTENT.md")) ? readFileSync(join(folder, "INTENT.md"), "utf8") : "";
-  const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run })).map((l) => `(${l.area}) ${l.text}`);
+  const lessons = lessonsFor(db, ticketPaths({ repos, intent, run: o.run }), o.now).map((l) => `(${l.area}) ${l.text}`);
   const use = agentSettings(t, s.agent, agent, defaults);
   const share = shareFor(db, { repo: o.repo, id: o.id, folder, output: s.output });
   const argv = withHandoffHook(argvFor(use, defaults, brief(t as any, o.stage, agent?.prompt ?? null, folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db))), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow);
@@ -234,7 +234,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; arms?: Record<string, unknown[]>; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; arms?: Record<string, unknown[]>; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number; retire_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; maintainer?: { gate?: "human" | "auto" }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" } };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");

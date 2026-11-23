@@ -102,3 +102,13 @@ test("values and settings as the tab names them", () => {
   assert.deepEqual([showValue(H), showValue("60%"), showValue(null), showValue(3)], ["haiku", "60%", "not set", "3"]);
   assert.deepEqual([settingLabel("agents.plan.model"), settingLabel("budget.handoff_at_context")], ["model for plan", "budget.handoff_at_context"]);
 });
+
+test("lesson upkeep: the last run's merges and retirements, the totals, and how to undo one", () => {
+  assert.deepEqual(learningView(doc, "7").upkeep, {
+    line: "Upkeep 2026-11-20 03:00: 2 merged, 1 retired",
+    totals: "5 merged · 3 retired in all · factory learn restore <id> undoes one",
+  });
+  assert.equal(learningView(empty({ upkeep: { last: null, merged: 0, retired: 0 } }), "7").upkeep.line, "Upkeep hasn't run yet");
+  assert.equal(learningView(empty(), "7").upkeep, null); // a metrics.json from before upkeep
+  assert.deepEqual(validateMetrics({ ...doc, learning: { ...doc.learning, upkeep: { last: null, merged: "x", retired: 0 } } }).filter((e) => e.startsWith("learning.upkeep")).length, 1);
+});
