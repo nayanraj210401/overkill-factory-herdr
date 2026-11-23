@@ -34,6 +34,7 @@ should be a lint rule or a test, a new stage, or making an override permanent.
   `factory ask maintainer "<the change>" --why "<evidence>"` (or `factory learn suggest`) files one the same way.
 - **Notes for you:** anyone can ask you something (`factory ask learner`). Those notes come
   after the digest; answer one with a proposal when the numbers support it.
+- **Any repo agent**, in any repo, with `factory ask <owner/name>:<agent> "<text>"`.
 - **Overwatch** shows the person your requests under Config's Pending changes. You don't
   need to tell it.
 - **The babysitter** owns review comments. When a comment keeps coming back, turn it into

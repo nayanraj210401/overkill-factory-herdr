@@ -15,7 +15,7 @@ import { activeOverrides, fileValue } from "./learn.ts";
 import { isLastGate, loadBlueprint, readFactory } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
 import { BLUEPRINT, requestedBy } from "./maintainer.ts";
-import { openAsks } from "./ask.ts";
+import { askTarget, openAsks } from "./ask.ts";
 import { healthOf } from "./health.ts";
 
 type Row = Record<string, any>;
@@ -120,7 +120,7 @@ export function buildStatus(db: Database, now = new Date()) {
     ...(process.env.FACTORY_TEST_SANDBOX ? {} : { claude: (() => { try { return claudeChoice(); } catch (e) { return { error: (e as Error).message, found: [] }; } })() }),
     overrides: overridesOf(db, lead?.path),
     // Open notes between agents (factory ask): to Overwatch they show in Needs you; all on Config's Pending changes.
-    asks: openAsks(db).map((a) => ({ id: a.id, from: a.from, to: a.to, text: a.text, why: a.why, ticket: a.about, at: a.at, delivered: !!a.delivered_at })),
+    asks: openAsks(db).map((a) => ({ id: a.id, from: a.from, to: askTarget(a), text: a.text, why: a.why, ticket: a.about, at: a.at, delivered: !!a.delivered_at })),
     to_review: 0,
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,

@@ -50,7 +50,7 @@ import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { liveOverwatch, overwatch } from "./overwatch.ts";
 import { liveRoster, rosterText, writeLive } from "./live.ts";
-import { ask as askAgent, askerOf, deliverToOverwatch, doneAsk, doneAsks, noteText, openAsks, type AskResult } from "./ask.ts";
+import { ask as askAgent, askerOf, askTarget, deliverToOverwatch, deliverToRepoAgents, doneAsk, doneAsks, noteText, openAsks, type AskResult } from "./ask.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, restoreLesson, retireLesson, setOverride, undoOverride, UPKEEP_EVERY, upkeepLessons } from "./learn.ts";
 import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
@@ -66,7 +66,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
   new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
-  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request, back as a change you merge; takes --kind and --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run)
+  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request, back as a change you merge; takes --kind and --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run), or a repo agent as <owner/name>:<agent> (a bare <agent> is the asker's own repo's; a note typed into its live session there, else its next brief). A repo agent asks the factory agents and its own repo's; another repo's goes through overwatch
   asks [agent] [--json] | asks done <id>  the open notes (to one agent) / mark one handled
   request [--kind k] [--repo owner/name] <the change…>  ask the maintainer, for you, for a change to the factory itself; it comes back as a change you merge.
                                      kinds: config (.factory/, the account config), blueprint, agents (repo or factory agents),
@@ -456,7 +456,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (kindFlag !== null && !isKind(kindFlag)) throw new Error(`--kind is one of ${REQUEST_KINDS.join(", ")}`);
       let r!: AskResult;
       change(db, () => {
-        r = askAgent(db, { to, text: words.filter(Boolean).join(" "), why, from: cmd === "request" ? fromFlag ?? "you" : askerOf(fromFlag), about: about === null ? null : Number(about),
+        r = askAgent(db, { to, text: words.filter(Boolean).join(" "), why, from: cmd === "request" ? fromFlag ?? "you" : askerOf(fromFlag), fromRepo: process.env.FACTORY_REPO ?? null, about: about === null ? null : Number(about),
           slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(sh), requestKind: kindFlag ?? undefined, target: repo !== "unknown" ? repo : undefined });
       });
       writeStatus(db, p.status);
@@ -464,7 +464,9 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         writeTicketFiles(db, p.dir, r.id);
         return log(`#${r.id} ${r.title}: a ${r.requestKind} request for the maintainer from ${r.ask.from}, in ${r.repo}; it starts when a slot is free, and the change comes back for you to merge`);
       }
-      return log(`note #${r.ask.id} for ${r.ask.to}, from ${r.ask.from}: ${r.ask.to === "overwatch" ? (r.delivered ? "typed into Overwatch's terminal, and in Needs you" : "in Needs you; Overwatch gets it when its terminal is live") : `waits for the ${r.ask.to}'s next run`}`);
+      const where = r.ask.toRepo ? (r.delivered ? "typed into its live session" : `no session of it is live in ${r.ask.toRepo}: its next one there gets it`)
+        : r.ask.to === "overwatch" ? (r.delivered ? "typed into Overwatch's terminal, and in Needs you" : "in Needs you; Overwatch gets it when its terminal is live") : `waits for the ${r.ask.to}'s next run`;
+      return log(`note #${r.ask.id} for ${askTarget(r.ask)}, from ${r.ask.from}: ${where}`);
     } else if (cmd === "asks") {
       if (sub === "done") {
         if (!Number.isInteger(Number(rest[0]))) throw new Error("usage: factory asks done <note id>");
@@ -1192,6 +1194,8 @@ function runAll(interval: number, log: (s: string) => void) {
         watchSessions(db, p, sh, log);
         // Notes for Overwatch that its terminal hasn't had yet (it was busy, or not running).
         deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(sh), name });
+        // Notes for repo agents whose session wasn't live (or busy) when they were asked.
+        deliverToRepoAgents(db, { run: sh, now: new Date().toISOString(), name });
         const lead = leadRepo(db);
         if (lead) runScheduledBenchmarks(db, { dir: p.dir, repo: lead.path, name, now: new Date().toISOString(), log, launch: spawnDetached });
         // Repo health: each due run:health trigger as its own `factory health` process, like a suite.

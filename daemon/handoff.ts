@@ -183,7 +183,7 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
   // The handoff this session starts from is renamed HANDOFF.session-<n-1>.md; it is shared as HANDOFF.md.
   const kept = join(o.folder, `HANDOFF.session-${o.n - 1}.md`);
   return render(loadPrompt(o.repo, "handoff"), {
-    neighbours: factoryMap(db), // the stage brief inside goes without it: the map leads once
+    neighbours: factoryMap(db, repos[0].repo), // the stage brief inside goes without it: the map leads once
     "ticket.id": String(t.id),
     "ticket.title": t.title,
     stage: o.s.stage,
@@ -267,7 +267,7 @@ function launch(db: Database, o: { dir: string; repo: string; run: Run; now: str
   const defaults = { harness: "claude", model: DEFAULT_MODEL };
   const access = (argv: string[]) => giveAccess(argv, agent, join(o.folder, ".skills", s.agent ?? "agent"), from); // the same skills and tools as the stage's first session
   const argv = withHandoffHook(access(argvFor(agentSettings(s, s.agent ?? "", agent, defaults), defaults, o.text)), o.dir, s.ticket, null, readFactory(o.repo).quality_floor ?? [], [o.folder, ...ticketRepos(db, s.ticket).flatMap((r) => r.worktree ?? [])], shareFor(db, { repo: o.repo, id: s.ticket, folder: o.folder }).allow);
-  const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: s.ticket });
+  const cmd = withFactory(argv, o.dir, { agent: s.agent, ticket: s.ticket, repo: ticketRepos(db, s.ticket)[0].repo });
   o.stop?.();
   const file = join(o.folder, "HANDOFF.md");
   if (existsSync(file)) renameSync(file, join(o.folder, `HANDOFF.session-${n - 1}.md`));

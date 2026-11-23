@@ -31,6 +31,8 @@ factory opened, in every repo, from the moment it opens until it merges or close
 
 ## Asking your neighbours
 
+- **Any repo agent**, in any repo, with `factory ask <owner/name>:<agent> "<text>"`: it is
+  typed into the agent's live session, or given to its next one.
 - **The maintainer**, for a change to the factory. For example, a comment that keeps
   coming back across PRs should become a lint rule or a lesson:
   `factory ask maintainer "<the change, and why>" --why "<the PRs and comments>"`.

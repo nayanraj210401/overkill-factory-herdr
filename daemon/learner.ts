@@ -326,7 +326,7 @@ export function runLearner(db: Database, o: { dir: string; repo: string; slug: s
   const digest = learnerDigest(db, o.repo);
   const notes = openAsks(db, "learner"); // factory ask learner: read now, handled once the run answers
   // The neighbour map first (stable, cached), then its role, the digest and any notes for it.
-  const prompt = [factoryMap(db), learnerPrompt(agent.prompt as string, digest), notesSection(notes)].filter(Boolean).join("\n\n");
+  const prompt = [factoryMap(db, null), learnerPrompt(agent.prompt as string, digest), notesSection(notes)].filter(Boolean).join("\n\n");
   const hold = learnerHold(db, o.repo, now, Math.ceil(prompt.length / 4));
   if (hold) return { ran: false, why: hold, filed: [], skipped: [] };
   const model = pinModel(typeof agent.model === "string" ? agent.model : "sonnet")!;

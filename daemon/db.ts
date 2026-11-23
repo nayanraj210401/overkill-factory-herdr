@@ -270,6 +270,8 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
   addColumn("lessons", "hit_at", "TEXT"),
   addColumn("lessons", "moved_hits", "INTEGER NOT NULL DEFAULT 0"),
   addColumn("lessons", "restored_at", "TEXT"),
+  // A note to a repo agent (ask.ts): the repo whose agent it is; null for a global agent.
+  addColumn("asks", "to_repo", "TEXT"),
 ];
 
 export function open(path: string): Database {
