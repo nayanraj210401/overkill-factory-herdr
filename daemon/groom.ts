@@ -24,11 +24,16 @@ import { splitGate } from "./split.ts";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
 
+// Blueprints no groomed ticket runs, even when grooming.blueprints names one: the maintainer's
+// (maintainer.ts) takes requests from Overwatch, and the maintenance agent's (PRD 7.5) runs
+// only from its daily trigger (triggers/maintenance.yaml).
+export const MAINTENANCE = "maintenance";
+export const NEVER_GROOMED: readonly string[] = [BLUEPRINT, MAINTENANCE];
+
 export function grooming(repo: string) {
   const g = readFactory(repo).grooming ?? {};
   const dir = join(repo, ".factory", "blueprints");
-  // The maintainer's blueprint (maintainer.ts) takes requests from Overwatch, never a groomed ticket.
-  const all = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".yaml")).map((f) => f.slice(0, -5)).filter((b) => b !== BLUEPRINT).sort() : [];
+  const all = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".yaml")).map((f) => f.slice(0, -5)).filter((b) => !NEVER_GROOMED.includes(b)).sort() : [];
   return {
     agent: g.agent ?? "triager",
     blueprints: g.blueprints?.filter((b) => all.includes(b)) ?? all,

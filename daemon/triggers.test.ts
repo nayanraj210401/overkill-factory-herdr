@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
@@ -104,6 +104,19 @@ test("the loop starts a scheduled ticket when due, and not again before the inte
   db.query("UPDATE tickets SET state = 'merged' WHERE trigger_name = 'nightly'").run();
   tick("2026-11-21T12:00:02Z");
   expect(db.query("SELECT COUNT(*) AS n FROM tickets WHERE trigger_name = 'nightly'").get()).toEqual({ n: 2 });
+});
+
+test("the shipped maintenance trigger starts one maintenance ticket a day, run by the maintenance agent", () => {
+  const shipped = readFileSync(join(import.meta.dir, "../fixtures/acme-api/.factory/triggers/maintenance.yaml"), "utf8");
+  const { db, calls, tick } = factory({ "maintenance.yaml": shipped });
+  tick("2026-11-21T10:00:00Z");
+  expect(db.query("SELECT blueprint, stage, state FROM tickets WHERE trigger_name = 'maintenance'").all()).toEqual([{ blueprint: "maintenance", stage: "maintain", state: "running" }]);
+  expect(calls.find((c) => c[0] === "hc")!.join(" ")).toContain("You are the repo's maintenance agent");
+  db.query("UPDATE tickets SET state = 'merged' WHERE trigger_name = 'maintenance'").run();
+  tick("2026-11-22T09:59:59Z"); // not a day yet
+  expect(db.query("SELECT COUNT(*) AS n FROM tickets WHERE trigger_name = 'maintenance'").get()).toEqual({ n: 1 });
+  tick("2026-11-22T10:00:00Z");
+  expect(db.query("SELECT COUNT(*) AS n FROM tickets WHERE trigger_name = 'maintenance'").get()).toEqual({ n: 2 });
 });
 
 test("pollQueue without a trigger still joins every Ready issue as before", () => {

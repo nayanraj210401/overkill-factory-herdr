@@ -345,6 +345,80 @@
           "runs": 10
         }
       ]
+    },
+    {
+      "name": "maintenance",
+      "start": "maintain",
+      "orchestrator": null,
+      "error": null,
+      "grooming_runs": 0,
+      "stages": [
+        {
+          "id": "maintain",
+          "agent": "maintenance",
+          "role": "build",
+          "check": null,
+          "next": [
+            "verify"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "verify",
+          "agent": null,
+          "role": null,
+          "check": "tests",
+          "next": [
+            "review"
+          ],
+          "on_fail": "maintain",
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "review",
+          "agent": "reviewer",
+          "role": "review",
+          "check": null,
+          "next": [
+            "pr"
+          ],
+          "on_fail": "maintain",
+          "gate": "auto",
+          "requires": null,
+          "runs": 0
+        },
+        {
+          "id": "pr",
+          "agent": "pr-writer",
+          "role": "build",
+          "check": null,
+          "next": [
+            "merge"
+          ],
+          "on_fail": null,
+          "gate": "auto",
+          "requires": "ready",
+          "runs": 0
+        },
+        {
+          "id": "merge",
+          "agent": null,
+          "role": null,
+          "check": null,
+          "next": [
+            "end"
+          ],
+          "on_fail": null,
+          "gate": "human",
+          "requires": null,
+          "runs": 0
+        }
+      ]
     }
   ]
 }

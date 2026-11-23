@@ -25,7 +25,7 @@ function setup(o: { tickets?: number[]; yaml?: string } = {}) {
   const db = open(dbPath);
   const repo = mkdtempSync(join(tmpdir(), "repo-"));
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(["git", "-C", repo, ...c]);
-  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
+  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true, filter: (p) => !p.endsWith("triggers/maintenance.yaml") }); // no daily maintenance ticket in these ticks
   if (o.yaml) appendFileSync(join(repo, ".factory/factory.yaml"), o.yaml);
   sh(["git", "-C", repo, "add", "."]);
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);

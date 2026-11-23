@@ -82,6 +82,10 @@ test("setup write commits .factory/ on factory/setup and leaves the checkout alo
   // Grooming picks only blueprints it may start: address-review is the review-comments trigger's.
   expect(yaml).toMatch(/blueprints: \[[^\]]*feature[^\]]*\]/);
   expect(yaml).not.toMatch(/blueprints: \[[^\]]*address-review/);
+  // The maintenance agent (PRD 7.5) comes along with its blueprint and daily trigger, and grooming never picks it.
+  expect(files).toEqual(expect.arrayContaining([".factory/agents/maintenance.md", ".factory/blueprints/maintenance.yaml", ".factory/triggers/maintenance.yaml"]));
+  expect(files.filter((f) => f.startsWith(".factory/triggers/"))).toEqual([".factory/triggers/maintenance.yaml"]);
+  expect(yaml).not.toMatch(/blueprints: \[[^\]]*maintenance/);
   expect(git(repo, "log", "-1", "--format=%s", "factory/setup")).toContain("factory setup write");
   // Again with the same answers: nothing new to commit. With another: one more commit.
   expect(writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { budget: "2M/100k", merge: "auto", maxRunning: 2 } }).committed).toBe(false);
