@@ -203,9 +203,11 @@ export default class FactoryConfig extends View {
     const notes = pendingNotes(status()?.asks);
     const cards = [status()?.claude?.found?.length, notes.length, overrides.length].some(Boolean);
     // The cards scroll in their own capped area and the files row takes what's left (min_h 0), so
-    // neither the file list nor the file view grows past the window.
+    // neither the file list nor the file view grows past the window. overflow_y_scroll, not
+    // _scrollbar: the scrollbar kind fills its max_h (or a parent's height) instead of its
+    // content, which left an empty band under a lone Claude card.
     return v_flex().size_full().min_h(0).gap(8).text_size(13).child(this.daemonBar(t))
-      .when(cards, (el) => el.child(v_flex().id("config-cards").flex_none().max_h(260).gap(8).overflow_y_scrollbar()
+      .when(cards, (el) => el.child(v_flex().id("config-cards").flex_none().max_h(260).gap(8).overflow_y_scroll()
         .when(Boolean(status()?.claude?.found?.length), (c) => c.child(this.claudeCard(t, status().claude)))
         .when(notes.length > 0, (c) => c.child(this.pendingCard(t, notes)))
         .when(overrides.length > 0, (c) => c.child(this.overridesCard(t, overrides)))))
