@@ -1,5 +1,5 @@
 // The factory's confirm dialog: every action that changes a ticket asks here first.
-// Opened by lib/store.js with props { title, detail, input?, confirm, args, done, peek?, root, overlay }.
+// Opened by lib/store.js with props { title, detail, input?, confirm, args, done, peek?, timeout?, root, overlay }.
 // Enter runs `factory <args>` on the shown factory (with `input`, plus what you typed,
 // as the shipped prompt mod does); Esc cancels. Failures toast gh's
 // or the CLI's own reason, so nothing fails silently. With `peek`, the terminal the command
@@ -34,7 +34,7 @@ export default class FactoryAsk extends View {
     cx.notify();
     cx.spawn(async () => {
       const { command, args } = cliCommand(CLI, p.root, typed == null ? p.args : [...p.args, typed]);
-      const r = await exec(command, args, { timeout: 60000 }).catch((e) => ({ code: 1, stderr: String(e) }));
+      const r = await exec(command, args, { timeout: p.timeout ?? 60000 }).catch((e) => ({ code: 1, stderr: String(e) }));
       closeOverlay(p.overlay);
       if (r.code !== 0) return notify({ title: `${p.confirm ?? "Action"} failed`, body: (r.stderr || r.stdout || "").replace(/^factory: /, "").trim(), level: "error" });
       notify({ title: p.done ?? "Done", level: "success", timeout: 3000 });

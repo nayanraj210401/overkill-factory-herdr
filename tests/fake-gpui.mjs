@@ -27,10 +27,10 @@ export const v_flex = () => element("v");
 export const svg = () => element("div");
 export const image = () => element("div");
 export class View {}
-export const InputState = { new: () => ({ on() {}, value: () => "", focus() {} }) };
+export const InputState = { new: () => ({ on() {}, value: () => "", set_value() {}, focus() {} }) };
 export const Input = { new: () => element("div") };
 export const TextView = { markdown: (id, text) => element("div").child(text) };
-export const EditorState = { new: () => ({ value: () => "", set_value() {} }) };
+export const EditorState = { new: () => { let v = ""; return { value: () => v, set_value(x) { v = x; }, on() {}, focus() {} }; } };
 export const Editor = { new: () => element("div") };
 export const ScrollHandle = { new: () => ({ scroll_to_item() {}, release() {} }) };
 

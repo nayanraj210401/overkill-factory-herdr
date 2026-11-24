@@ -19,11 +19,15 @@ export default class FactoryTicket extends View {
     this.handle = cx.focus_handle();
     this.v2 = new TicketV2(); // the V2_UI page (v2.js); drawn only while the gate is on
     this.v2.init();
+    // Props only smoke runs pass: open on a tab, and on the Memory tab run a search or open the editor.
+    const p = props() ?? {};
+    if (p.tab) { this.tab = String(p.tab); this.v2.opened = p.ticket ?? null; }
+    this.v2.seed = { search: p.search ?? null, edit: Boolean(p.edit) };
     if (!checking()) cx.spawn(async (cx) => {
       for (;;) {
         const m = (await nextCommand()).match(/tab-(\d)$/);
-        // tab-5 (The ask) is the V2 page's alone.
-        if (m && (m[1] !== "5" || v2UI(status()))) this.tab = m[1];
+        // tab-5 (The ask) and tab-6 (Memory) are the V2 page's alone.
+        if (m && (Number(m[1]) < 5 || v2UI(status()))) this.tab = m[1];
         cx.notify();
       }
     });
@@ -63,7 +67,7 @@ export default class FactoryTicket extends View {
     // The daemon rewrites these files with each status.json, so re-read on every reload.
     if (ticket.id !== this.id || state().at !== this.at) this.load(ticket.id, cx);
     if (v2UI(s)) return this.v2.render(this, ticket, s, cx);
-    if (this.tab === "5") this.tab = "1"; // the gate went off on V2's The ask tab
+    if (Number(this.tab) >= 5) this.tab = "1"; // the gate went off on V2's The ask or Memory tab
     const { summary, stages } = parseStatusMd(this.files["STATUS.md"]);
     const dot = (state) => div().size(12).flex_none().mt(3).rounded_full()
       .bg(state === "done" ? t.done : state === "now" ? t.working : t.raised).border(1).border_color(state === "next" ? t.border : t.background);

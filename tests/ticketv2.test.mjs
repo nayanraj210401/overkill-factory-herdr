@@ -6,6 +6,7 @@ import { answerResumeAsk, dropAsk } from "../lib/actions.js";
 import {
   V2_TABS, ticketKind, stageStrip, chips, askShort, askSource, deadline, hardRules, slices, checks, checkCount, readyRules, readyCount,
   diffFiles, activity, agentLine, tokenBar, tail, terminalQuestion, answerKeys, buttons, pageKey, span, cut,
+  mdSections, digestView, refTarget, hitRows, memoryKey, rebuildAsk,
 } from "../lib/ticketv2.js";
 
 const status = JSON.parse(readFileSync(new URL("../fixtures/acme-api/status.json", import.meta.url)));
@@ -255,6 +256,74 @@ test("the inline answer goes to factory answer through the dialog, prefilled", (
   assert.deepEqual(dropAsk(byId(401)), { error: "#401 is merged already" });
 });
 
-test("five tabs, The ask last", () => {
-  assert.deepEqual(V2_TABS.map((t) => `${t.key} ${t.title}`), ["1 Plan", "2 Checks", "3 Questions", "4 PR", "5 The ask"]);
+test("six tabs: The ask, then Memory", () => {
+  assert.deepEqual(V2_TABS.map((t) => `${t.key} ${t.title}`), ["1 Plan", "2 Checks", "3 Questions", "4 PR", "5 The ask", "6 Memory"]);
+});
+
+test("Markdown sections: headings become labels; an empty title heading and fenced # lines are not headings", () => {
+  assert.deepEqual(mdSections(readFileSync(new URL("../fixtures/acme-api/tickets/412/GATES.md", import.meta.url), "utf8")).map((s) => s.heading), ["Questions", "Decisions made for you"]);
+  assert.deepEqual(mdSections("# GATES\n\n## Questions\n\n- **Q1** (product): which?\n"), [{ heading: "Questions", body: "- **Q1** (product): which?" }]);
+  assert.deepEqual(mdSections("Lead line.\n\n## `Current` state ##\n```sh\n# a comment\n```"), [{ heading: null, body: "Lead line." }, { heading: "Current state", body: "```sh\n# a comment\n```" }]);
+  assert.deepEqual(mdSections(null), []);
+});
+
+const NOW = Date.parse("2026-11-24T12:00:00Z");
+const D = "## Decisions and why\n- A sliding window.\n## Current state\n- Spec written.";
+
+test("the digest view: its age, whose it is, and your edits", () => {
+  const own = digestView({ text: D, at: "2026-11-24T11:48:00Z", event: 9, from: 412, edited: null }, 412, NOW);
+  assert.equal(own.state, "own");
+  assert.equal(own.age, "updated 12m ago");
+  assert.deepEqual(own.sections.map((s) => s.heading), ["Decisions and why", "Current state"]);
+  assert.deepEqual(own.notes, []);
+  assert.equal(own.edited, false);
+  const edited = digestView({ text: D, at: "2026-11-24T11:58:00Z", event: 9, from: 412, edited: "2026-11-24T10:00:00Z" }, 412, NOW);
+  assert.equal(edited.edited, true);
+  assert.match(edited.notes[0], /^Has your edits \(2h ago\): every rewrite keeps your corrections/);
+  // A parent's: says so, and an edit there is the parent's, not this ticket's.
+  const inherited = digestView({ text: D, at: "2026-11-23T12:00:00Z", event: null, from: 412, edited: "2026-11-23T12:00:00Z" }, 10003, NOW);
+  assert.equal(inherited.state, "inherited");
+  assert.equal(inherited.age, "updated 1d ago");
+  assert.match(inherited.notes[0], /^Inherited from #412: /);
+  assert.equal(inherited.edited, false);
+  assert.equal(digestView(null, 412, NOW).state, "none");
+});
+
+test("a hit's ref: a transcript line, a file, a tab, GitHub, or nothing", () => {
+  assert.deepEqual(refTarget("transcript:/u/.claude/projects/x/s.jsonl#L42", "acme/api"), { open: "file", path: "/u/.claude/projects/x/s.jsonl", line: 42, label: "transcript · line 42" });
+  assert.deepEqual(refTarget("transcript:/u/s.jsonl", "acme/api"), { open: "file", path: "/u/s.jsonl", line: null, label: "transcript" });
+  assert.deepEqual(refTarget("file:/f/tickets/412/GROOMING.md", null), { open: "file", path: "/f/tickets/412/GROOMING.md", line: null, label: "GROOMING.md" });
+  assert.deepEqual(refTarget("file:TICKET-MEMORY.md", null), { open: "tab", tab: "6", label: "the digest" });
+  assert.deepEqual(refTarget("question:2", null), { open: "tab", tab: "3", label: "Q2" });
+  assert.deepEqual(refTarget("evidence:17", null), { open: "tab", tab: "2", label: "Checks" });
+  assert.equal(refTarget("pr:511", "acme/api").url, "https://github.com/acme/api/pull/511");
+  assert.equal(refTarget("issue:412", "acme/api").url, "https://github.com/acme/api/issues/412");
+  assert.equal(refTarget("commit:abc1234def", "acme/api").label, "abc1234");
+  for (const r of ["session:3", "decision:9", "ask:2", null, "", "pr:511"]) assert.equal(refTarget(r, r === "pr:511" ? null : "acme/api"), null, String(r));
+});
+
+test("hit rows: who or what, the snippet, when, and where a click goes", () => {
+  const rows = hitRows([
+    { ticket: 412, source: "transcript", kind: "user", snippet: "use a  [sliding]\nwindow", ref: "transcript:/t/s.jsonl#L7", at: "2026-11-24T10:05:00Z", rank: -3 },
+    { ticket: 412, source: "journal", kind: "answer", snippet: "A1 from you: [sliding]", ref: "question:1", at: "2026-11-20T10:00:00Z", rank: -2 },
+    { ticket: 412, source: "journal", kind: "session-end", snippet: "spec session [ended]", ref: "session:4", at: null, rank: -1 },
+  ], "acme/api", NOW);
+  assert.deepEqual(rows.map((r) => [r.who, r.mark, r.snippet, r.where, r.target?.open ?? null]), [
+    ["you", "❝", "use a [sliding] window", "transcript · line 7", "file"],
+    ["answer", "↩", "A1 from you: [sliding]", "Q1", "tab"],
+    ["session-end", "■", "spec session [ended]", "session", null],
+  ]);
+  assert.equal(rows[1].time, "Nov 20");
+  assert.equal(rows[2].time, "");
+  assert.deepEqual(hitRows(null), []);
+});
+
+test("the digest reloads when the journal grows; Rebuild on your edit asks first", () => {
+  const t = byId(412);
+  const k = memoryKey(t);
+  assert.equal(memoryKey(t), k);
+  assert.notEqual(memoryKey({ ...t, events: [...t.events.slice(1), { kind: "digest-edit", text: "you edited the digest", at: "2026-11-24T12:00:00Z" }] }), k);
+  assert.deepEqual(rebuildAsk(t).args, ["digest", "412", "--rebuild"]);
+  assert.match(rebuildAsk(t).detail, /your corrections are kept/);
+  assert.deepEqual(activity([{ kind: "digest-edit", text: "you edited the digest", at: "2026-11-24T11:00:00Z" }], NOW).map((e) => e.mark), ["✎"]);
 });

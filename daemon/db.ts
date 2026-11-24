@@ -330,6 +330,10 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
    ALTER TABLE tickets ADD COLUMN digest_at TEXT;
    ALTER TABLE tickets ADD COLUMN digest_event INTEGER;
    ALTER TABLE tickets ADD COLUMN digest_chunk INTEGER;`,
+  // Ticket memory, layer 4 (digest.ts setDigest): the digest as the person last saved it by hand,
+  // and when. Every later rewrite is told to keep their corrections; null until they edit it.
+  `ALTER TABLE tickets ADD COLUMN digest_user TEXT;
+   ALTER TABLE tickets ADD COLUMN digest_edited_at TEXT;`,
 ];
 
 export function open(path: string): Database {
@@ -337,7 +341,7 @@ export function open(path: string): Database {
   const db = new Database(path, { create: true, strict: true });
   // busy_timeout: the daemon and the CLI an agent runs share this file; a writer waits
   // for the other's transaction (a PR push can take seconds) instead of failing.
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 30000;");
+  db.exec("PRAGMA busy_timeout = 30000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   const { user_version } = db.query("PRAGMA user_version").get() as { user_version: number };
   for (let v = user_version; v < MIGRATIONS.length; v++) {
     db.transaction(() => {
