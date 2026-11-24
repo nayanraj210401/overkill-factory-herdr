@@ -44,6 +44,12 @@ if (fs.existsSync(path)) {
   fs.copyFileSync(path, `${path}.before-factory-${Date.now()}`);
 }
 for (const [section, keys] of Object.entries(ours)) theirs[section] = { ...theirs[section], ...keys };
+// Bare keys earlier versions bound (scripts/gen.mjs RETIRED_KEYS): they took letters from text boxes.
+const retired = { "layout:factory": ["g f", "]", "["], terminal: ["g", "[", "]"] };
+for (const [section, list] of Object.entries(retired)) {
+  for (const k of list) if (theirs[section] && k in theirs[section]) delete theirs[section][k];
+  if (theirs[section] && !Object.keys(theirs[section]).length) delete theirs[section];
+}
 fs.writeFileSync(path, JSON.stringify(theirs, null, 2) + "\n");
 JS
   echo "keys merged into $home/keys.json"

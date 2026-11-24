@@ -10,7 +10,7 @@ const openPicker = () => run("mod.open", { name: "factory-picker" });
 // Top of the sidebar: the factory switcher (name ▾, lead repo · branch · N repos), a line when
 // another factory needs you, then daemon and plan window. With props.footer: the budget bar.
 // The brand copy is always shown, so it runs the one status.json loader for every mod, and
-// takes `factory-chrome.needs-next` / `needs-prev` (] and [ in keys.json).
+// takes `factory-chrome.needs-next` / `needs-prev` (⌘J and ⇧⌘J in keys.json).
 export default class FactoryChrome extends View {
   init(_props, cx) {
     if (props()?.footer) return;

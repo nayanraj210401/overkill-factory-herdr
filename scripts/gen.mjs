@@ -67,7 +67,9 @@ export function layout() {
   };
 }
 
-export const FACTORY_KEYS = { "g f": "mod.open:factory-picker", "]": "factory-chrome.needs-next", "[": "factory-chrome.needs-prev" };
+// Chords, not bare keys: a layout's bindings are matched before text input, so a bare key bound
+// here is taken from every text box on the factory pages (the chat, search, the answer box).
+export const FACTORY_KEYS = { "cmd-k": "mod.open:factory-picker", "cmd-j": "factory-chrome.needs-next", "cmd-shift-j": "factory-chrome.needs-prev" };
 
 export function keys() {
   // ⌘O opens the file the shown config page has selected. It goes to the header, which every page
@@ -79,10 +81,7 @@ export function keys() {
   for (const p of PAGES) if (p.key) factory[`cmd-${p.key}`] = { command: "layout.select", args: { stack: STACK, child: p.id } };
   // The factory picker, and the next / previous other factory that needs you (factory-chrome).
   Object.assign(factory, FACTORY_KEYS);
-  // Bare keys bound for the layout would be taken from the terminals in it (Overwatch, a
-  // ticket's agent): the terminal section wins, so these go to the program there.
-  const terminal = Object.fromEntries(["g", "[", "]"].map((k) => [k, "terminal"]));
-  return { global: { "cmd-shift-f": "layout.switch:factory" }, terminal, "layout:factory": factory };
+  return { global: { "cmd-shift-f": "layout.switch:factory" }, "layout:factory": factory };
 }
 
 const files = { "layouts/factory.json": layout(), "keys.json": keys() };
