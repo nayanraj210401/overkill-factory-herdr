@@ -1,11 +1,13 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, shared, readTextFile, nextCommand, checking, props, exec, notify } from "herdr";
-import { parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, prLinks, prColor, watchNote, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW, TALK_HOW } from "./lib/model.js";
+import { v2UI, parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, prLinks, prColor, watchNote, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW, TALK_HOW } from "./lib/model.js";
 import { root, status, state, peekAgent, act } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 import { cliCommand, talkable } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
+import { V2_FILES } from "./lib/ticketv2.js";
+import { TicketV2 } from "./v2.js";
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
 // beside the live agent terminal once M2 starts agents (docs/layouts/02-ticket.png).
@@ -15,10 +17,13 @@ export default class FactoryTicket extends View {
     this.files = {};
     this.tab = "1";
     this.handle = cx.focus_handle();
+    this.v2 = new TicketV2(); // the V2_UI page (v2.js); drawn only while the gate is on
+    this.v2.init();
     if (!checking()) cx.spawn(async (cx) => {
       for (;;) {
         const m = (await nextCommand()).match(/tab-(\d)$/);
-        if (m) this.tab = m[1];
+        // tab-5 (The ask) is the V2 page's alone.
+        if (m && (m[1] !== "5" || v2UI(status()))) this.tab = m[1];
         cx.notify();
       }
     });
@@ -30,7 +35,7 @@ export default class FactoryTicket extends View {
     this.at = state().at;
     cx.spawn(async (cx) => {
       const dir = `${root()}/tickets/${id}`;
-      for (const name of ["STATUS.md", ...TICKET_TABS.map((t) => t.file)]) this.files[name] = await readTextFile(`${dir}/${name}`);
+      for (const name of ["STATUS.md", ...TICKET_TABS.map((t) => t.file), ...(v2UI(status()) ? V2_FILES : [])]) this.files[name] = await readTextFile(`${dir}/${name}`);
       if (this.id === id) cx.notify();
     });
   }
@@ -57,6 +62,8 @@ export default class FactoryTicket extends View {
     if (!ticket) return div().size_full().bg(t.background);
     // The daemon rewrites these files with each status.json, so re-read on every reload.
     if (ticket.id !== this.id || state().at !== this.at) this.load(ticket.id, cx);
+    if (v2UI(s)) return this.v2.render(this, ticket, s, cx);
+    if (this.tab === "5") this.tab = "1"; // the gate went off on V2's The ask tab
     const { summary, stages } = parseStatusMd(this.files["STATUS.md"]);
     const dot = (state) => div().size(12).flex_none().mt(3).rounded_full()
       .bg(state === "done" ? t.done : state === "now" ? t.working : t.raised).border(1).border_color(state === "next" ? t.border : t.background);

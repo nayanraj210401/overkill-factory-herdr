@@ -14,6 +14,7 @@
     "cmd-alt-2": "factory-ticket.tab-2",
     "cmd-alt-3": "factory-ticket.tab-3",
     "cmd-alt-4": "factory-ticket.tab-4",
+    "cmd-alt-5": "factory-ticket.tab-5",
     "cmd-1": {
       "command": "layout.select",
       "args": {

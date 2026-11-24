@@ -29,6 +29,7 @@ export const image = () => element("div");
 export class View {}
 export const InputState = { new: () => ({ on() {}, value: () => "", focus() {} }) };
 export const Input = { new: () => element("div") };
+export const TextView = { markdown: (id, text) => element("div").child(text) };
 export const ScrollHandle = { new: () => ({ scroll_to_item() {}, release() {} }) };
 
 // herdr: lib/store.js reads the status from shared("factory.state"); that is fake.status.
@@ -39,6 +40,7 @@ export const shared = (key) => (key === "factory.state" ? { at: 0, status: fake.
 export const setShared = () => {};
 export const run = () => {};
 export const exec = () => {};
+export const hc = async () => ({ code: 1, stdout: "", stderr: "" });
 export const notify = () => {};
 export const props = () => ({});
 export const readTextFile = async () => null;

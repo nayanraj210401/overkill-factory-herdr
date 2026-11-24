@@ -72,7 +72,7 @@ export function keys() {
   // ⌘O opens the file the shown config page has selected. It goes to the header, which every page
   // shows: a <mod>.<command> reaches shown copies only, and there are two config pages.
   const factory = { "cmd-shift-f": "layout.switch:main", "cmd-o": "factory-header.open" };
-  for (const n of ["1", "2", "3", "4"]) factory[`cmd-alt-${n}`] = `factory-ticket.tab-${n}`;
+  for (const n of ["1", "2", "3", "4", "5"]) factory[`cmd-alt-${n}`] = `factory-ticket.tab-${n}`;
   for (const p of PAGES) if (p.key) factory[`cmd-${p.key}`] = { command: "layout.select", args: { stack: STACK, child: p.id } };
   // The factory picker, and the next / previous other factory that needs you (factory-chrome).
   Object.assign(factory, FACTORY_KEYS);
