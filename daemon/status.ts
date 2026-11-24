@@ -1,6 +1,7 @@
 // Builds status.json (the contract in lib/status.js) from SQLite rows. The
 // window reads only this file, so the daemon stays the one source of truth.
 import { claudeChoice } from "./claude-bin.ts";
+import { v2UI } from "./account.ts";
 import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
@@ -138,6 +139,8 @@ export function buildStatus(db: Database, now = new Date()) {
       budget: { input: perDay?.input ?? Number(getMeta(db, "budget_day_in") ?? 40e6), output: perDay?.output ?? Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
     away: digest(db, now.toISOString()),
+    // Which pages the mods draw (lib/model.js v2UI): V2_UI in factory.yaml, else config.yaml.
+    ui: { v2: v2UI(lead ? readFactory(lead.path) : {}) },
     ...(auto.length ? { auto_gates: auto } : {}),
     // Each repo's last full-suite run (health.ts), for Home.
     ...(health.length ? { health } : {}),

@@ -7,6 +7,7 @@
 //   cloud:   { on_sleep: move | off }                     # move running tickets to the cloud at sleep, back at wake
 //   artifacts: { as: artifact | doc | off, publish: [INTENT.md, SLICES.md] }  # share plans on claude.ai (artifacts.ts)
 //   profile: { taste: ["…"], rules: ["…"] }                # in every agent's brief
+//   V2_UI:   true | false                                 # the new Ticket and Blueprint pages; false by default
 //
 // A repo's factory.yaml wins key by key where it sets the same thing (plan.pause_at, away.*);
 // budget.per_day is checked at both levels, the factory's own and the account's total.
@@ -23,6 +24,7 @@ export type Account = {
   artifacts?: { as?: "artifact" | "doc" | "off"; publish?: string[] };
   profile?: { taste?: string[]; rules?: string[] };
   claude?: { path?: string };
+  V2_UI?: boolean;
 };
 
 export const accountFile = (home = process.env.FACTORY_HOME ?? join(homedir(), ".factory")) => join(home, "config.yaml");
@@ -35,6 +37,9 @@ export function readAccount(file = accountFile()): Account {
   if (errors.length) throw new Error(`${file}: ${errors[0]}`);
   return (Bun.YAML.parse(text) as Account) ?? {};
 }
+
+// The V2 UI gate: factory.yaml's V2_UI over the account's; off unless one says true.
+export const v2UI = (factory: { V2_UI?: boolean }, account: Account = readAccount()) => (factory.V2_UI ?? account.V2_UI) === true;
 
 // Your rules and taste, as the brief's paragraph; "" with none, so the paragraph drops.
 export function profileText(a = readAccount()) {

@@ -87,3 +87,18 @@ test("profile: your rules and taste go into every stage brief; none, no paragrap
   process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "fh-"));
   expect(brief({ id: 1, title: "t" }, "spec", "P", "/f")).not.toContain("rules and taste");
 });
+
+test("V2_UI is off by default, on from config.yaml, and factory.yaml wins over it", () => {
+  const { v2UI } = require("./account.ts") as typeof import("./account.ts");
+  const { readFactory } = require("./runner.ts") as typeof import("./runner.ts");
+  const { validateFile } = require("./validate.ts") as typeof import("./validate.ts");
+  const on = (acct: string, own: string) => v2UI(readFactory(account(acct, own).repo));
+  expect(on("", "")).toBe(false);
+  expect(on("V2_UI: true\n", "")).toBe(true);
+  expect(on("", "V2_UI: true\n")).toBe(true);
+  expect(on("V2_UI: true\n", "V2_UI: false\n")).toBe(false);
+  expect(on("V2_UI: false\n", "V2_UI: true\n")).toBe(true);
+  expect(validateAccount("V2_UI: yes please\n")).toEqual(["V2_UI: expected true or false, got string"]);
+  expect(validateFile("factory.yaml", "name: t\nV2_UI: 1\n")).toEqual(["V2_UI: expected true or false, got number"]);
+  expect(validateFile("factory.yaml", "name: t\nV2_UI: true\n")).toEqual([]);
+});
