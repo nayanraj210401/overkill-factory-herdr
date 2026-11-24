@@ -7,6 +7,7 @@
 # this blueprint's revert rate), let ready maintenance PRs merge themselves:
 #   merge:    { step: merge, gate: auto, next: [end] }
 name: maintenance
+description: "Scheduled repo upkeep the maintenance agent files on its own."
 start: maintain
 stages:
   maintain: { agent: maintenance, next: [verify] }

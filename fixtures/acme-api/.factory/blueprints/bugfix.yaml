@@ -2,6 +2,7 @@
 # Each stage names a shared step (.factory/steps/<name>.yaml, else ~/.factory/steps/):
 # the step says what runs, the blueprint says where it goes next.
 name: bugfix
+description: "Something that worked is broken: fix it, prove it with the tests, review it."
 orchestrator: foreman
 start: implement
 stages:

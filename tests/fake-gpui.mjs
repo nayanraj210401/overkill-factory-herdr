@@ -29,6 +29,8 @@ export const image = () => element("div");
 export class View {}
 export const InputState = { new: () => ({ on() {}, value: () => "", focus() {} }) };
 export const Input = { new: () => element("div") };
+export const EditorState = { new: () => ({ value: () => "", set_value() {} }) };
+export const Editor = { new: () => element("div") };
 export const ScrollHandle = { new: () => ({ scroll_to_item() {}, release() {} }) };
 
 // herdr: lib/store.js reads the status from shared("factory.state"); that is fake.status.

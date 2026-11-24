@@ -142,6 +142,7 @@ Both pages are read-only. A line on each says the maintainer makes every change 
 - **Where it's set:** a top-level key in the account config (`~/.factory/config.yaml`, every factory) or in a repo's `.factory/factory.yaml` (that factory). The lead repo's `factory.yaml` wins over the account. `factory validate` checks it is `true` or `false`.
 - **How the mods read it:** the daemon writes `ui: { v2: <bool> }` into status.json (`lib/status.js` checks it when present). A page calls `v2UI(status())` from `lib/model.js`. It's off when `ui` is missing, so an older daemon keeps the current pages.
 - **Backward compatibility:** the current pages stay the default. A V2 page draws only when the gate is on.
+- **Blueprint V2** (`mods/factory-blueprint/v2.js`, numbers in `lib/blueprint-v2.js`): blueprints.json adds each blueprint's `description` (an optional `description:` line in the blueprint file, the "why grooming picks it"), a `stats` strip (tickets in 7 days, the share with no fail-back, the median ask → PR time and cost over PRs opened), per stage its last 10 outcomes, pass/fail and median time and recent runs (a run fails when the ticket goes next to its `on_fail`, or parks on it with retries used up), and `steps` (each step's file, description and output). A number with nothing to measure is null and the page leaves it out.
 
 #### Reviews
 
