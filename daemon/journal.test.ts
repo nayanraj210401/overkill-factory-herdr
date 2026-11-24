@@ -170,3 +170,23 @@ test("factory journal prints a ticket's events in order, as JSON, or the ones a 
   run("status");
   expect(status().events).toBeUndefined();
 });
+
+test("factory sessions --json: each session's stage, terminal, transcript and Claude session, oldest first (the V2 Chat view reads it)", () => {
+  process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "factory-"));
+  const out: string[] = [];
+  const run = (...a: string[]) => { out.length = 0; main([...a, "--name", "acme-api"], (s) => out.push(s)); return out; };
+  run("init", "--repo", "acme/api");
+  run("ticket", "add", "412", "Rate-limit", "login");
+  expect(JSON.parse(run("sessions", "412", "--json")[0])).toEqual([]);
+  const db = open(paths("acme-api").db);
+  db.exec(`INSERT INTO sessions (ticket, stage, agent, terminal, argv, started_at, ended_at, claude_session, transcript)
+      VALUES (412, 'implement', 'builder', 't3', '["claude"]', '2026-11-22T09:00:00Z', '2026-11-22T09:40:00Z', 'aaaa', '/x/aaaa.jsonl'),
+             (412, 'implement', 'builder', 't7', '["claude"]', '2026-11-22T10:00:00Z', NULL, 'bbbb', '/x/bbbb.jsonl')`);
+  db.close();
+  const rows = JSON.parse(run("sessions", "412", "--json")[0]);
+  expect(rows.map((r: any) => [r.stage, r.terminal, r.ended_at, r.claude_session, r.transcript])).toEqual([
+    ["implement", "t3", "2026-11-22T09:40:00Z", "aaaa", "/x/aaaa.jsonl"],
+    ["implement", "t7", null, "bbbb", "/x/bbbb.jsonl"],
+  ]);
+  expect(Object.keys(rows[0]).sort()).toEqual(["agent", "claude_session", "ended_at", "id", "stage", "started_at", "terminal", "tokens_in", "tokens_out", "transcript", "usd"]);
+});

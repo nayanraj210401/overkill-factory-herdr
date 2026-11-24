@@ -29,6 +29,9 @@ export const image = () => element("div");
 export class View {}
 export const InputState = { new: () => ({ on() {}, value: () => "", set_value() {}, focus() {} }) };
 export const Input = { new: () => element("div") };
+// factory-chat's composer and side chat: a box whose value a test can set.
+export const TextareaState = { new: () => { let v = ""; return { on() {}, value: () => v, set_value(x) { v = x; }, set_auto_grow() {}, focus() {} }; } };
+export const Textarea = { new: () => element("div") };
 export const TextView = { markdown: (id, text) => element("div").child(text) };
 export const EditorState = { new: () => { let v = ""; return { value: () => v, set_value(x) { v = x; }, on() {}, focus() {} }; } };
 export const Editor = { new: () => element("div") };
@@ -51,8 +54,12 @@ export const appHome = () => "/fake";
 export const home = () => "/fake";
 export const spaces = () => [];
 export const openOverlay = () => {};
+// factory-chat reads a terminal's status from terminals(); a test puts the ones it wants in fake.terminals.
+export const terminals = () => fake.terminals ?? [];
+export const nextCommand = () => new Promise(() => {});
+export const window = () => ({ platform: "macos" });
 
-export const cx = { focus_handle: () => ({ is_focused: () => true, focus() {} }), spawn() {}, notify() {} };
+export const cx = { focus_handle: () => ({ is_focused: () => true, focus() {} }), spawn() {}, notify() {}, bind_keys() {}, timer: { every: () => ({ cancel() {} }), after() {} } };
 
 // --- layout ---
 

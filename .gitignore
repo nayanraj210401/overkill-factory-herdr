@@ -7,3 +7,5 @@ mods/factory-soon/previews/
 smoke-out/
 .serena/
 dist/
+# sync.sh copies factory-chat's chat/ into the Ticket page (a mod can't import another's files).
+mods/factory-ticket/chat/

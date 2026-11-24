@@ -3,6 +3,9 @@
 // now, its live terminal or the question it waits on, the files it changed and its journal.
 // main.js keeps the files and the tab; this keeps the live parts (the terminal's tail, the
 // diff, the ready rules), the answer box, and the Memory tab (the digest, its edit, the search).
+// Over both columns, the Overview · Chat · Diff switch (docs/prototypes/chat-v2): Chat is the
+// ticket's agent as a chat (factory-chat's view, copied into ./chat by sync.sh), Diff the
+// ticket's diff as the d window draws it.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, TextView, InputState, Input, EditorState, Editor } from "gpui-base";
 import { theme, exec, hc, notify, checking } from "herdr";
@@ -14,6 +17,9 @@ import { V2_TABS, ticketKind, waitsOnYou, stageStrip, chips, askShort, askSource
   diffFiles, cut, activity, agentLine, tokenBar, tail, terminalQuestion, answerKeys, buttons, pageKey,
   mdSections, digestView, hitRows, memoryKey, rebuildAsk } from "./lib/ticketv2.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
+import { parseDiff } from "./lib/diff.js";
+import { ticketViews } from "./lib/ticketchat.js";
+import { TicketChat } from "./chat/host.js"; // mods/factory-chat/chat/, copied by scripts/sync.sh
 
 const TAIL_MS = 2000; // the live terminal's tail, while it shows
 const CLI_MS = 20000; // the diff and the ready rules, at most this often per ticket
@@ -33,6 +39,7 @@ export class TicketV2 {
     this.query = "";
     this.editing = null; // the ticket whose digest is open in the editor
     this.busy = null; // "save" | "rebuild" while the CLI runs
+    this.chat = new TicketChat(); // the Chat view; its retained view is made the first time it shows
   }
 
   // What the page's keys skip while you type: the answer box, the search box or the digest editor.
@@ -183,7 +190,7 @@ export class TicketV2 {
       const run = (args) => this.cli(args);
       if (!["grooming", "queued"].includes(ticket.state)) {
         const r = await run(["diff", String(ticket.id)]);
-        this.diff = r.code === 0 ? diffFiles(r.stdout) : { error: `No diff: ${cut((r.stderr || r.stdout || "").replace(/^factory: /, "").trim().split("\n")[0], 90)}` };
+        this.diff = r.code === 0 ? { ...diffFiles(r.stdout), raw: r.stdout } : { error: `No diff: ${cut((r.stderr || r.stdout || "").replace(/^factory: /, "").trim().split("\n")[0], 90)}` };
       }
       if (kind === "ready") {
         const r = await run(["ready", String(ticket.id)]);
@@ -507,15 +514,58 @@ export class TicketV2 {
       .child(h_flex().id("actions").flex_none().gap(8).flex_wrap().px(16).py(12).border_t(1).border_color(t.border)
         .children(btns.map(button)).child(div().flex_1()).child(refresh));
 
-    return h_flex().size_full().text_size(13).rounded(10).bg(t.background).border(1).border_color(t.border).overflow_hidden()
+    // ── Overview · Chat · Diff ───────────────────────────────────────────
+    const views = ticketViews(s) ?? [];
+    const view = views.some((v) => v.id === page.view) ? page.view : "overview";
+    const switchEl = h_flex().id("views").flex_none().gap(10).px(16).py(7).items_center().border_b(1).border_color(t.border)
+      .child(div().flex_1().min_w_0().truncate().text_size(12.5).text_color(t.muted)
+        .child(view === "overview" ? " " : `#${ticket.id} ${ticket.title}`))
+      .child(h_flex().id("view-switch").flex_none().rounded(6).border(1).border_color(t.border).overflow_hidden()
+        .children(views.map((v, i) => div().id(`view-${v.id}`).px(10).py(2).text_size(12).cursor_pointer().when(i > 0, (el) => el.border_l(1).border_color(t.border))
+          .bg(v.id === view ? t.raised : t.background).text_color(v.id === view ? t.foreground : t.muted)
+          .hover((st) => st.text_color(t.foreground)).on_click((_e, cx) => { page.view = v.id; cx.notify(); })
+          .child(v.title))))
+      .child(div().flex_none().text_size(11.5).text_color(t.dim).child("⌘⌥7–9"));
+    const chatEl = (view === "chat" || this.chat.entity) && this.chat.render(ticket, s, cx, view === "chat");
+    const body = view === "chat" ? div().id("chat-view").flex_1().min_h(0).child(chatEl)
+      : view === "diff" ? this.diffView(ticket, daemon, d, t, mono)
+      : h_flex().id("overview").flex_1().min_h(0).child(left).child(right);
+
+    return v_flex().size_full().text_size(13).rounded(10).bg(t.background).border(1).border_color(t.border).overflow_hidden()
       .track_focus(page.handle).on_mouse_down("left", () => page.handle.focus())
       .on_key_down((e, cx) => {
-        if (this.typing) return; // keys typed in the answer box, the search or the editor stay there
-        if (/^[1-6]$/.test(e.key) && !e.modifiers.platform && !e.modifiers.control && !e.modifiers.alt) { page.tab = e.key; cx.stop_propagation(); cx.notify(); return; }
+        if (this.typing || view === "chat") return; // keys typed in a box, the editor or the chat stay there
+        if (/^[1-6]$/.test(e.key) && !e.modifiers.platform && !e.modifiers.control && !e.modifiers.alt) { page.tab = e.key; page.view = "overview"; cx.stop_propagation(); cx.notify(); return; }
         const a = pageKey(keyAction(e), ticket, kind);
         if (a && a.kind !== "move" && a.kind !== "open") { this.act(a, ticket, s); cx.stop_propagation(); }
       })
-      .child(left)
-      .child(right);
+      .child(switchEl)
+      .child(body);
+  }
+
+  // The Diff view: the ticket's diff as the d window draws it (factory-diff), from the same
+  // `factory diff` the right column's file list reads.
+  diffView(ticket, daemon, d, t, mono) {
+    const parsed = d?.raw != null ? parseDiff(d.raw, 3000) : null;
+    const note = ["grooming", "queued"].includes(ticket.state) ? `#${ticket.id} hasn't started; no diff yet.`
+      : !daemon ? "Sample data: a real ticket's diff shows here."
+      : !d ? "Reading the diff…" : d.error ? d.error : !parsed.rows.length ? "No changes yet." : null;
+    const row = (r, i) => {
+      if (r.kind === "file") return h_flex().id(`dr-${i}`).w_full().h(26).flex_none().px(12).gap(10).items_center().bg(t.surface).border_t(1).border_color(t.border)
+        .child(div().flex_1().min_w_0().truncate().font_semibold().text_color(t.foreground).child(r.file.path))
+        .child(div().text_color(t.done).child(`+${r.file.add}`)).child(div().text_color(t.ansi1).child(`−${r.file.del}`));
+      if (r.kind === "@") return div().id(`dr-${i}`).w_full().px(12).h(20).flex_none().truncate().bg(t.raised).text_color(t.dim).child(r.text);
+      return h_flex().id(`dr-${i}`).w_full().h(20).flex_none().gap(10).when(r.kind === "+", (e) => e.bg(t.done + "18")).when(r.kind === "-", (e) => e.bg(t.ansi1 + "18"))
+        .child(div().w(40).flex_none().text_right().text_color(t.dim).child(String(r.number)))
+        .child(div().w(10).flex_none().text_color(r.kind === "+" ? t.done : r.kind === "-" ? t.ansi1 : t.dim).child(r.kind === " " ? "" : r.kind))
+        .child(div().flex_1().min_w_0().whitespace_nowrap().overflow_hidden().text_color(t.foreground).child(r.text));
+    };
+    return v_flex().id("diff-view").flex_1().min_h(0)
+      .child(h_flex().flex_none().px(16).py(8).gap(10).items_center().border_b(1).border_color(t.border).text_size(12.5)
+        .child(div().flex_1().min_w_0().truncate().text_color(t.muted).child(parsed?.files.length ? `${parsed.files.length} file${parsed.files.length > 1 ? "s" : ""} · +${parsed.add} −${parsed.del}${parsed.cut ? ` · first 3000 lines` : ""}` : "Diff"))
+        .child(div().id("diff-window").px(10).py(4).rounded(6).border(1).border_color(t.border).cursor_pointer().text_color(t.foreground)
+          .hover((st) => st.border_color(t.accent)).on_click(() => act({ kind: "diff" }, ticket)).child("Open in a window  d")))
+      .child(note ? div().px(16).py(12).text_color(t.dim).child(note)
+        : v_flex().id("diff-rows").flex_1().min_h(0).overflow_y_scroll().font_family(mono).text_size(12).children(parsed.rows.map(row)));
   }
 }

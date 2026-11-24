@@ -14,6 +14,10 @@ registerHooks({
     if (spec === "gpui-kit" || spec === "gpui-base" || spec === "herdr") return { url: FAKE, shortCircuit: true };
     if (spec === "./sample.js" || spec === "./sample-reviews.js" || spec === "./lib/cli.js") return { url: EMPTY, shortCircuit: true };
     if (spec.startsWith("./lib/") && ctx.parentURL?.includes("/mods/")) return next(new URL(spec.slice(6), LIB).href, ctx);
+    // The page's copy of factory-chat's view (scripts/sync.sh puts it in factory-ticket/chat/), and its ../lib/.
+    if (spec === "./chat/host.js" && ctx.parentURL?.includes("/mods/factory-ticket/")) return next(pathToFileURL("mods/factory-chat/chat/host.js").href, ctx);
+    if (spec === "../lib/cli.js") return { url: EMPTY, shortCircuit: true };
+    if (spec.startsWith("../lib/") && ctx.parentURL?.includes("/mods/")) return next(new URL(spec.slice(7), LIB).href, ctx);
     return next(spec, ctx);
   },
 });
