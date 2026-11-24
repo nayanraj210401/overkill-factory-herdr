@@ -2,11 +2,6 @@
   "global": {
     "cmd-shift-f": "layout.switch:factory"
   },
-  "terminal": {
-    "g": "terminal",
-    "[": "terminal",
-    "]": "terminal"
-  },
   "layout:factory": {
     "cmd-shift-f": "layout.switch:main",
     "cmd-o": "factory-header.open",
@@ -75,8 +70,8 @@
         "child": "config"
       }
     },
-    "g f": "mod.open:factory-picker",
-    "]": "factory-chrome.needs-next",
-    "[": "factory-chrome.needs-prev"
+    "cmd-k": "mod.open:factory-picker",
+    "cmd-j": "factory-chrome.needs-next",
+    "cmd-shift-j": "factory-chrome.needs-prev"
   }
 }

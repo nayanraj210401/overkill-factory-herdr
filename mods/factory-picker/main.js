@@ -1,5 +1,5 @@
 // The factory picker: every factory on this machine, its repos and live counts, with Herdr's
-// agent-status dot. Opened as a popup (mod.json) by the brand row or `g f`. j/k or arrows and
+// agent-status dot. Opened as a popup (mod.json) by the brand row or ⌘K. j/k or arrows and
 // enter, or a click, show that factory's space (lib/store.js switchFactory); Esc closes.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
