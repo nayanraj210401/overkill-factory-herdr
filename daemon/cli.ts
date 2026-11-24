@@ -67,7 +67,7 @@ import { EXCLUDE_LINE, MEMORY_FILE, keepLocal, trackedFactory, trackedWarning } 
 import { listMemories, memoryLine, pruneMemories, recall, remember, setOutcome, settleMemories, type Memory } from "./memory.ts";
 import { eventLine, journal, ticketEvents } from "./journal.ts";
 import { CHUNK_DAYS, hitLine, indexTranscripts, pruneChunks, recallHits } from "./recall.ts";
-import { digestOf, runDigest, runDueDigest } from "./digest.ts";
+import { digestOf, runDigest, runDueDigest, setDigest } from "./digest.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
@@ -109,8 +109,9 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
                                      and answers, checks, verdicts, send-backs, the PR, the merge; --search ranks its events by full text
   recall [<id>] "<words>" [--json] [--limit n]  search a ticket's journal and its sessions' transcripts together (every ticket's without an
                                      id), best match first; each hit says its ticket, kind or role, a snippet, and where it came from
-  digest <id> [--print|--rebuild]    the ticket's digest, the memory every brief carries (or its parent's, until it has one); --rebuild
-                                     has Haiku write it again from the whole journal and every transcript chunk, now
+  digest <id> [--print|--rebuild|--set <file|->]  the ticket's digest, the memory every brief carries (or its parent's, until it has
+                                     one); --rebuild has Haiku write it again from the whole journal and every transcript chunk, now;
+                                     --set stores your own version (from the file, or stdin with -), which later rewrites keep
   cloud <id> | all                   hand a running ticket (or every one) to a Claude Code cloud session; skips what can't move, with a reason
   local <id> | all                   bring a ticket (or every one in the cloud) back and resume it here
   routine [brief]                    write ROUTINE.md, the prompt for a Claude Code scheduled task that watches PRs while you sleep, and print how to set it up
@@ -268,6 +269,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const daysFlag = flag(args, "days");
   const searchFlag = flag(args, "search");
   const parentFlag = flag(args, "parent");
+  const setFlag = flag(args, "set");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -771,12 +773,21 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     } else if (cmd === "digest") {
       // The ticket's digest (digest.ts): printed, or written again now from everything (--rebuild).
       const id = Number(sub);
-      if (!Number.isInteger(id) || !sub) throw new Error("usage: factory digest <id> [--print|--rebuild]");
+      if (!Number.isInteger(id) || !sub) throw new Error("usage: factory digest <id> [--print|--rebuild|--set <file|->]");
       if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`no ticket ${id}`);
+      if (setFlag != null && rebuild) throw new Error("--set and --rebuild: pick one");
+      if (setFlag != null) {
+        // Your own version, fixed by hand: the Ticket page's Memory tab writes a file and runs this.
+        const text = readFileSync(setFlag === "-" ? 0 : setFlag, "utf8");
+        const r = setDigest(db, { id, text, now: now(), commit: (fn) => change(db, fn) });
+        writeStatus(db, p.status);
+        if (!json) return log(`#${id}: digest saved as you wrote it (${r.chars} characters); later rewrites keep your corrections${r.files.length ? `; wrote ${r.files.join(", ")}` : ""}`);
+      }
       if (rebuild) {
         const r = runDigest(db, { id, repo: needLead(db).path, run: sh, now: now(), cwd: p.dir, rebuild: true, commit: (fn) => change(db, fn) });
         if (!r.ok) throw new Error(`#${id}: the digest wasn't rebuilt: ${r.why}`);
-        log(`#${id}: digest rebuilt (${r.chars} characters, $${r.usd.toFixed(4)})${r.files.length ? `; wrote ${r.files.join(", ")}` : ""}`);
+        writeStatus(db, p.status);
+        if (!json) log(`#${id}: digest rebuilt (${r.chars} characters, $${r.usd.toFixed(4)})${r.files.length ? `; wrote ${r.files.join(", ")}` : ""}`);
       }
       const d = digestOf(db, id);
       if (json) return log(JSON.stringify(d));

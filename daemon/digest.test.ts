@@ -12,7 +12,7 @@ import { advance, sh, startTicket, type Run } from "./runner.ts";
 import { journal, ticketEvents } from "./journal.ts";
 import { newTicket } from "./intake.ts";
 import { triageBrief } from "./groom.ts";
-import { DIGEST_CAP, DIGEST_TOKENS, FILE, MODEL, SECTIONS, digestBlock, digestInput, digestOf, digestPrompt, digestsDue, parseDigest, runDigest, runDueDigest } from "./digest.ts";
+import { DIGEST_CAP, DIGEST_TOKENS, EDITED_RULE, FILE, MODEL, SECTIONS, digestBlock, digestInput, digestOf, digestPrompt, digestsDue, parseDigest, runDigest, runDueDigest, setDigest } from "./digest.ts";
 import { main, paths } from "./cli.ts";
 import { factoryChanges } from "./local.ts";
 
@@ -257,4 +257,84 @@ test("factory digest prints the digest, or its parent's; --rebuild asks Haiku no
   expect(ticketEvents(after, 412).at(-1)!.kind).toBe("digest-failed");
   expect((after.query("SELECT digest FROM tickets WHERE id = 412").get() as any).digest).toBe(DIGEST);
   expect(() => run("digest", "9")).toThrow("no ticket 9");
+});
+
+// Layer 4: the person fixes the digest by hand (the Memory tab, `factory digest --set`).
+const EDITED = DIGEST.replace("- A fixed 60s window: the test at the boundary failed.", "- none")
+  .replace("- The spec is written; planning is next.", "- The spec is written; the person wants a per-IP limit for anonymous requests too.");
+
+test("your edit is stored and journaled, and every later rewrite is told to keep it, a rebuild too", () => {
+  const s = setup();
+  firstSession(s);
+  runDueDigest(s.db, { repo: s.repo, run: s.run, now: T2 });
+  const r = setDigest(s.db, { id: 7, text: `\r\n${EDITED}\r\n`, now: "2026-11-24T10:12:00Z" });
+  expect(r.chars).toBe(EDITED.length);
+  expect(digestOf(s.db, 7)).toMatchObject({ text: EDITED, at: "2026-11-24T10:12:00Z", edited: "2026-11-24T10:12:00Z", from: 7 });
+  expect(readFileSync(join(worktree(s.db), FILE), "utf8")).toContain(EDITED);
+  expect(readFileSync(join(worktree(s.db), FILE), "utf8")).toContain("the person's edits of 2026-11-24 10:12 are kept");
+  expect(ticketEvents(s.db, 7).at(-1)).toMatchObject({ kind: "digest-edit", ref: `file:${FILE}` });
+  expect(digestsDue(s.db, "2026-11-24T10:13:00Z")).toEqual([]); // an edit is no session end
+  // The next rewrite: the rule, and your version as the one that wins; your edit event isn't input.
+  advance(s.db, { dir: s.dir, repo: s.repo, id: 7, run: s.run, now: "2026-11-24T10:20:00Z" });
+  const p1 = digestPrompt(digestInput(s.db, 7));
+  expect(p1).toContain(EDITED_RULE);
+  expect(p1).toContain("never put back a fact, bullet or line they removed");
+  expect(p1).toContain(`# The person's edited digest (saved 2026-11-24 10:12; authoritative)\n\n${EDITED}`);
+  expect(p1).toContain("# The digest before\n\nIt is the person's edited digest, below.");
+  expect(p1).not.toContain("you edited the digest");
+  // Haiku's rewrite becomes the digest; your version stays, and the next prompt still carries both.
+  const rewritten = EDITED.replace("- none\n## Current state", "- none\n## Current state\n- Planning done.");
+  s.answer(() => ({ code: 0, out: answer(rewritten) }));
+  expect(runDueDigest(s.db, { repo: s.repo, run: s.run, now: "2026-11-24T10:21:00Z" })).toMatchObject({ ok: true });
+  expect(digestOf(s.db, 7)).toMatchObject({ text: rewritten, edited: "2026-11-24T10:12:00Z" });
+  advance(s.db, { dir: s.dir, repo: s.repo, id: 7, run: s.run, now: "2026-11-24T10:30:00Z" });
+  runDueDigest(s.db, { repo: s.repo, run: s.run, now: "2026-11-24T10:31:00Z" });
+  const p2 = s.prompts.at(-1)!;
+  expect(p2).toContain(`# The digest before\n\n${rewritten}`);
+  expect(p2).toContain(`# The person's edited digest (saved 2026-11-24 10:12; authoritative)\n\n${EDITED}`);
+  expect(p2).toContain(EDITED_RULE);
+  expect(p2).not.toContain("A fixed 60s window"); // the fact you removed is in neither
+  // A rebuild starts over from the whole journal, and keeps your corrections all the same.
+  expect(digestPrompt(digestInput(s.db, 7, { rebuild: true }))).toContain(EDITED_RULE);
+  // Never edited: no rule, no section.
+  const fresh = setup();
+  firstSession(fresh);
+  expect(digestPrompt(digestInput(fresh.db, 7))).not.toContain("edited digest");
+  expect(() => setDigest(s.db, { id: 7, text: "  \n", now: T2 })).toThrow("the digest is empty");
+  expect(() => setDigest(s.db, { id: 7, text: "x".repeat(DIGEST_CAP + 1), now: T2 })).toThrow(`at most ${DIGEST_CAP}`);
+});
+
+test("factory digest --set: stored as yours, TICKET-MEMORY.md rewritten, journaled, from a file or stdin", () => {
+  process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "factory-"));
+  const repo = mkdtempSync(join(tmpdir(), "repo-"));
+  sh(["git", "-C", repo, "init", "-q", "-b", "main"]);
+  cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true });
+  const out: string[] = [];
+  const run = (...a: string[]) => { out.length = 0; main([...a, "--name", "acme-api"], (l) => out.push(l)); return out; };
+  run("init", "--repo", "acme/api", "--path", repo);
+  run("ticket", "add", "412", "Rate-limit", "login");
+  const wt = mkdtempSync(join(tmpdir(), "wt-"));
+  let db = open(paths("acme-api").db);
+  db.query("INSERT INTO ticket_repos (ticket, repo, lead, worktree) VALUES (412, 'acme/api', 1, ?)").run(wt);
+  db.query("UPDATE tickets SET digest = ?, digest_at = ?, digest_event = 3 WHERE id = 412").run(DIGEST, T2);
+  db.close();
+  const file = join(mkdtempSync(join(tmpdir(), "edit-")), "digest.md");
+  writeFileSync(file, EDITED);
+  expect(run("digest", "412", "--set", file)[0]).toBe(`#412: digest saved as you wrote it (${EDITED.length} characters); later rewrites keep your corrections; wrote ${join(wt, FILE)}`);
+  db = open(paths("acme-api").db);
+  const t = db.query("SELECT digest, digest_user, digest_edited_at, digest_event FROM tickets WHERE id = 412").get() as any;
+  expect(t).toMatchObject({ digest: EDITED, digest_user: EDITED, digest_event: 3 });
+  expect(t.digest_edited_at).toBeTruthy();
+  expect(ticketEvents(db, 412).at(-1)).toMatchObject({ kind: "digest-edit", text: `you edited the digest (${EDITED.length} characters; it had ${DIGEST.length}); later rewrites keep your corrections` });
+  db.close();
+  expect(readFileSync(join(wt, FILE), "utf8")).toContain(EDITED);
+  expect(readFileSync(join(repo, ".git/info/exclude"), "utf8")).toContain(`/${FILE}`);
+  // status.json carries the edit in the ticket's newest events, so the page sees it.
+  const status = JSON.parse(readFileSync(paths("acme-api").status, "utf8"));
+  expect(status.tickets.find((x: any) => x.id === 412).events.at(-1).kind).toBe("digest-edit");
+  // --json prints the digest after, as the Memory tab reads it.
+  expect(JSON.parse(run("digest", "412", "--set", file, "--json")[0])).toMatchObject({ text: EDITED, from: 412, edited: expect.any(String) });
+  expect(() => run("digest", "412", "--set", file, "--rebuild")).toThrow("--set and --rebuild: pick one");
+  writeFileSync(file, "");
+  expect(() => run("digest", "412", "--set", file)).toThrow("the digest is empty");
 });

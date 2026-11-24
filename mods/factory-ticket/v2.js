@@ -2,16 +2,17 @@
 // lib/model.js). Left: what the ticket is and where it stands. Right: what its agent is doing
 // now, its live terminal or the question it waits on, the files it changed and its journal.
 // main.js keeps the files and the tab; this keeps the live parts (the terminal's tail, the
-// diff, the ready rules) and the answer box.
+// diff, the ready rules), the answer box, and the Memory tab (the digest, its edit, the search).
 import { div } from "gpui-kit";
-import { h_flex, v_flex, TextView, InputState, Input } from "gpui-base";
+import { h_flex, v_flex, TextView, InputState, Input, EditorState, Editor } from "gpui-base";
 import { theme, exec, hc, notify, checking } from "herdr";
 import { parseStatusMd, repoBadge, prLinks, prColor, watchNote, crossRepoCards, sharedLinks, questionCards } from "./lib/model.js";
 import { root, state, peekAgent, act, ask } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 import { cliCommand, answerResumeAsk, dropAsk, talkable } from "./lib/actions.js";
 import { V2_TABS, ticketKind, waitsOnYou, stageStrip, chips, askShort, askSource, slices, checks, checkCount, readyRules, readyCount,
-  diffFiles, cut, activity, agentLine, tokenBar, tail, terminalQuestion, answerKeys, buttons, pageKey } from "./lib/ticketv2.js";
+  diffFiles, cut, activity, agentLine, tokenBar, tail, terminalQuestion, answerKeys, buttons, pageKey,
+  mdSections, digestView, hitRows, memoryKey, rebuildAsk } from "./lib/ticketv2.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 
 const TAIL_MS = 2000; // the live terminal's tail, while it shows
@@ -27,15 +28,131 @@ export class TicketV2 {
     this.rules = null;
     this.live = null; // what the tail loop reads: { id, terminal } while a terminal shows
     this.loaded = {}; // ticket id → when the diff and rules were last read
+    this.memory = null; // { id, key, digest } once `factory digest --json` answers, or { id, key, error }
+    this.hits = null; // { id, query, rows } | { id, query, error } | { id, query, busy }
+    this.query = "";
+    this.editing = null; // the ticket whose digest is open in the editor
+    this.busy = null; // "save" | "rebuild" while the CLI runs
   }
+
+  // What the page's keys skip while you type: the answer box, the search box or the digest editor.
+  focus(where, on) { this.typing = on ? where : this.typing === where ? false : this.typing; }
 
   // From the page's init: an InputState needs a live host call, so it can't wait for render.
   init() {
     this.input = InputState.new({ placeholder: "Or type your own answer…" });
     this.input.on("change", (_e, cx) => { this.text = this.input.value(); cx.notify(); });
-    this.input.on("focus", () => { this.typing = true; });
-    this.input.on("blur", () => { this.typing = false; });
+    this.input.on("focus", () => this.focus("answer", true));
+    this.input.on("blur", () => this.focus("answer", false));
     this.input.on("submit", (_e, cx) => this.send(cx));
+    this.search = InputState.new({ placeholder: "Search this ticket's journal and transcripts…" });
+    this.search.on("change", () => { this.query = this.search.value(); });
+    this.search.on("focus", () => this.focus("search", true));
+    this.search.on("blur", () => this.focus("search", false));
+    this.search.on("submit", (_e, cx) => this.recall(cx));
+    this.editor = EditorState.new({ language: "markdown", soft_wrap: true, line_numbers: false, folding: false });
+    this.editor.on("focus", () => this.focus("editor", true));
+    this.editor.on("blur", () => this.focus("editor", false));
+  }
+
+  // The factory CLI on the shown folder. `stdin`: text piped to it (sh's printf: exec has no stdin).
+  cli(args, o = {}) {
+    const c = cliCommand(CLI, root(), args);
+    const run = o.stdin == null ? exec(c.command, c.args, { timeout: o.timeout ?? 30000 })
+      : exec("sh", ["-c", 't=$1; shift; printf "%s" "$t" | "$@"', "factory-digest", o.stdin, c.command, ...c.args], { timeout: o.timeout ?? 30000 });
+    return run.catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
+  }
+  static why(r) { return String(r.stderr || r.stdout || "").replace(/^factory: /, "").trim().split("\n")[0].slice(0, 300); }
+
+  // The Memory tab's digest: `factory digest <id> --json`, again whenever the ticket's journal grows.
+  loadMemory(ticket, cx) {
+    const key = memoryKey(ticket);
+    if (this.memoryKey === key) return;
+    this.memoryKey = key;
+    if (this.memory?.id !== ticket.id) { this.memory = null; this.hits = null; this.editing = null; }
+    cx.spawn(async (cx) => {
+      const r = await this.cli(["digest", String(ticket.id), "--json"]);
+      if (this.memoryKey !== key) return;
+      let digest;
+      try { digest = r.code === 0 ? JSON.parse(r.stdout.trim().split("\n").at(-1)) : undefined; } catch {}
+      this.memory = digest === undefined ? { id: ticket.id, key, error: `Couldn't read the digest: ${TicketV2.why(r) || "no answer"}` } : { id: ticket.id, key, digest };
+      cx.notify();
+    });
+  }
+
+  // The search box: `factory recall <id> "words" --json`, best match first. `drawing`: called from
+  // render (a smoke run's seed), which is drawing already and mustn't ask for another frame.
+  recall(cx, drawing = false) {
+    const ticket = this.ticket;
+    const query = (this.search?.value?.() ?? this.query).trim();
+    if (!ticket || !query) return;
+    if (state().status?.source !== "daemon") return notify({ title: "This is sample data", body: "Start a factory (factory init) to search a ticket's history.", level: "info", timeout: 3500 });
+    this.hits = { id: ticket.id, query, busy: true };
+    if (!drawing) cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.cli(["recall", String(ticket.id), query, "--json", "--limit", "20"]);
+      if (this.hits?.query !== query || this.hits?.id !== ticket.id) return;
+      let rows = null;
+      try { rows = r.code === 0 ? JSON.parse(r.stdout.trim().split("\n").at(-1)) : null; } catch {}
+      this.hits = rows ? { id: ticket.id, query, rows } : { id: ticket.id, query, error: `Search failed: ${TicketV2.why(r) || "no answer"}` };
+      cx.notify();
+    });
+  }
+
+  // A hit's click: its transcript or file in the system's text editor (no line: Herdr's open takes
+  // none, so the row names it), a PR or issue on GitHub, or the tab it belongs to.
+  openHit(h, page, cx) {
+    const to = h.target;
+    if (!to) return;
+    if (to.open === "tab") { page.tab = to.tab; cx.notify(); return; }
+    cx.spawn(async () => {
+      const r = await exec("open", to.open === "file" ? ["-t", to.path] : [to.url]).catch((e) => ({ code: 1, stderr: String(e) }));
+      if (r.code) notify({ title: `Couldn't open ${to.label}`, body: TicketV2.why(r), level: "error" });
+      else if (to.line) notify({ title: `Opened the transcript`, body: `The hit is on line ${to.line}.`, level: "info", timeout: 3000 });
+    });
+  }
+
+  edit(cx, drawing = false) {
+    const d = this.memory?.digest;
+    this.editing = this.ticket.id;
+    this.editor.set_value(d?.text ?? "## Decisions and why\n- none\n## The person's answers\n- none\n## Tried and failed\n- none\n## Open questions\n- none\n## Current state\n- none\n");
+    this.editor.focus?.();
+    if (!drawing) cx.notify();
+  }
+
+  // Save: your text goes to `factory digest <id> --set -`, which stores it as yours, rewrites
+  // TICKET-MEMORY.md and journals the edit.
+  save(cx) {
+    const ticket = this.ticket;
+    const text = this.editor.value();
+    if (this.busy || !text.trim()) return;
+    this.busy = "save";
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.cli(["digest", String(ticket.id), "--set", "-", "--json"], { stdin: text });
+      this.busy = null;
+      if (r.code) notify({ title: "The digest wasn't saved", body: TicketV2.why(r), level: "error" });
+      else { notify({ title: `#${ticket.id}'s digest saved`, body: "Later rewrites keep your corrections.", level: "success", timeout: 3000 }); this.editing = null; this.memoryKey = null; }
+      cx.notify();
+    });
+  }
+
+  // Rebuild: Haiku writes it again now. A digest you edited asks first.
+  rebuild(cx) {
+    const ticket = this.ticket;
+    if (this.busy) return;
+    const d = this.memory?.digest;
+    if (d?.edited && d.from === ticket.id) return ask(rebuildAsk(ticket));
+    this.busy = "rebuild";
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.cli(["digest", String(ticket.id), "--rebuild", "--json"], { timeout: 180000 });
+      this.busy = null;
+      if (r.code) notify({ title: "The digest wasn't rebuilt", body: TicketV2.why(r), level: "error" });
+      else notify({ title: `#${ticket.id}'s digest rebuilt`, level: "success", timeout: 3000 });
+      this.memoryKey = null;
+      cx.notify();
+    });
   }
 
   // The tail loop starts on the first V2 render, since the gate can turn on while the page is open.
@@ -63,7 +180,7 @@ export class TicketV2 {
     this.loaded = { [key]: Date.now() };
     if (this.diffFor !== ticket.id) { this.diff = null; this.rules = null; this.diffFor = ticket.id; }
     cx.spawn(async (cx) => {
-      const run = async (args) => { const c = cliCommand(CLI, root(), args); return exec(c.command, c.args, { timeout: 30000 }).catch((e) => ({ code: 1, stderr: String(e) })); };
+      const run = (args) => this.cli(args);
       if (!["grooming", "queued"].includes(ticket.state)) {
         const r = await run(["diff", String(ticket.id)]);
         this.diff = r.code === 0 ? diffFiles(r.stdout) : { error: `No diff: ${cut((r.stderr || r.stdout || "").replace(/^factory: /, "").trim().split("\n")[0], 90)}` };
@@ -133,6 +250,13 @@ export class TicketV2 {
       .child(div().flex_1().child(text.toUpperCase())).when(Boolean(right), (el) => el.child(div().text_size(11.5).text_color(t.muted).child(right)));
     const empty = (text) => div().px(10).py(8).text_color(t.dim).child(text);
     const md = (name) => (files[name] ? TextView.markdown(`md-v2-${ticket.id}-${name}`, files[name]) : null);
+    // Markdown with its headings drawn as the page's small section labels, not as document titles.
+    const sections = (key, text) => mdSections(text).map((sec, i) => v_flex().id(`${key}-${i}`).gap(2).pt(i ? 6 : 0)
+      .when(Boolean(sec.heading), (el) => el.child(div().text_size(12).font_semibold().text_color(t.muted).child(sec.heading)))
+      .child(TextView.markdown(`${key}-${ticket.id}-${i}`, sec.body)));
+    const pill = (id, text, onClick, tone) => h_flex().id(id).flex_none().px(9).py(4).rounded(6).border(1).text_size(12).cursor_pointer()
+      .border_color(tone === "primary" ? t.accent : tone === "warn" ? t.blocked : t.border).text_color(tone === "primary" ? t.accent : tone === "warn" ? t.blocked : t.foreground)
+      .bg(t.background).hover((st) => st.border_color(t.accent)).on_click((_e, cx) => onClick(cx)).child(text);
 
     // ── left ──────────────────────────────────────────────────────────────
     const chipEl = (c) => h_flex().id(`chip-${c.id}`).gap(4).px(8).py(2).rounded(5).border(1).text_size(11.5)
@@ -164,6 +288,12 @@ export class TicketV2 {
       pr: prs.length > 1 ? String(prs.length) : prs[0]?.text ?? "", ask: "",
     };
     const tab = V2_TABS.find((x) => x.key === page.tab) ?? V2_TABS[0];
+    if (daemon && tab.id === "memory" && !checking()) {
+      this.loadMemory(ticket, cx);
+      // A smoke run's props (main.js): a search to run, or the editor to open once the digest is read.
+      if (this.seed?.search) { this.search.set_value?.(this.seed.search); this.query = this.seed.search; this.seed.search = null; this.recall(cx, true); }
+      if (this.seed?.edit && this.memory?.id === ticket.id && !this.memory.error) { this.seed.edit = false; this.edit(cx, true); }
+    }
     const mark = (state) => ({ done: ["✓", t.done], now: ["●", kind === "asks" || kind === "parked" ? askC : t.accent], next: ["○", t.dim] })[state];
     const row = (id, [m, c], title, note, right) => h_flex().id(id).gap(10).px(10).py(7).rounded(7).items_start().hover((st) => st.bg(t.hover))
       .child(div().w(14).flex_none().text_color(c).child(m))
@@ -180,7 +310,7 @@ export class TicketV2 {
       questions: () => [
         ...(kind === "asks" ? [row("q-live", ["?", askC], terminalQuestion(this.lines ?? [])?.question || ticket.needs?.text || "Its agent asks you in its terminal.", "Waiting on you, in the live terminal", null)] : []),
         ...waiting.map((q) => row(`q-${q.label}`, ["?", askC], q.text, `Waiting on you · ${q.who}`, q.label)),
-        ...(files["GATES.md"] ? [div().pt(6).px(10).child(label("Answered and decided")), div().px(10).child(md("GATES.md"))]
+        ...(files["GATES.md"] ? [div().pt(6).px(10).child(label("Answered and decided")), v_flex().id("gates").px(10).gap(2).children(sections("gates", files["GATES.md"]))]
           : !waiting.length && kind !== "asks" ? [empty("No questions yet.")] : []),
       ],
       pr: () => {
@@ -211,6 +341,41 @@ export class TicketV2 {
           ...(!files["GROOMING.md"] && !files["INTENT.md"] ? [empty("Nothing beyond the title yet: triage writes GROOMING.md, the spec stage INTENT.md.")] : []),
         ];
       },
+      memory: () => {
+        if (!daemon) return [empty("Sample data: a real ticket's digest shows here, with its search, Edit and Rebuild.")];
+        const m = this.memory?.id === ticket.id ? this.memory : null;
+        const v = m && !m.error ? digestView(m.digest, ticket.id, now) : null;
+        const editing = this.editing === ticket.id;
+        const h = this.hits?.id === ticket.id ? this.hits : null;
+        const rows = h?.rows ? hitRows(h.rows, s.factory.repo, now) : [];
+        const searchEl = h_flex().id("memory-search").gap(8).px(4).items_center()
+          .child(div().id("search-box").flex_1().min_w_0().on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .child(Input.new(this.search).w_full().h(30).px(9).rounded(6).border(1).border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground)))
+          .child(pill("search-go", "Search", (cx) => this.recall(cx)))
+          .when(Boolean(h), (el) => el.child(pill("search-clear", "Clear", (cx) => { this.hits = null; this.search.set_value?.(""); this.query = ""; cx.notify(); })));
+        const hitEl = (r) => h_flex().id(r.id).gap(8).px(6).py(5).rounded(6).items_start().text_size(12)
+          .when(Boolean(r.target), (el) => el.cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.openHit(r, page, cx)))
+          .child(div().w(14).flex_none().text_color(r.source === "transcript" ? t.accent : t.dim).child(r.mark))
+          .child(div().w(70).flex_none().truncate().text_color(t.muted).child(r.who))
+          .child(v_flex().flex_1().min_w_0().gap(1).child(div().text_color(t.foreground).child(r.snippet))
+            .when(Boolean(r.where), (el) => el.child(div().text_size(11.5).text_color(r.target ? t.accent : t.dim).child(r.where))))
+          .child(div().w(44).flex_none().text_right().text_color(t.dim).child(r.time));
+        const hitsEl = !h ? [] : h.busy ? [empty(`Searching for "${h.query}"…`)] : h.error ? [empty(h.error)]
+          : !rows.length ? [empty(`Nothing in #${ticket.id}'s journal or transcripts matches "${h.query}".`)]
+          : [div().px(4).pt(2).child(label(`${rows.length} match${rows.length > 1 ? "es" : ""} for "${h.query}"`)), v_flex().id("hits").gap(1).children(rows.map(hitEl))];
+        const head = h_flex().id("digest-head").gap(6).px(4).pt(10).items_center()
+          .child(div().flex_1().min_w_0().child(label(v?.state === "inherited" ? `Digest · #${m.digest.from}'s` : "Digest", v?.age)))
+          .children(editing ? [pill("digest-save", this.busy === "save" ? "Saving…" : "Save", (cx) => this.save(cx), "primary"), pill("digest-cancel", "Cancel", (cx) => { this.editing = null; cx.notify(); })]
+            : [pill("digest-edit", "Edit", (cx) => this.edit(cx)), pill("digest-rebuild", this.busy === "rebuild" ? "Rebuilding…" : "Rebuild", (cx) => this.rebuild(cx), v?.edited ? "warn" : null)]);
+        const notes = (v?.notes ?? []).map((n, i) => div().id(`digest-note-${i}`).px(4).text_size(12).text_color(i === 0 && v.state === "inherited" ? t.blocked : t.muted).child(n));
+        const body = editing
+          ? [v_flex().id("digest-editor").mx(4).h(340).rounded(6).border(1).border_color(t.accent).bg(t.background).on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+              .child(Editor.new(this.editor).size_full()),
+            div().px(4).text_size(11.5).text_color(t.dim).child("Fix what's wrong, delete what isn't true. Saved as yours: every rewrite after keeps your corrections and leaves out what you removed.")]
+          : !m ? [empty("Reading the digest…")] : m.error ? [empty(m.error)]
+          : v.state === "none" ? [] : [v_flex().id("digest").px(4).gap(2).children(sections("digest", v.text))];
+        return [searchEl, ...hitsEl, head, ...notes, ...body];
+      },
     };
     const links = sharedLinks(ticket);
     const short = askShort(files);
@@ -232,7 +397,7 @@ export class TicketV2 {
           .hover((st) => st.text_color(t.foreground)).on_click((_e, cx) => { page.tab = x.key; cx.notify(); })
           .child(x.title).when(Boolean(counts[x.id]), (el) => el.child(div().text_size(11.5).text_color(t.dim).child(counts[x.id])))))
         .child(div().flex_1())
-        .child(div().flex_none().text_size(11.5).text_color(t.dim).child("⌘⌥1–5")))
+        .child(div().flex_none().text_size(11.5).text_color(t.dim).child("⌘⌥1–6")))
       .child(v_flex().id(`pane-${tab.id}`).gap(2).children(panes[tab.id]()));
 
     // ── right ─────────────────────────────────────────────────────────────
@@ -345,8 +510,8 @@ export class TicketV2 {
     return h_flex().size_full().text_size(13).rounded(10).bg(t.background).border(1).border_color(t.border).overflow_hidden()
       .track_focus(page.handle).on_mouse_down("left", () => page.handle.focus())
       .on_key_down((e, cx) => {
-        if (this.typing) return; // keys typed in the answer box stay there
-        if (/^[1-5]$/.test(e.key) && !e.modifiers.platform && !e.modifiers.control && !e.modifiers.alt) { page.tab = e.key; cx.stop_propagation(); cx.notify(); return; }
+        if (this.typing) return; // keys typed in the answer box, the search or the editor stay there
+        if (/^[1-6]$/.test(e.key) && !e.modifiers.platform && !e.modifiers.control && !e.modifiers.alt) { page.tab = e.key; cx.stop_propagation(); cx.notify(); return; }
         const a = pageKey(keyAction(e), ticket, kind);
         if (a && a.kind !== "move" && a.kind !== "open") { this.act(a, ticket, s); cx.stop_propagation(); }
       })

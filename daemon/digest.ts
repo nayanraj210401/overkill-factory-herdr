@@ -26,25 +26,32 @@ export const CHUNKS_CAP = 60_000; // and of transcript chunks
 export const FILE = "TICKET-MEMORY.md";
 const RECENT_MS = 2 * 86_400_000; // an end older than this doesn't start a digest (no backfill of old tickets)
 const ENDS = ["session-end", "handoff"];
-const OWN = ["digest", "digest-failed"]; // the digest's own events aren't its input
+const OWN = ["digest", "digest-failed", "digest-edit"]; // the digest's own events aren't its input
 // A chunk's share of the prompt: the person's words first, then what the agent said, then its tools.
 const PER_ROLE: Record<string, { cap: number; rank: number }> = { user: { cap: 3000, rank: 0 }, assistant: { cap: 1500, rank: 1 }, tool: { cap: 600, rank: 2 } };
 
 export const SECTIONS = ["Decisions and why", "The person's answers", "Tried and failed", "Open questions", "Current state"];
 
-export type Digest = { text: string; at: string; event: number | null; from: number };
+// `edited`: when the person last saved this digest by hand (setDigest), else null.
+export type Digest = { text: string; at: string; event: number | null; from: number; edited: string | null };
 
 // The ticket's digest, else the one it starts from: its parent's (a re-request or a split's part), up the chain.
 export function digestOf(db: Database, id: number): Digest | null {
   const seen = new Set<number>();
   for (let at: number | null = id; at != null && !seen.has(at); ) {
     seen.add(at);
-    const t = db.query("SELECT digest, digest_at, digest_event, parent FROM tickets WHERE id = ?").get(at) as { digest: string | null; digest_at: string | null; digest_event: number | null; parent: number | null } | null;
+    const t = db.query("SELECT digest, digest_at, digest_event, digest_edited_at, parent FROM tickets WHERE id = ?").get(at) as { digest: string | null; digest_at: string | null; digest_event: number | null; digest_edited_at: string | null; parent: number | null } | null;
     if (!t) return null;
-    if (t.digest) return { text: t.digest, at: t.digest_at ?? "", event: at === id ? t.digest_event : null, from: at };
+    if (t.digest) return { text: t.digest, at: t.digest_at ?? "", event: at === id ? t.digest_event : null, from: at, edited: t.digest_edited_at };
     at = t.parent;
   }
   return null;
+}
+
+// The digest as the person last saved it by hand, which every later rewrite keeps. Its own ticket's only.
+export function userDigest(db: Database, id: number): { text: string; at: string } | null {
+  const t = db.query("SELECT digest_user, digest_edited_at FROM tickets WHERE id = ?").get(id) as { digest_user: string | null; digest_edited_at: string | null } | null;
+  return t?.digest_user ? { text: t.digest_user, at: t.digest_edited_at ?? "" } : null;
 }
 
 // What every brief carries: the digest and where to look for more. "" when there is none.
@@ -88,7 +95,8 @@ function fit<T extends { id: number; text: string }>(rows: T[], cap: number, ran
   return { kept: rows.filter((r) => keep.has(r.id)), dropped: rows.length - keep.size };
 }
 
-export type Input = { id: number; title: string; previous: Digest | null; events: string[]; chunks: string[]; dropped: number; event: number; chunk: number };
+// `edited`: the person's own version (setDigest), which the rewrite must keep; a rebuild keeps it too.
+export type Input = { id: number; title: string; previous: Digest | null; edited: { text: string; at: string } | null; events: string[]; chunks: string[]; dropped: number; event: number; chunk: number };
 
 // What the next digest is written from. `rebuild`: the whole journal and every chunk, from the parent's digest (if any).
 export function digestInput(db: Database, id: number, o: { rebuild?: boolean } = {}): Input {
@@ -104,17 +112,22 @@ export function digestInput(db: Database, id: number, o: { rebuild?: boolean } =
   const chunks = fit(rows.map((c) => ({ id: c.id, role: c.role, text: `[${c.role}] ${trim(redact(c.text), PER_ROLE[c.role]?.cap ?? 600)}` })), CHUNKS_CAP, (c) => PER_ROLE[c.role]?.rank ?? 2);
   const maxOf = (sql: string) => (db.query(sql).get(id) as { m: number | null }).m ?? 0;
   return {
-    id, title: t.title, previous,
+    id, title: t.title, previous, edited: userDigest(db, id),
     events: events.kept.map((e) => e.text), chunks: chunks.kept.map((c) => c.text), dropped: events.dropped + chunks.dropped,
     event: Math.max(fromEvent, maxOf("SELECT MAX(id) AS m FROM ticket_events WHERE ticket = ?")),
     chunk: Math.max(fromChunk, maxOf("SELECT MAX(id) AS m FROM transcript_chunks WHERE ticket = ?")),
   };
 }
 
-// The prompt: the rules and the cap, then the digest before, the events and the excerpts. Every
-// part is redacted again here, so nothing reaches the model that the index wouldn't keep.
+// What the prompt says about the person's own edit: their version wins over everything below it.
+export const EDITED_RULE = "The person edited this digest by hand. Their version (\"# The person's edited digest\" below) is authoritative: keep every correction they made, in their words, and never put back a fact, bullet or line they removed, even if the journal, the transcripts or the digest before still say it. Change their text only to add what happened after their edit, or where something newer below plainly supersedes it.";
+
+// The prompt: the rules and the cap, then the digest before, the person's edit, the events and the
+// excerpts. Every part is redacted again here, so nothing reaches the model that the index wouldn't keep.
 export function digestPrompt(i: Input) {
   const prev = i.previous ? redact(i.previous.text) : "";
+  const same = i.edited != null && i.previous != null && i.previous.from === i.id && i.edited.text.trim() === i.previous.text.trim();
+  const edited = i.edited ? `# The person's edited digest (saved ${i.edited.at.slice(0, 16).replace("T", " ")}; authoritative)\n\n${redact(i.edited.text)}` : null;
   return [
     `You keep the memory of ticket #${i.id}: ${i.title}. The agents that work on it read this digest at the start of every session, so it must say what a newcomer needs and nothing else.`,
     `Rewrite the digest so it is true after what happened since it was written. Keep what still matters from it, drop what is superseded, and add what is new.`,
@@ -124,9 +137,11 @@ export function digestPrompt(i: Input) {
     `Under "The person's answers", quote each of the person's answers verbatim, in quotation marks, with the question it answered. Never paraphrase them, and keep every one the digest before quoted unless the person changed it.`,
     `Under "Tried and failed", say what was tried, how it failed, and why, so no one tries it again.`,
     `Text marked [redacted: …] was a secret: keep the marker and never guess what it was.`,
+    ...(i.edited ? [EDITED_RULE] : []),
     `Answer with the digest only, starting at its first heading.`,
     "",
-    i.previous ? `# The digest before${i.previous.from !== i.id ? ` (#${i.previous.from}'s: this ticket carries on from it)` : ""}\n\n${prev}` : "# The digest before\n\nNone yet: this is the first.",
+    same ? `# The digest before\n\nIt is the person's edited digest, below.` : i.previous ? `# The digest before${i.previous.from !== i.id ? ` (#${i.previous.from}'s: this ticket carries on from it)` : ""}\n\n${prev}` : "# The digest before\n\nNone yet: this is the first.",
+    ...(edited ? ["", edited] : []),
     "",
     `# Journal events since\n\n${i.events.join("\n") || "none"}`,
     "",
@@ -174,7 +189,7 @@ export function writeMemoryFile(db: Database, id: number) {
   const d = digestOf(db, id);
   if (!d) return [];
   const t = db.query("SELECT title FROM tickets WHERE id = ?").get(id) as { title: string };
-  const text = `# Ticket memory: #${id} ${t.title}\n\nThe factory rewrites this file after each session (${MODEL}${d.at ? `, last at ${d.at.slice(0, 16).replace("T", " ")}` : ""}${d.from !== id ? `; carried on from #${d.from}` : ""}). Don't edit it. For detail run \`factory recall ${id} "words"\`.\n\n${d.text.trim()}\n`;
+  const text = `# Ticket memory: #${id} ${t.title}\n\nThe factory rewrites this file after each session (${MODEL}${d.at ? `, last at ${d.at.slice(0, 16).replace("T", " ")}` : ""}${d.from !== id ? `; carried on from #${d.from}` : ""}${d.edited && d.from === id ? `; the person's edits of ${d.edited.slice(0, 16).replace("T", " ")} are kept` : ""}). Don't edit this file: fix the digest on the Ticket page's Memory tab, or with \`factory digest ${id} --set <file>\`. For detail run \`factory recall ${id} "words"\`.\n\n${d.text.trim()}\n`;
   const wrote: string[] = [];
   for (const r of ticketRepos(db, id)) {
     if (!r.worktree || !existsSync(r.worktree) || !excludeLocal(r.path)) continue;
@@ -184,7 +199,24 @@ export function writeMemoryFile(db: Database, id: number) {
   return wrote;
 }
 
-export type DigestResult = { ok: true; chars: number; usd: number; tokens: number; files: string[] } | { ok: false; why: string; held?: boolean };
+// The person's own digest (the Ticket page's Memory tab, `factory digest <id> --set`): stored as the
+// digest and as their version, which every later rewrite keeps (digestPrompt), journaled as
+// `digest-edit`, and written to TICKET-MEMORY.md. It covers no new events, so digest_event stays.
+export function setDigest(db: Database, o: { id: number; text: string; now: string; commit?: (fn: () => void) => void }) {
+  const text = o.text.replace(/\r\n/g, "\n").trim();
+  if (!text) throw new Error("the digest is empty: write what the agents should know, or rebuild it (--rebuild)");
+  if (text.length > DIGEST_CAP) throw new Error(`the digest is ${text.length} characters; it may have at most ${DIGEST_CAP}`);
+  if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(o.id)) throw new Error(`no ticket ${o.id}`);
+  const before = digestOf(db, o.id);
+  (o.commit ?? ((fn) => db.transaction(fn)()))(() => {
+    db.query("UPDATE tickets SET digest = ?, digest_at = ?, digest_user = ?, digest_edited_at = ? WHERE id = ?").run(text, o.now, text, o.now, o.id);
+    const was = !before ? "it had none" : before.from !== o.id ? `it carried #${before.from}'s` : `it had ${before.text.length}`;
+    journal(db, { ticket: o.id, kind: "digest-edit", text: `you edited the digest (${text.length} characters; ${was}); later rewrites keep your corrections`, ref: `file:${FILE}`, at: o.now });
+  });
+  return { chars: text.length, files: writeMemoryFile(db, o.id) };
+}
+
+export type DigestResult ={ ok: true; chars: number; usd: number; tokens: number; files: string[] } | { ok: false; why: string; held?: boolean };
 
 // One digest: read its input, ask Haiku (outside any transaction), then store it, its cost (a usage
 // row, so the ticket's spend and the day's budget count it) and the file. A failure is journaled as
