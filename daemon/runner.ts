@@ -577,8 +577,8 @@ function linkPrs(db: Database, o: { dir: string; id: number }, prs: { repo: stri
   }
 }
 
-// `m` on a ready ticket: the human merge gate. A PR left as a draft (opened before PRs
-// opened ready for review) is marked ready first, as gh refuses to merge a draft, then merged on GitHub the way
+// `m` on a ready ticket: the human merge gate. The PR opens as a draft (openPr), so it is
+// marked ready first, as gh refuses to merge a draft, then merged on GitHub the way
 // factory.yaml's merge_method says (squash unless it names merge or rebase).
 // Two halves, so a caller can keep the gh calls (seconds long) out of a database transaction
 // (#110): mergeOnGithub only reads the database, recordMerge writes what happened.
