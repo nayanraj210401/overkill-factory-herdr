@@ -375,7 +375,7 @@ A ticket's history used to be scattered: `sessions` rows with no link to their t
 | Layer | What | State |
 | --- | --- | --- |
 | 1 | Session → transcript link, and the ticket journal | **Built** (`daemon/journal.ts`, migrations 35 and 36) |
-| 2 | Transcript chunk index, and `factory recall` | Planned |
+| 2 | Transcript chunk index, and `factory recall` | **Built** (`daemon/recall.ts`, migration 37) |
 | 3 | A ticket digest, written by Haiku, in every brief | Planned |
 | 4 | The Ticket page's Activity feed and search | Planned |
 
@@ -400,7 +400,13 @@ A ticket's history used to be scattered: `sessions` rows with no link to their t
 - **CLI.** `factory journal <id> [--name <factory>] [--json]` prints the events in order; `factory journal <id> --search "<words>"` ranks them by FTS (words OR'd, as `factory memory search` does). `factory sessions <id>` shows each session's transcript.
 - **status.json.** Each ticket carries `events: [{kind, text, at}]`, its 8 newest, oldest first, each text cut to 200 characters (optional; `lib/status.js` checks it). A ticket merged or closed more than a week ago goes without, so the file doesn't grow with the factory's history. The Ticket page doesn't show them yet (layer 4).
 
-**Layer 2: transcript chunk index (planned).** The daemon splits each linked transcript into chunks (a turn, or a tool call with its result), redacts secrets before indexing (tokens, keys, `.env` values, anything the hard-stop list names), and indexes them with FTS5 in `transcript_chunks (session, ticket, line, role, text)`. `factory recall <id> "<words>"` searches one ticket's journal and chunks together and prints each hit with its `transcript:<path>#L<line>` ref. Chunks are indexed while the transcript still exists, so the 30-day cleanup can't take them.
+**Layer 2: transcript chunk index (built).**
+
+- **Chunks.** `transcript_chunks (id, session, ticket, line, role, text, at)`, with `transcript_chunks_fts` (FTS5) kept in sync by triggers, the same pattern as the journal. A transcript is cut into one chunk per user turn (`user`), assistant text (`assistant`), and tool call joined to its result (`tool`), each with its 1-based line in the JSONL. Thinking, meta lines (skill bodies, hook output) and Claude Code's bookkeeping lines are left out. A tool's input and its result are each cut to their first and last 1000 characters (2000 in all, saying how much was cut); a user or assistant turn, to 8000.
+- **Redaction, before anything is stored.** Private key blocks (PEM), `Bearer`/`Basic` credentials, JWTs, AWS access keys, GitHub tokens (`ghp_…`, `github_pat_…`), `sk-…` and Stripe keys, Slack tokens (`xox…`, `xapp-…`), Google API keys, and the value of any name holding SECRET, TOKEN, KEY, PASSWORD, PASSWD, PASSPHRASE or CREDENTIAL: a `.env` line (`export API_KEY=…`), a YAML key, a shell assignment before a command (`GITHUB_TOKEN=… gh …`) and a quoted JSON key. Then the secrets-in-output hard stop's own patterns (`guard.ts`), so whatever the guard would block is never indexed. Each becomes `[redacted: <what>]`. The rules are patterns, so they catch the usual shapes, not every secret, and they redact some harmless text (`monkey=3`).
+- **When.** A session is indexed when it ends (`endSessions`), from its transcript as it is then. The daemon's tick, once a minute, indexes every ended session with a transcript that hasn't been, and re-reads the ones ended in the last day whose file has grown (Claude may still be writing when the session ends). `sessions.chunked_size` holds the bytes indexed, so the same file is never indexed twice; a grown one replaces its session's chunks; `-1` means the file wasn't there (a session that ended before its first turn), skipped without an error. Old sessions are picked up the same way, which is the backfill: it reads files, so it is the tick's, not a migration's. Chunks are indexed while the transcript still exists, so Claude Code's 30-day cleanup can't take them.
+- **Prune.** The tick deletes the chunks of tickets merged or closed more than `memory.chunk_days` ago (factory.yaml, default 30), and doesn't index them again. The journal is never pruned.
+- **CLI.** `factory recall [<id>] "<words>" [--name <factory>] [--json] [--limit n]` searches the journal and the chunks together (words OR'd, as `factory journal --search` does), one ticket's or, with no id, every ticket's. The two are ranked by bm25 and merged, best first, 20 by default. Each hit prints its ticket, its kind (a journal event) or role (a chunk), a snippet with the matched words in brackets, and its ref: `transcript:<path>#L<line>` for a chunk, the event's own ref for a journal hit.
 
 **Layer 3: ticket digest (planned).** After each stage, Haiku rewrites a short digest of the ticket from its journal and the new chunks: what was decided and why, what was tried and failed, open questions, the person's answers. It is stored on the ticket and written to TICKET-MEMORY.md in the worktree, capped in size. Every brief includes it, with a pointer to `factory recall` for the detail. A re-requested ticket gets a `parent` link, and its digest starts from the parent's.
 
@@ -410,7 +416,7 @@ A ticket's history used to be scattered: `sessions` rows with no link to their t
 
 - SQLite FTS5, not a vector database. The journal and chunks are short text found by words (a file name, an error, a decision), the factory already has FTS5, and there's nothing new to run.
 - Secrets are redacted when transcripts are indexed (layer 2). The journal holds only what the daemon itself wrote.
-- Journals and digests are kept forever: they are small. Transcript chunks are pruned N days after the ticket merges or closes (layer 2's setting).
+- Journals and digests are kept forever: they are small. Transcript chunks are pruned `memory.chunk_days` (default 30) after the ticket merges or closes.
 - The backfill runs in the migration, not on daemon start: it needs only rows, so it runs once wherever the database is first opened (the daemon, the CLI, or the window's CLI).
 - status.json gets a ticket's 8 newest events, not the whole journal; the CLI reads the rest.
 
@@ -772,6 +778,7 @@ Rules for every file:
 | `queue` | Your queue: a GitHub Project, its Ready column, and the assignee to watch | none; manual tickets only |
 | `grooming` | The triage agent, the blueprints it may pick from, and where questions go | all blueprints; Herdr and the issue |
 | `max_running` | How many groomed tickets run at once; the rest wait in Project order | 3 |
+| `memory` | `chunk_days`: how long a merged or closed ticket's transcript chunks are kept (`factory recall`) | 30 |
 
 ```yaml
 # .factory/factory.yaml
