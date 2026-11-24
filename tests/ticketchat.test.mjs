@@ -299,6 +299,9 @@ test("Chat with the panel: Changes (a click opens that file's diff), the digest 
   const { pg, draw, click, v2 } = chatPage();
   let { all, ids, words } = draw();
   for (const id of ["chat-view", "chat-panel", "panel-changes", "chg-0", "chg-1", "panel-memory", "digest-sec-0", "edit-on-memory", "panel-journal", "pev-0"]) assert.ok(ids.has(id), id);
+  // Its clicks keep focus in the chat's box: the panel stops the page's own mouse-down focus.
+  const node = (id) => all.find(({ n }) => n.calls.id?.[0] === id).n;
+  for (const id of ["chat-view", "chat-panel"]) assert.equal(node(id).calls.on_mouse_down?.[0], "left", id);
   assert.match(words, /src\/limit\.ts/);
   assert.match(words, /\+2/);
   assert.match(words, /Current state/);

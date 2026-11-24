@@ -548,7 +548,9 @@ export class TicketV2 {
           .child(v.title))))
       .child(div().flex_none().text_size(11.5).text_color(t.dim).child("⌘⌥7–9"));
     const chatEl = (view === "chat" || this.chat.entity) && this.chat.render(ticket, s, cx, view === "chat", { open, folded: open && !panel });
-    const body = view === "chat" ? h_flex().id("chat-view").flex_1().min_h(0)
+    // The page focuses itself on mouse down; inside the chat (and its panel) that would pull focus
+    // out of its message box right after a click puts it there, so the chat keeps its own clicks.
+    const body = view === "chat" ? h_flex().id("chat-view").flex_1().min_h(0).on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_size_change((size, cx) => { const w = Math.round(size.width); if (w !== this.chatW) { this.chatW = w; cx.notify(); } })
         .child(div().flex_1().min_w_0().h_full().child(chatEl))
         .when(panel, (el) => el.child(this.panelView(page, ticket, s, d, t, mono, now)))
