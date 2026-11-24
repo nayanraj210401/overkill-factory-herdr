@@ -1,0 +1,349 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Factory Blueprint Page</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: Herdr-style window — blueprint list | vertical flow with fail-back arcs | stage inspector */
+:root{
+  --bg:#f4f6f8; --side:#eceef1; --panel:#ffffff; --raise:#eef1f4; --line:#d9dee4; --fg:#1d232b; --muted:#5b6672; --dim:#8a949f;
+  --accent:#2f74c8; --accent-soft:#2f74c81f; --good:#2f8a4e; --warn:#b7791f; --bad:#c94a4a; --human:#b0457a;
+  --sans:"Inter",system-ui,-apple-system,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#1b1f24; --side:#181b20; --panel:#22272e; --raise:#2a3038; --line:#363d47; --fg:#e3e7ec; --muted:#9aa4af; --dim:#6b7580;
+  --accent:#6cb0ff; --accent-soft:#6cb0ff22; --good:#5cc27e; --warn:#e0a84a; --bad:#ef7070; --human:#e07ab0; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#1b1f24; --side:#181b20; --panel:#22272e; --raise:#2a3038; --line:#363d47; --fg:#e3e7ec; --muted:#9aa4af; --dim:#6b7580;
+  --accent:#6cb0ff; --accent-soft:#6cb0ff22; --good:#5cc27e; --warn:#e0a84a; --bad:#ef7070; --human:#e07ab0; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:13px/1.45 var(--sans);padding-block:16px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.win{max-width:1560px;margin:0 auto;border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
+.top{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line)}
+.crumb{color:var(--muted)} .crumb b{color:var(--fg);font-weight:600}
+.top .keys{margin-left:auto;color:var(--dim);font-size:12px}
+.sample{font-size:11px;color:var(--warn);border:1px solid var(--warn);border-radius:4px;padding:1px 6px}
+.body{display:grid;grid-template-columns:200px minmax(0,1fr) 300px;min-height:640px;flex:1}
+@media (max-width:1380px){.body{grid-template-columns:200px minmax(0,1fr)} .insp{grid-column:1/-1;border-left:0;border-top:1px solid var(--line)}}
+@media (max-width:1000px){.body{grid-template-columns:1fr} .side{border-right:0;border-bottom:1px solid var(--line)}}
+/* sidebar */
+.side{border-right:1px solid var(--line);padding:12px 8px;display:flex;flex-direction:column;gap:2px;background:var(--bg)}
+.lbl{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding:8px 10px 4px}
+.bp{all:unset;cursor:pointer;display:block;padding:8px 10px;border-radius:7px}
+.bp:hover{background:var(--raise)} .bp:focus-visible{outline:2px solid var(--accent)}
+.bp.on{background:var(--accent-soft)}
+.bp .n{font-weight:600;display:flex;gap:8px;align-items:center} .bp.on .n{color:var(--accent)}
+.bp .n .c{margin-left:auto;font-weight:400;font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.bp .d{color:var(--muted);font-size:12px;margin-top:2px}
+.live{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px #5cc27e22}
+/* main */
+.main{padding:16px 20px;min-width:0;display:flex;flex-direction:column;gap:14px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px 16px}
+.head h1{font-size:18px;margin:0;font-weight:600}
+.head .why{color:var(--muted);margin-top:2px;max-width:62ch}
+.tabs{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.tabs button{all:unset;cursor:pointer;padding:5px 12px;color:var(--muted);font-size:12.5px}
+.tabs button.on{background:var(--raise);color:var(--fg)} .tabs button:focus-visible{outline:2px solid var(--accent)}
+.stats{display:flex;flex-wrap:wrap;gap:6px 22px;padding:10px 14px;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.stat b{font-size:15px;font-variant-numeric:tabular-nums;font-weight:600;margin-right:4px} .stat span{color:var(--muted);font-size:12px}
+/* flow */
+.flow{position:relative;padding-left:46px}
+.arcs{position:absolute;left:0;top:0;width:46px;height:100%;overflow:visible;pointer-events:none}
+.row{position:relative;display:grid;grid-template-columns:22px minmax(0,1.4fr) minmax(0,1.2fr) 130px;gap:12px;align-items:center;
+  padding:9px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.row:hover{background:var(--raise)} .row.on{border-color:var(--accent);background:var(--accent-soft)}
+.row:focus-visible{outline:2px solid var(--accent)}
+.row+.row::before{content:"";position:absolute;left:22px;top:-8px;height:16px;border-left:1.5px solid var(--line)}
+.node{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;font-size:10.5px;color:var(--muted);background:var(--panel);font-variant-numeric:tabular-nums}
+.k-human .node{border-color:var(--human);color:var(--human)} .k-check .node{border-style:dashed}
+.k-pick .node{border-style:dotted}
+.nm{min-width:0} .nm .t{font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.nm .s{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip{font-size:10.5px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);color:var(--muted);font-weight:500;white-space:nowrap}
+.chip.human{color:var(--human);border-color:var(--human)} .chip.opt{border-style:dashed} .chip.now{color:var(--good);border-color:var(--good)}
+.step{font:12px var(--mono);color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step .sh{font:11px var(--sans);color:var(--dim);margin-left:6px}
+.runs{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.dots{display:flex;gap:2px} .dots i{width:7px;height:10px;border-radius:2px;background:var(--line)}
+.dots i.p{background:var(--good)} .dots i.f{background:var(--bad)} .dots i.w{background:var(--warn)}
+.runs small{color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
+.colh{display:grid;grid-template-columns:22px minmax(0,1.4fr) minmax(0,1.2fr) 130px;gap:12px;padding:0 12px 4px 58px;color:var(--dim);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.colh span:last-child{text-align:right}
+@media (max-width:700px){.row,.colh{grid-template-columns:22px minmax(0,1fr) 90px}.row .step,.colh .stp{display:none}}
+.foot{color:var(--dim);font-size:12px;border-top:1px solid var(--line);padding-top:10px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:12px}
+.legend i{display:inline-block;width:18px;border-top:1.5px dashed var(--bad);vertical-align:middle;margin-right:5px}
+/* compare + steps */
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--dim);font-weight:500;font-size:11px;letter-spacing:.05em;text-transform:uppercase;background:var(--bg)}
+td.y{color:var(--fg);font-family:var(--mono);font-size:11.5px} td.no{color:var(--line)}
+tr:last-child td{border-bottom:0} td.num{font-variant-numeric:tabular-nums;text-align:right}
+/* inspector */
+.insp{border-left:1px solid var(--line);padding:16px;display:flex;flex-direction:column;gap:14px;background:var(--bg);min-width:0}
+.insp h2{margin:0;font-size:15px;font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.insp p{margin:0;color:var(--muted)}
+.kv{display:grid;grid-template-columns:96px minmax(0,1fr);gap:6px 10px;font-size:12.5px}
+.kv dt{color:var(--dim)} .kv dd{margin:0;min-width:0}
+.exit{display:flex;gap:6px;align-items:baseline} .exit .a{color:var(--good)} .exit .b{color:var(--bad)}
+.mono{font-family:var(--mono);font-size:12px}
+.sec{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+.used{display:flex;flex-wrap:wrap;gap:6px}
+.used button{all:unset;cursor:pointer;font-size:12px;padding:2px 8px;border:1px solid var(--line);border-radius:5px}
+.used button:hover{border-color:var(--accent);color:var(--accent)}
+.recent{display:flex;flex-direction:column;gap:5px;font-size:12px}
+.recent div{display:flex;gap:8px} .recent .id{color:var(--accent);font-variant-numeric:tabular-nums;width:48px}
+.recent .r{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted)}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+.btn{all:unset;cursor:pointer;padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--panel)}
+.btn:hover{border-color:var(--accent)} .btn:focus-visible{outline:2px solid var(--accent)}
+.btn kbd{font:11px var(--mono);color:var(--dim);margin-left:6px}
+.status{display:flex;gap:14px;padding:7px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+.note{max-width:1560px;margin:10px auto 0;color:var(--dim);font-size:12px}
+@media (prefers-reduced-motion:no-preference){.row,.bp{transition:background .12s}}
+</style>
+<style>
+/* The factory sidebar as shipped in #152 (attention-first) + the Repo config page */
+.win{display:grid!important;grid-template-columns:264px minmax(0,1fr)}
+.wmain{display:flex;flex-direction:column;min-width:0;min-height:0}
+.fs{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.fs .brand{padding:14px 16px 6px}.fs .brand .n{font-weight:600;font-size:14.5px;cursor:pointer}
+.fs .brand small{display:block;color:var(--muted);font-size:12px;margin-top:1px}
+.fs .brand .dm{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:12px;margin-top:3px}
+.fs .search{margin:4px 10px 4px;display:flex;gap:8px;align-items:center;padding:6px 10px;border-radius:8px;color:var(--dim);font-size:13px;cursor:pointer}
+.fs .search:hover{background:var(--raise);color:var(--muted)}
+.fs .list{flex:1;overflow-y:auto;padding:0 8px 8px;min-height:0}
+.fs .gh{display:flex;align-items:center;justify-content:space-between;padding:10px 8px 4px;font-size:12px;color:var(--muted);font-weight:500}
+.fs .gh.wait{color:var(--ask)}.fs .gh .c{color:var(--dim);font-weight:400}.fs .gh.fold{cursor:pointer}
+.fs .row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:1px 8px;padding:6px 8px;border-radius:8px;cursor:pointer;align-items:baseline}
+.fs .row:hover{background:var(--raise)}.fs .row.on{background:var(--accent-soft)}
+.fs .row:focus-visible,.fs .mi:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.fs .row .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}.fs .row .t b{font-weight:500;color:var(--muted);margin-right:4px}
+.fs .row .s{grid-column:2/4;font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fs .row .r{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+.fs .row.ask .s{color:var(--ask)}.fs .row.work .r{color:var(--accent)}
+.fs .g{font-size:12px;text-align:center;line-height:18px}.fs .g.ask{color:var(--ask);font-weight:700}.fs .g.ok{color:var(--good)}.fs .g.park{color:var(--bad)}
+.fs .spin{width:11px;height:11px;border-radius:50%;border:1.5px dashed var(--accent);display:inline-block;vertical-align:-1px}
+@media (prefers-reduced-motion:no-preference){.fs .spin{animation:fsp 3s linear infinite}@keyframes fsp{to{transform:rotate(360deg)}}}
+.fs .quiet{margin:4px 8px 0;padding:5px 8px;font-size:12px;color:var(--dim);border-radius:6px;cursor:pointer}.fs .quiet:hover{background:var(--raise)}
+.fs .bottom{border-top:1px solid var(--line);padding:6px 8px 8px;display:flex;flex-direction:column;gap:0}
+.fs .mi{display:grid;grid-template-columns:18px 1fr auto auto;gap:10px;align-items:center;padding:5px 8px;border-radius:7px;color:var(--muted);cursor:pointer;font-size:13px}
+.fs .mi:hover{background:var(--raise);color:var(--fg)}.fs .mi.on{background:var(--accent-soft);color:var(--fg)}
+.fs .mi svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.fs .mi .k{font-size:11px;color:var(--dim)}.fs .mi .bd{background:var(--accent);color:var(--panel);font-size:10px;font-weight:600;border-radius:8px;padding:0 6px;line-height:16px}
+.fs .mi .new{font-size:10px;color:var(--accent)}
+.fs .foot{margin-top:4px;padding:5px 8px 0;border-top:1px solid var(--line);font-size:11px;color:var(--dim);display:flex;justify-content:space-between}
+.fs .fbar{margin:4px 8px 0;height:4px;background:var(--line);border-radius:2px;overflow:hidden}.fs .fbar b{display:block;height:100%;width:41%;background:var(--accent)}
+@media (max-width:820px){.win{grid-template-columns:1fr!important}.fs{display:none}}
+</style>
+<script>
+function fsSidebar(el,{on=10000,page="",onPick}={}){
+  const T=[["wait","ask",10000,"Migrate railway.json before Dec 1","builder asks you · implement","14m"],["wait","ok",409,"Bump deps","PR #52 ready to merge · 6 of 6 rules","1h"],["wait","park",425,"Export API","parked · retries used up in verify","3h"],
+    ["work","",412,"Rate-limit login","builder · implement S2 of 3","12:04"],["work","","maint","maintainer","refreshing irctc-mcp prompts","0:41"],["work","",418,"Timezone in reports","checker · verify · ☁ cloud","5:30"]];
+  const I=[["Home",'<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>'],["Tickets",'<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/>'],["Reviews",'<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v4a5 5 0 0 0 5 5h4.5"/>',3],["Overwatch",'<path d="m5 8 4 4-4 4"/><path d="M12 17h7"/>'],["Blueprint",'<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 8 11 16M16.5 8 13 16"/>'],["Metrics",'<path d="M5 20V11M12 20V5M19 20v-6"/>'],["Repo config",'<path d="M4 6h16M4 12h10M4 18h7"/><circle cx="18" cy="16" r="2.5"/>'],["Config",'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>']];
+  const g=(k,kind)=>kind==="work"?'<span class="g"><span class="spin"></span></span>':k==="ask"?'<span class="g ask">?</span>':k==="ok"?'<span class="g ok">✓</span>':'<span class="g park">⏸</span>';
+  const row=([kind,k,id,t,s,r])=>`<div class="row ${k==="ask"?"ask":""} ${kind} ${id===on?"on":""}" tabindex="0" data-fs="${id}">${g(k,kind)}<span class="t">${id==="maint"?"":`<b>#${id}</b>`}${t}</span><span class="r">${r}</span><span class="s">${s}</span></div>`;
+  el.innerHTML=`<div class="brand"><div class="n">irctc-mcp ▾</div><small>nayanraj/irctc-mcp · main</small><div class="dm"><span style="width:7px;height:7px;border-radius:50%;background:var(--good)"></span>daemon on · 5h 54%</div></div>
+    <div class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search tickets</div>
+    <div class="list"><div class="gh wait">Waiting on you<span class="c">3</span></div>${T.filter(x=>x[0]==="wait").map(row).join("")}
+    <div class="gh">Working<span class="c">3</span></div>${T.filter(x=>x[0]==="work").map(row).join("")}
+    <div class="quiet">4 queued · 1 blocked by #412 →</div><div class="gh fold">Settled<span class="c">5 ›</span></div></div>
+    <nav class="bottom">${I.map(([n,p,b],i)=>`<div class="mi ${n===page?"on":""}" tabindex="0"><svg viewBox="0 0 24 24">${p}</svg><span>${n}${n==="Repo config"?' <span class="new">new</span>':""}</span>${b?`<span class="bd">${b}</span>`:"<span></span>"}<span class="k">⌘${i+1}</span></div>`).join("")}
+    <div class="foot"><span>Today 4.1M / 10M in</span><span>$0.00</span></div><div class="fbar"><b></b></div></nav>`;
+  el.querySelectorAll("[data-fs]").forEach(r=>r.onclick=()=>{el.querySelectorAll("[data-fs]").forEach(x=>x.classList.toggle("on",x===r));onPick&&onPick(r.dataset.fs)});
+}
+</script>
+
+<div class="win"><aside class="fs" id="fs"></aside><div class="wmain">
+  <div class="top">
+    <span class="crumb">irctc-mcp › <b>Blueprint</b></span>
+    <span class="sample">sample data</span>
+    <span class="keys">j/k stage · [ ] blueprint · c compare · s steps · ⌘O open step</span>
+  </div>
+  <div class="body">
+    <nav class="side" id="side" aria-label="Blueprints"></nav>
+    <main class="main" id="main"></main>
+    <aside class="insp" id="insp" aria-label="Stage details"></aside>
+  </div>
+  <div class="status"><span>● 3 agents · 0 in cloud</span><span>5h window 54%</span><span>week 61%</span></div>
+</div></div>
+<p class="note">Prototype, beside the factory sidebar (Blueprint is ⌘5 in its menu). Click a blueprint, a stage, a shared step, or switch to Compare / Steps. Numbers are made up.</p>
+
+<script>
+const AG={triage:"triage",spec:"spec-writer",plan:"planner",build:"builder",check:"checker",review:"reviewer"};
+const STEP={
+  "triage":{d:"Read the ask, pick a blueprint, size it, ask the user if the ask is unclear.",out:"ticket fields, blueprint"},
+  "write-spec":{d:"Write SPEC.md: the behaviour, edge cases and what done looks like. Asks in its terminal when the ask is ambiguous.",out:"SPEC.md"},
+  "plan-slices":{d:"Split the spec into slices that each end green. Skipped by the foreman when the spec is one slice.",out:"PLAN.md (S1…Sn)"},
+  "reproduce":{d:"Write a failing test or a script that shows the bug before anything is fixed.",out:"repro test"},
+  "read-comments":{d:"Collect the open review comments on the PR and turn each into a to-do.",out:"TODO from review"},
+  "build":{d:"Implement the next slice, run the repo checks, commit. Writes GATES.md and HANDOFF.md before it stops.",out:"commits, GATES.md"},
+  "check-evidence":{d:"Run the checks the spec names and compare the evidence with what done looks like. No agent: a script.",out:"evidence.json"},
+  "holdout":{d:"A fresh agent tries the holdout cases the builder never saw.",out:"holdout verdict"},
+  "review":{d:"Review the diff against the spec and the repo's rules.",out:"review verdict"},
+  "write-pr":{d:"Open or update the PR with the story, the evidence and the risk. Waits until the ready rules pass.",out:"PR"},
+  "merge":{d:"You merge. The factory never merges for you.",out:"merged PR"},
+};
+const S=(id,step,o={})=>({id,step,...o});
+const BPS={
+  feature:{why:"New behaviour a user will notice. Needs a spec.",t:14,first:71,lead:"3h 40m",cost:"$4.10",live:1,stages:[
+    S("grooming","triage",{kind:"pick",agent:"triage",r:14,p:100,tm:"4m"}),
+    S("spec","write-spec",{agent:"spec",r:14,p:93,tm:"12m",next:"plan or implement (the foreman picks)"}),
+    S("plan","plan-slices",{agent:"plan",opt:1,r:9,p:100,tm:"8m"}),
+    S("implement","build",{agent:"build",r:31,p:84,tm:"52m",now:"#10000"}),
+    S("verify","check-evidence",{kind:"check",r:27,p:78,tm:"3m",fail:"implement"}),
+    S("holdout","holdout",{agent:"check",r:19,p:84,tm:"9m",fail:"implement",must:"a holdout verdict"}),
+    S("review","review",{agent:"review",r:16,p:88,tm:"11m",fail:"implement",must:"a review verdict"}),
+    S("pr","write-pr",{kind:"check",agent:"rules",r:12,p:100,tm:"2m",wait:"the ready rules"}),
+    S("merge","merge",{kind:"human",r:9,p:100,tm:"1h 10m"}),
+  ]},
+  bugfix:{why:"Something that worked is broken. Prove it first.",t:22,first:82,lead:"1h 20m",cost:"$1.60",live:1,stages:[
+    S("grooming","triage",{kind:"pick",agent:"triage",r:22,p:100,tm:"3m"}),
+    S("reproduce","reproduce",{agent:"build",r:22,p:91,tm:"9m"}),
+    S("implement","build",{agent:"build",r:27,p:89,tm:"24m"}),
+    S("verify","check-evidence",{kind:"check",r:26,p:85,tm:"2m",fail:"implement"}),
+    S("review","review",{agent:"review",r:21,p:95,tm:"7m",fail:"implement",must:"a review verdict"}),
+    S("pr","write-pr",{kind:"check",agent:"rules",r:20,p:100,tm:"2m",wait:"the ready rules"}),
+    S("merge","merge",{kind:"human",r:18,p:100,tm:"40m"}),
+  ]},
+  chore:{why:"Upkeep with no behaviour change: deps, config, renames.",t:9,first:89,lead:"35m",cost:"$0.60",stages:[
+    S("grooming","triage",{kind:"pick",agent:"triage",r:9,p:100,tm:"2m"}),
+    S("implement","build",{agent:"build",r:10,p:90,tm:"14m"}),
+    S("verify","check-evidence",{kind:"check",r:10,p:90,tm:"2m",fail:"implement"}),
+    S("pr","write-pr",{kind:"check",agent:"rules",r:9,p:100,tm:"1m",wait:"the ready rules"}),
+    S("merge","merge",{kind:"human",r:9,p:100,tm:"15m"}),
+  ]},
+  "address-review":{why:"A reviewer left comments on a factory PR.",t:6,first:83,lead:"50m",cost:"$0.90",stages:[
+    S("grooming","triage",{kind:"pick",agent:"triage",r:6,p:100,tm:"1m"}),
+    S("read","read-comments",{agent:"build",r:6,p:100,tm:"3m"}),
+    S("implement","build",{agent:"build",r:7,p:86,tm:"18m"}),
+    S("verify","check-evidence",{kind:"check",r:7,p:86,tm:"2m",fail:"implement"}),
+    S("pr","write-pr",{kind:"check",agent:"rules",r:6,p:100,tm:"1m",wait:"the ready rules"}),
+    S("merge","merge",{kind:"human",r:5,p:100,tm:"25m"}),
+  ]},
+  maintenance:{why:"Scheduled repo upkeep the maintainer files on its own.",t:3,first:100,lead:"28m",cost:"$0.40",stages:[
+    S("grooming","triage",{kind:"pick",agent:"triage",r:3,p:100,tm:"1m"}),
+    S("implement","build",{agent:"build",r:3,p:100,tm:"12m"}),
+    S("verify","check-evidence",{kind:"check",r:3,p:100,tm:"2m",fail:"implement"}),
+    S("pr","write-pr",{kind:"check",agent:"rules",r:3,p:100,tm:"1m",wait:"the ready rules"}),
+    S("merge","merge",{kind:"human",r:2,p:100,tm:"20m"}),
+  ]},
+};
+const usedBy=(step)=>Object.keys(BPS).filter(b=>BPS[b].stages.some(s=>s.step===step));
+const allSteps=[...new Set(Object.values(BPS).flatMap(b=>b.stages.map(s=>s.step)))];
+let st={bp:"feature",at:3,view:"flow",step:null};
+try{const v=JSON.parse(localStorage.getItem("bp-proto")||"null"); if(v&&BPS[v.bp]) st={...st,...v,at:Math.min(v.at??0,BPS[v.bp].stages.length-1)}}catch(e){}
+const save=()=>{try{localStorage.setItem("bp-proto",JSON.stringify({bp:st.bp,view:st.view}))}catch(e){}};
+const $=(id)=>document.getElementById(id);
+const esc=(s)=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function dots(s){let h="";const n=10,f=Math.round((100-s.p)/10);for(let i=0;i<n;i++)h+=`<i class="${i>=n-f?(i%3?"f":"w"):"p"}"></i>`;return h}
+
+function side(){
+  $("side").innerHTML=`<div class="lbl">Blueprints</div>`+Object.entries(BPS).map(([k,b])=>
+    `<button class="bp ${st.view!=="steps"&&k===st.bp?"on":""}" data-bp="${k}"><div class="n">${b.live?'<span class="live" title="a ticket is on it now"></span>':""}${k}<span class="c">${b.t} / 7d</span></div><div class="d">${esc(b.why)}</div></button>`).join("")
+    +`<div class="lbl" style="margin-top:10px">Library</div><button class="bp ${st.view==="steps"?"on":""}" data-view="steps"><div class="n">Shared steps<span class="c">${allSteps.length}</span></div><div class="d">Each step is one file; blueprints point at it.</div></button>`;
+  $("side").querySelectorAll("[data-bp]").forEach(b=>b.onclick=()=>{st.bp=b.dataset.bp;st.at=0;if(st.view==="steps")st.view="flow";render()});
+  $("side").querySelector("[data-view]").onclick=()=>{st.view="steps";st.step=st.step||"build";render()};
+}
+
+function flow(b){
+  const rows=b.stages.map((s,i)=>{
+    const kind=s.kind==="human"?"human gate":s.kind==="check"?(s.agent==="rules"?"ready rules":"check, no agent"):s.kind==="pick"?"picks the blueprint":AG[s.agent]+" agent";
+    const ub=usedBy(s.step).length;
+    return `<div class="row k-${s.kind||"agent"} ${i===st.at?"on":""}" tabindex="0" data-i="${i}" data-id="${s.id}">
+      <div class="node">${i+1}</div>
+      <div class="nm"><div class="t">${s.id}${s.opt?'<span class="chip opt">may skip</span>':""}${s.kind==="human"?'<span class="chip human">you</span>':""}${s.now?`<span class="chip now">● ${s.now} here</span>`:""}</div>
+        <div class="s">${kind}${s.fail?` · fails → ${s.fail}`:""}${s.wait?` · waits for ${s.wait}`:""}</div></div>
+      <div class="step">${s.step}<span class="sh">${ub>1?`shared · ${ub} blueprints`:"only here"}</span></div>
+      <div class="runs"><div class="dots" title="last 10 runs">${dots(s)}</div><small>${s.r} runs · ${s.p}% · ${s.tm}</small></div>
+    </div>`}).join("");
+  return `<div class="colh"><span></span><span>Stage</span><span class="stp">Step</span><span>Last 7 days</span></div>
+    <div class="flow" id="flow"><svg class="arcs" id="arcs"></svg>${rows}</div>
+    <div class="legend"><span><i></i>fails back</span><span>◌ dashed ring: a check, no agent</span><span style="color:var(--human)">◯ you</span></div>`;
+}
+
+function compare(){
+  const names=Object.keys(BPS);
+  return `<p style="margin:0;color:var(--muted)">Which step each blueprint runs. A step in more than one column is one file: change it once, every blueprint gets it.</p>
+  <div class="scroll"><table><thead><tr><th>Step</th>${names.map(n=>`<th>${n}</th>`).join("")}<th class="num">Used by</th></tr></thead><tbody>
+  ${allSteps.map(sp=>`<tr><td class="mono">${sp}</td>${names.map(n=>{const s=BPS[n].stages.find(x=>x.step===sp);return s?`<td class="y">${s.id}${s.opt?" (skip)":""}</td>`:`<td class="no">—</td>`}).join("")}<td class="num">${usedBy(sp).length}</td></tr>`).join("")}
+  </tbody></table></div>`;
+}
+
+function steps(){
+  return `<div class="head"><div><h1>Shared steps</h1><div class="why">A step is one file: what to do, what it leaves behind, which agent can run it. Blueprints only list steps in order.</div></div></div>
+  <div class="scroll"><table><thead><tr><th>Step</th><th>Leaves behind</th><th>Used by</th><th class="num">Runs 7d</th></tr></thead><tbody>
+  ${allSteps.map(sp=>{const runs=Object.values(BPS).flatMap(b=>b.stages.filter(s=>s.step===sp)).reduce((a,s)=>a+s.r,0);
+    return `<tr data-step="${sp}" style="cursor:pointer;${st.step===sp?"background:var(--accent-soft)":""}"><td class="mono">${sp}</td><td>${esc(STEP[sp].out)}</td><td>${usedBy(sp).join(", ")}</td><td class="num">${runs}</td></tr>`}).join("")}
+  </tbody></table></div>`;
+}
+
+function main(){
+  if(st.view==="steps"){$("main").innerHTML=steps();$("main").querySelectorAll("[data-step]").forEach(r=>r.onclick=()=>{st.step=r.dataset.step;render()});return}
+  const b=BPS[st.bp];
+  $("main").innerHTML=`<div class="head"><div><h1>${st.bp}</h1><div class="why">Grooming picks it for: ${esc(b.why)}</div></div>
+    <div class="tabs" role="tablist"><button class="${st.view==="flow"?"on":""}" data-v="flow">Flow</button><button class="${st.view==="compare"?"on":""}" data-v="compare">Compare</button></div></div>
+    <div class="stats"><div class="stat"><b>${b.t}</b><span>tickets · 7d</span></div><div class="stat"><b>${b.first}%</b><span>no fail-back</span></div><div class="stat"><b>${b.lead}</b><span>median, ask → PR</span></div><div class="stat"><b>${b.cost}</b><span>median per ticket</span></div></div>
+    ${st.view==="compare"?compare():flow(b)}
+    <div class="foot">Grooming picks the blueprint, then the foreman picks each next stage. Retries count as runs.</div>`;
+  $("main").querySelectorAll("[data-v]").forEach(t=>t.onclick=()=>{st.view=t.dataset.v;render()});
+  $("main").querySelectorAll(".row").forEach(r=>{r.onclick=()=>{st.at=+r.dataset.i;render()};r.onkeydown=(e)=>{if(e.key==="Enter"){st.at=+r.dataset.i;render()}}});
+  if(st.view==="flow") requestAnimationFrame(arcs);
+}
+
+function arcs(){
+  const svg=$("arcs"),fl=$("flow");if(!svg||!fl)return;
+  const rows=[...fl.querySelectorAll(".row")],y={};rows.forEach(r=>y[r.dataset.id]=r.offsetTop+r.offsetHeight/2);
+  const b=BPS[st.bp];let lane=0,h="";
+  b.stages.forEach(s=>{if(!s.fail||y[s.fail]==null)return;const x=36-lane*9;lane++;const y1=y[s.id],y2=y[s.fail];
+    h+=`<path d="M46 ${y1} H${x+6} Q${x} ${y1} ${x} ${y1-6} V${y2+6} Q${x} ${y2} ${x+6} ${y2} H44" fill="none" stroke="var(--bad)" stroke-width="1.4" stroke-dasharray="4 3" opacity=".8"/><path d="M40 ${y2-3.5} L45 ${y2} L40 ${y2+3.5}" fill="none" stroke="var(--bad)" stroke-width="1.4"/>`});
+  if(b.stages.some(s=>s.opt)){const sp=b.stages.findIndex(s=>s.next),im=b.stages.findIndex(s=>s.id==="implement");
+    if(sp>=0&&im>=0){const y1=y[b.stages[sp].id],y2=y[b.stages[im].id],x=8;
+      h+=`<path d="M46 ${y1+4} H${x+6} Q${x} ${y1+4} ${x} ${y1+10} V${y2-10} Q${x} ${y2-4} ${x+6} ${y2-4} H44" fill="none" stroke="var(--accent)" stroke-width="1.3" opacity=".7"/><path d="M40 ${y2-7.5} L45 ${y2-4} L40 ${y2-0.5}" fill="none" stroke="var(--accent)" stroke-width="1.3"/>`}}
+  svg.setAttribute("viewBox",`0 0 46 ${fl.offsetHeight}`);svg.style.height=fl.offsetHeight+"px";svg.innerHTML=h;
+}
+
+function insp(){
+  let s,stepId,where;
+  if(st.view==="steps"){stepId=st.step;where=null}else{s=BPS[st.bp].stages[st.at];stepId=s.step;where=st.bp}
+  const d=STEP[stepId],ub=usedBy(stepId);
+  const head=s?`<h2>${s.id}${s.kind==="human"?'<span class="chip human">you</span>':""}${s.opt?'<span class="chip opt">may skip</span>':""}</h2>`:`<h2 class="mono">${stepId}</h2>`;
+  const kv=s?`<dl class="kv">
+    <dt>Runs</dt><dd>${s.kind==="human"?"you":s.kind==="check"?(s.agent==="rules"?"the ready rules":"a script, no agent"):AG[s.agent]+" agent"}</dd>
+    <dt>Step</dt><dd class="mono">${stepId} <span style="color:var(--dim);font-family:var(--sans)">· ${ub.length>1?"shared":"only here"}</span></dd>
+    <dt>Leaves</dt><dd>${esc(d.out)}</dd>
+    <dt>Exits</dt><dd><div class="exit"><span class="a">pass →</span><span>${s.next?esc(s.next):(BPS[st.bp].stages[st.at+1]?.id??"done")}</span></div>${s.fail?`<div class="exit"><span class="b">fail →</span><span>${s.fail}</span></div>`:""}</dd>
+    ${s.must?`<dt>Must end with</dt><dd>${s.must}</dd>`:""}${s.wait?`<dt>Waits for</dt><dd>${s.wait}</dd>`:""}
+    <dt>Last 7 days</dt><dd>${s.r} runs · ${s.p}% pass · median ${s.tm}</dd></dl>`:"";
+  const recent=s&&s.kind!=="human"?`<div><div class="sec">Recent runs</div><div class="recent">
+    ${s.now?`<div><span class="id">${s.now}</span><span>railway config as code</span><span class="r" style="color:var(--good)">running 18m</span></div>`:""}
+    <div><span class="id">#9984</span><span>train search filters</span><span class="r">pass · ${s.tm}</span></div>
+    ${s.p<100?`<div><span class="id">#9979</span><span>PNR status cache</span><span class="r" style="color:var(--bad)">fail → ${s.fail||"retry"}</span></div>`:""}
+    <div><span class="id">#9971</span><span>seat map tool</span><span class="r">pass · ${s.tm}</span></div></div></div>`:"";
+  $("insp").innerHTML=`${head}<p>${esc(d.d)}</p>${kv}
+    <div><div class="sec">Step used by</div><div class="used">${ub.map(n=>`<button data-go="${n}">${n}${n===where?" · here":""}</button>`).join("")}</div>
+    ${ub.length>1?`<p style="margin-top:6px;font-size:12px">Changing <span class="mono">${stepId}</span> changes all ${ub.length}.</p>`:""}</div>
+    ${recent}
+    <div class="btns"><button class="btn">Open step<kbd>⌘O</kbd></button><button class="btn">Ask maintainer to change</button></div>`;
+  $("insp").querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{st.bp=b.dataset.go;st.view="flow";st.at=Math.max(0,BPS[st.bp].stages.findIndex(x=>x.step===stepId));render()});
+}
+
+function render(){save();side();main();insp()}
+fsSidebar($("fs"),{on:null,page:"Blueprint"});
+document.addEventListener("keydown",(e)=>{
+  if(e.target.closest&&e.target.closest("input,textarea"))return;
+  const names=Object.keys(BPS),b=BPS[st.bp];
+  if(e.key==="j"&&st.view==="flow"){st.at=Math.min(st.at+1,b.stages.length-1)}
+  else if(e.key==="k"&&st.view==="flow"){st.at=Math.max(st.at-1,0)}
+  else if(e.key==="]"||e.key==="["){const i=names.indexOf(st.bp);st.bp=names[(i+(e.key==="]"?1:names.length-1))%names.length];st.at=0;if(st.view==="steps")st.view="flow"}
+  else if(e.key==="c"){st.view=st.view==="compare"?"flow":"compare"}
+  else if(e.key==="s"){st.view="steps";st.step=st.step||"build"}
+  else return;
+  render();
+});
+addEventListener("resize",()=>st.view==="flow"&&arcs());
+render();
+</script>
+
+</body></html>
