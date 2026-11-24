@@ -1,13 +1,13 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
-import { theme, shared, readTextFile, nextCommand, checking, props, exec, notify } from "herdr";
+import { theme, shared, setShared, readTextFile, nextCommand, checking, props, exec, notify } from "herdr";
 import { v2UI, parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, prLinks, prColor, watchNote, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW, TALK_HOW } from "./lib/model.js";
 import { root, status, state, peekAgent, act } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 import { cliCommand, talkable } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { V2_FILES } from "./lib/ticketv2.js";
-import { viewOf } from "./lib/ticketchat.js";
+import { viewOf, PANEL_KEY, panelOpen } from "./lib/ticketchat.js";
 import { TicketV2 } from "./v2.js";
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
@@ -34,6 +34,8 @@ export default class FactoryTicket extends View {
         // tab-5 (The ask) and tab-6 (Memory) are the V2 page's alone, and so are view-* (Overview · Chat · Diff).
         if (m && (Number(m[1]) < 5 || v2UI(status()))) { this.tab = m[1]; this.view = "overview"; }
         if (viewOf(c) && v2UI(status())) this.view = viewOf(c);
+        // ⌘⌥0: the Chat view's Changes + ticket memory panel, open or closed (kept per viewer).
+        if (c.endsWith("chat-panel") && v2UI(status()) && this.view === "chat") setShared(PANEL_KEY, !panelOpen(shared(PANEL_KEY)));
         cx.notify();
       }
     });

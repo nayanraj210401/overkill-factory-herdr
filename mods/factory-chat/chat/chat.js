@@ -13,10 +13,11 @@
 // attachments, emoji, @ mentions, hiding the terminal, and Play on code blocks.
 //
 // Props: { ticket: { id, terminal, state }, who, sessions (lib/ticketchat.js chatSessions),
-//          daemon (false on sample data) }.
+//          daemon (false on sample data), panel ({ open, folded }: the Ticket page's Changes
+//          panel, toggled from the head; absent on factory-chat's own page) }.
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, TextareaState, Textarea, InputState, Input } from "gpui-base";
-import { exec, hc, run, terminals, theme, settings, appHome, watchFolder, notify, checking, window as appWindow } from "herdr";
+import { exec, hc, run, terminals, theme, settings, appHome, watchFolder, notify, checking, setShared, window as appWindow } from "herdr";
 import * as fs from "fs/promises";
 import { Buffer } from "buffer";
 import { createHash } from "crypto";
@@ -26,7 +27,7 @@ import { parsePrompt, choose, menuAtBottom } from "./prompt.js";
 import { askSide, sessionOf } from "./sdk.js";
 import { copyText, openFile, imageSize } from "./platform.js";
 import { live } from "./stream.js";
-import { pickSession, chatTarget, chatEmpty } from "../lib/ticketchat.js";
+import { pickSession, chatTarget, chatEmpty, PANEL_KEY, PANEL_HINT } from "../lib/ticketchat.js";
 
 const ASK_FIRST = "Answer the question above first.";
 const CACHE = "data/factory-chat";
@@ -668,7 +669,8 @@ export class ChatView extends View {
             .when(x.live, (el) => el.child(div().size(6).rounded_full().bg(t.working)))
             .child(x.label))))
         .child(icon("search", "search", `Search (${shortcut("F")})`, this.searching, (_e, cx) => (this.searching ? this.closeSearch(cx) : this.openSearch(cx))))
-        .child(icon("side-toggle", "terminal", `Side chat (${shortcut(";")})`, this.side.open, (_e, cx) => { this.side.open = !this.side.open; (this.side.open ? this.sideInput : this.input).focus(); cx.notify(); })))
+        .child(icon("side-toggle", "terminal", `Side chat (${shortcut(";")})`, this.side.open, (_e, cx) => { this.side.open = !this.side.open; (this.side.open ? this.sideInput : this.input).focus(); cx.notify(); }))
+        .when(Boolean(this.props?.panel), (el) => el.child(this.panelToggle(t))))
       .when(Boolean(this.searching) && (this.shown(), true), (el) => el.child(h_flex().id("search-bar").key_context("FactoryChatSearch")
         .on_action("chat_search_close", (_e, cx) => this.closeSearch(cx))
         .h(38).px(16).gap(8).items_center().border_t(1).border_color(t.border)
@@ -676,6 +678,17 @@ export class ChatView extends View {
         .child(div().flex_none().text_size(12).text_color(t.dim).child(this.search.value().trim() ? `${this.matches ?? 0} match${this.matches === 1 ? "" : "es"}` : ""))
         .child(div().id("search-close").flex_none().px(6).py(2).rounded(5).cursor_pointer().text_color(t.muted)
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => this.closeSearch(cx)).child("×"))));
+  }
+
+  // Changes: the Ticket page's Changes + ticket memory panel, open or closed (kept per viewer).
+  panelToggle(t) {
+    const { open, folded } = this.props.panel;
+    return div().id("panel-toggle").flex_none().px(8).py(2).rounded(6).border_1().cursor_pointer().text_size(12)
+      .border_color(open && !folded ? t.accent : t.border).text_color(open && !folded ? t.foreground : t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(folded ? `Folded away: the window is too narrow (${PANEL_HINT})` : `Changes and ticket memory (${PANEL_HINT})`)
+      .on_click((_e, cx) => { setShared(PANEL_KEY, !open); cx.notify(); })
+      .child("Changes");
   }
 
   body(t, sessions, session, target) {

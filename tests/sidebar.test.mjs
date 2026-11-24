@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { sidebarView, waitingLine, workingLine, quietLine, elapsed, age, tickMs, rowTitle, SETTLED_MAX } from "../lib/sidebar.js";
+import { sidebarView, waitingLine, workingLine, quietLine, elapsed, age, tickMs, rowTitle, SETTLED_MAX, threadTarget, chatUnread, seenNext } from "../lib/sidebar.js";
 
 const status = JSON.parse(readFileSync(new URL("../fixtures/acme-api/status.json", import.meta.url)));
 const now = Date.parse("2026-11-21T10:00:00Z");
@@ -92,4 +92,56 @@ test("ages and timers read short", () => {
   assert.deepEqual(["2026-11-21T10:00:00Z", "2026-11-21T09:55:00Z", "2026-11-21T07:00:00Z", "2026-11-18T10:00:00Z"].map((x) => age(x, now)), ["now", "5m", "3h", "3d"]);
   assert.deepEqual(["2026-11-21T09:59:58Z", "2026-11-21T08:55:00Z", "2026-11-19T07:00:00Z"].map((x) => elapsed(x, now)), ["2s", "1h 5m", "2d 3h"]);
   assert.equal(waitingLine("merge", ticket({ state: "ready" })), "ready to merge");
+});
+
+// ── the sidebar as the chat's thread list (V2_UI) ──────────────────────────
+
+test("a thread click opens its ticket on Chat only with the gate on and the Ticket page on Chat", () => {
+  const v = of(status);
+  const [ask] = v.waiting;
+  const [work] = v.working;
+  const settled = v.settled[0];
+  const onChat = { v2: true, page: "ticket", view: "chat" };
+  assert.deepEqual(threadTarget(ask, onChat), { ticket: 421, view: "chat" });
+  assert.deepEqual(threadTarget(work, onChat), { ticket: 412, view: "chat" });
+  // Settled rows aren't threads: they open as today.
+  assert.deepEqual(threadTarget(settled, onChat), { ticket: settled.ticket, view: null });
+  // Any one of the three missing, and the ticket opens as it does today.
+  assert.deepEqual(threadTarget(work, { ...onChat, v2: false }), { ticket: 412, view: null });
+  assert.deepEqual(threadTarget(work, { ...onChat, view: "overview" }), { ticket: 412, view: null });
+  assert.deepEqual(threadTarget(work, { ...onChat, view: "diff" }), { ticket: 412, view: null });
+  assert.deepEqual(threadTarget(work, { ...onChat, page: "home" }), { ticket: 412, view: null });
+  assert.deepEqual(threadTarget(work), { ticket: 412, view: null });
+  // Global agents open as they always have, whatever the page shows.
+  const maint = view([], [{ agent: "maintainer", tier: "global", status: "working", factory: null, terminal: "t9" }]).working[0];
+  assert.deepEqual(threadTarget(maint, onChat), { agent: "maintainer" });
+});
+
+test("chat-unread: the live transcript grew since this viewer last saw it, or a new session wrote", () => {
+  const t = { id: 412, transcript: "/p/c.jsonl" };
+  const seen = { 412: { file: "/p/c.jsonl", size: 100 } };
+  assert.equal(chatUnread(t, seen, 100), false);
+  assert.equal(chatUnread(t, seen, 140), true);
+  assert.equal(chatUnread({ ...t, transcript: "/p/d.jsonl" }, seen, 10), true); // a handoff's next session
+  assert.equal(chatUnread({ ...t, transcript: "/p/d.jsonl" }, seen, 0), false); // ...with nothing in it yet
+  assert.equal(chatUnread(t, {}, 140), false); // never sighted: no marker until a baseline
+  assert.equal(chatUnread(t, seen, null), false); // not read yet
+  assert.equal(chatUnread({ id: 412, transcript: null }, seen, 140), false); // no live session
+});
+
+test("seen: a first sighting is the baseline, the ticket on screen is read, gone ones drop out", () => {
+  const sizes = { "/p/a.jsonl": 50, "/p/b.jsonl": 90 };
+  const rows = [{ id: 1, transcript: "/p/a.jsonl" }, { id: 2, transcript: "/p/b.jsonl" }, { id: 3, transcript: null }];
+  const first = seenNext({}, rows, sizes);
+  assert.deepEqual(first, { 1: { file: "/p/a.jsonl", size: 50 }, 2: { file: "/p/b.jsonl", size: 90 } });
+  assert.equal(seenNext(first, rows, sizes), first); // nothing changed: the same object, no write
+  const grown = { ...sizes, "/p/b.jsonl": 120 };
+  const kept = seenNext(first, rows, grown);
+  assert.equal(kept, first); // grown but not viewed: the old size stays, so it shows as unread
+  assert.equal(chatUnread(rows[1], kept, grown["/p/b.jsonl"]), true);
+  const read = seenNext(first, rows, grown, 2); // its chat is on screen
+  assert.deepEqual(read[2], { file: "/p/b.jsonl", size: 120 });
+  assert.equal(chatUnread(rows[1], read, grown["/p/b.jsonl"]), false);
+  assert.deepEqual(Object.keys(seenNext(read, rows.slice(1), grown)), ["2"]); // #1 left the sidebar
+  assert.deepEqual(seenNext(first, rows, {}), first); // sizes not read: kept as they were
 });

@@ -3,7 +3,8 @@
 // layoutWidths() lays that tree out along x with the flexbox rules that decide whether a
 // row fits: basis, grow, shrink, and the automatic minimum width (min-content unless min_w_0).
 
-export const fake = { status: null, reviews: null };
+// `shared`: the per-viewer keys a test sets (shared.json); `layout`: the live layout tree.
+export const fake = { status: null, reviews: null, shared: {}, layout: null };
 
 function element(kind) {
   const node = { kind, calls: {}, kids: [] };
@@ -41,8 +42,9 @@ export const ScrollHandle = { new: () => ({ scroll_to_item() {}, release() {} })
 export const settings = () => ({ dark: true });
 export const theme = () => new Proxy({}, { get: (_t, k) => `color:${String(k)}` });
 export const checking = () => false;
-export const shared = (key) => (key === "factory.state" ? { at: 0, status: fake.status, errors: [] } : null);
-export const setShared = () => {};
+export const shared = (key) => (key === "factory.state" ? { at: 0, status: fake.status, errors: [] } : fake.shared[key] ?? null);
+export const setShared = (key, value) => { fake.shared[key] = value; };
+export const layout = () => fake.layout;
 export const run = () => {};
 export const exec = () => {};
 export const hc = async () => ({ code: 1, stdout: "", stderr: "" });

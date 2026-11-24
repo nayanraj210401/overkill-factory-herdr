@@ -63,6 +63,8 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
     // slice it builds ("slice 2 of 3", from the stage's detail: runner.ts startStage). Only when there is one.
     ...(r.stage_started_at ? { stage_started_at: r.stage_started_at } : {}),
     ...(r.agent && r.agent !== "cloud" ? { agent: r.agent } : {}),
+    // The live session's Claude transcript, for the sidebar's chat-unread marker (lib/sidebar.js chatUnread).
+    ...(r.live_transcript ? { transcript: r.live_transcript } : {}),
     ...sliceOf(r.stage_detail),
   };
 }
@@ -100,6 +102,7 @@ export function buildStatus(db: Database, now = new Date()) {
     (SELECT COUNT(*) FROM sessions s, (SELECT stage FROM sessions l WHERE l.ticket = t.id AND l.ended_at IS NULL AND l.agent IS NOT 'cloud' ORDER BY l.id DESC LIMIT 1) live
        WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions,
     (SELECT agent FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS agent,
+    (SELECT transcript FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS live_transcript,
     (SELECT started_at FROM stages st WHERE st.ticket = t.id AND st.ended_at IS NULL ORDER BY st.id DESC LIMIT 1) AS stage_started_at,
     (SELECT detail FROM stages st WHERE st.ticket = t.id AND st.ended_at IS NULL ORDER BY st.id DESC LIMIT 1) AS stage_detail
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ({
