@@ -17,7 +17,7 @@ export type Hit = { stop: (typeof STOPS)[number] | "factory-local"; reason: stri
 // checkout, where a look change may be committed on a local branch (and still never pushed).
 export type Guard = { stops: string[]; roots: string[]; cwd: string; local?: { app: string | null } };
 
-const SECRETS: [RegExp, string][] = [
+export const SECRETS: [RegExp, string][] = [
   [/AKIA[0-9A-Z]{16}/, "an AWS access key"],
   [/gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}/, "a GitHub token"],
   [/sk-(ant-)?[A-Za-z0-9_-]{24,}/, "an API key"],

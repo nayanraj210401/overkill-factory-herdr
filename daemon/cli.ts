@@ -66,6 +66,7 @@ import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.t
 import { EXCLUDE_LINE, keepLocal, trackedFactory, trackedWarning } from "./local.ts";
 import { listMemories, memoryLine, pruneMemories, recall, remember, setOutcome, settleMemories, type Memory } from "./memory.ts";
 import { eventLine, journal, ticketEvents } from "./journal.ts";
+import { CHUNK_DAYS, hitLine, indexTranscripts, pruneChunks, recallHits } from "./recall.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
@@ -104,6 +105,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   sessions <id>                      the agent sessions started for a ticket, with their tokens and transcripts
   journal <id> [--search "<words>"] [--json]  the ticket's history in order: created, stages, sessions (with their transcripts), questions
                                      and answers, checks, verdicts, send-backs, the PR, the merge; --search ranks its events by full text
+  recall [<id>] "<words>" [--json] [--limit n]  search a ticket's journal and its sessions' transcripts together (every ticket's without an
+                                     id), best match first; each hit says its ticket, kind or role, a snippet, and where it came from
   cloud <id> | all                   hand a running ticket (or every one) to a Claude Code cloud session; skips what can't move, with a reason
   local <id> | all                   bring a ticket (or every one in the cloud) back and resume it here
   routine [brief]                    write ROUTINE.md, the prompt for a Claude Code scheduled task that watches PRs while you sleep, and print how to set it up
@@ -744,6 +747,21 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       for (const e of events) log(eventLine(e));
       if (!events.length) log(searchFlag != null ? `#${id}: nothing in its journal matches "${searchFlag}"` : `#${id}: its journal is empty`);
       return;
+    } else if (cmd === "recall") {
+      // A ticket's journal and transcript chunks searched together, or every ticket's (recall.ts).
+      const m = [sub, ...rest].filter((a): a is string => a != null);
+      const limitArg = flag(m, "limit");
+      const limit = limitArg == null ? undefined : Number(limitArg);
+      if (limit != null && !(Number.isInteger(limit) && limit > 0)) throw new Error("--limit takes a number");
+      const ticket = m.length > 1 && /^\d+$/.test(m[0]) ? Number(m.shift()) : undefined;
+      const words = m.join(" ");
+      if (!words.trim()) throw new Error('usage: factory recall [<id>] "<words>" [--json] [--limit n]');
+      if (ticket != null && !db.query("SELECT 1 FROM tickets WHERE id = ?").get(ticket)) throw new Error(`no ticket ${ticket}`);
+      const hits = recallHits(db, { query: words, ticket, limit });
+      if (json) return log(JSON.stringify(hits));
+      for (const h of hits) log(hitLine(h));
+      if (!hits.length) log(`${ticket != null ? `#${ticket}: ` : ""}nothing in the journal${ticket != null ? "" : "s"} or transcripts matches "${words}"`);
+      return;
     } else if (cmd === "cloud" || cmd === "local") {
       const repoDir = needLead(db).path;
       const ctx = { dir: p.dir, repo: repoDir, run: sh, now: now(), change };
@@ -1110,6 +1128,17 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     setMeta(db, "issues_read_at", nowIso); // outside the change: a failing gh waits a minute too
     try { change(db, () => { readIssueAnswers(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
     catch (e) { log(`factory: reading issue answers: ${(e as Error).message}`); }
+  }
+  // Transcript chunks (recall.ts), once a minute: sessions not indexed yet (from before layer 2,
+  // or ended while Claude was still writing), then chunks of tickets settled memory.chunk_days ago.
+  const lastChunks = getMeta(db, "chunks_at");
+  if (!lastChunks || Date.now() - Date.parse(lastChunks) >= 60_000) {
+    setMeta(db, "chunks_at", nowIso);
+    try {
+      const days = readFactory(repoDir).memory?.chunk_days ?? CHUNK_DAYS;
+      indexTranscripts(db, { now: nowIso, days });
+      pruneChunks(db, { now: nowIso, days });
+    } catch (e) { log(`factory: indexing transcripts: ${(e as Error).message}`); }
   }
   // What the cloud PR watch did while the laptop slept, before the watcher sees the same comments.
   if (routineDue(db, Date.now())) {

@@ -307,6 +307,22 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
    END;`,
   // The journal of every ticket from before it, out of the rows the database kept (journal.ts).
   (db: Database) => { backfillJournal(db); },
+  // Ticket memory, layer 2 (recall.ts): each linked transcript's chunks, redacted, with full-text
+  // search, and how many bytes of each session's transcript are indexed (-1: it wasn't there).
+  // Reading the transcripts is the daemon's tick, not this migration.
+  `CREATE TABLE transcript_chunks (
+     id INTEGER PRIMARY KEY, session INTEGER NOT NULL, ticket INTEGER NOT NULL, line INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, at TEXT
+   );
+   CREATE INDEX transcript_chunks_session ON transcript_chunks(session, line);
+   CREATE INDEX transcript_chunks_ticket ON transcript_chunks(ticket);
+   CREATE VIRTUAL TABLE transcript_chunks_fts USING fts5(text, content = 'transcript_chunks', content_rowid = 'id');
+   CREATE TRIGGER transcript_chunks_ai AFTER INSERT ON transcript_chunks BEGIN INSERT INTO transcript_chunks_fts (rowid, text) VALUES (new.id, new.text); END;
+   CREATE TRIGGER transcript_chunks_ad AFTER DELETE ON transcript_chunks BEGIN INSERT INTO transcript_chunks_fts (transcript_chunks_fts, rowid, text) VALUES ('delete', old.id, old.text); END;
+   CREATE TRIGGER transcript_chunks_au AFTER UPDATE OF text ON transcript_chunks BEGIN
+     INSERT INTO transcript_chunks_fts (transcript_chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+     INSERT INTO transcript_chunks_fts (rowid, text) VALUES (new.id, new.text);
+   END;
+   ALTER TABLE sessions ADD COLUMN chunked_size INTEGER;`,
 ];
 
 export function open(path: string): Database {
