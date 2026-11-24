@@ -5,6 +5,7 @@
 // so the two never drift either. `--check` fails if any is stale.
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { PAGES, STACK } from "../lib/pages.js";
+import { TICKET_VIEWS } from "../lib/ticketchat.js";
 
 const root = new URL("..", import.meta.url);
 const block = (id, mod, props, extra = {}) => ({ id, type: "block", ...extra, content: props ? { mod, props } : { mod } });
@@ -73,6 +74,8 @@ export function keys() {
   // shows: a <mod>.<command> reaches shown copies only, and there are two config pages.
   const factory = { "cmd-shift-f": "layout.switch:main", "cmd-o": "factory-header.open" };
   for (const n of ["1", "2", "3", "4", "5", "6"]) factory[`cmd-alt-${n}`] = `factory-ticket.tab-${n}`;
+  // The V2 Ticket page's Overview · Chat · Diff switch (the page ignores them with V2_UI off).
+  for (const v of TICKET_VIEWS) factory[`cmd-alt-${v.key}`] = `factory-ticket.view-${v.id}`;
   for (const p of PAGES) if (p.key) factory[`cmd-${p.key}`] = { command: "layout.select", args: { stack: STACK, child: p.id } };
   // The factory picker, and the next / previous other factory that needs you (factory-chrome).
   Object.assign(factory, FACTORY_KEYS);

@@ -26,6 +26,9 @@ for dir in mods/factory-*/; do
   # stale the way a dist/factory built from an older commit can.
   printf 'export default ["%s", "%s"];\n' "$(command -v bun)" "$PWD/daemon/cli.ts" > "$home/mods/$name/lib/cli.js"
 done
+# The V2 Ticket page embeds factory-chat's view (mods/factory-chat/chat/): a mod can't import
+# another mod's files, so the page gets its own copy, beside its lib/ as in factory-chat.
+rsync -a --delete mods/factory-chat/chat/ "$home/mods/factory-ticket/chat/"
 mkdir -p "$home/mods/factory-soon/previews"
 cp docs/layouts/*.png "$home/mods/factory-soon/previews/"
 rsync -a fixtures/ "$home/factory-data/"

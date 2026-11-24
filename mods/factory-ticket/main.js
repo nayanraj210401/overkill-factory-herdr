@@ -7,6 +7,7 @@ import { keyAction } from "./lib/keys.js";
 import { cliCommand, talkable } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { V2_FILES } from "./lib/ticketv2.js";
+import { viewOf } from "./lib/ticketchat.js";
 import { TicketV2 } from "./v2.js";
 
 // One ticket: its stage timeline (STATUS.md) and its Markdown as numbered tabs,
@@ -16,18 +17,23 @@ export default class FactoryTicket extends View {
     this.id = null;
     this.files = {};
     this.tab = "1";
+    this.view = "overview"; // the V2 page's Overview · Chat · Diff switch (lib/ticketchat.js)
     this.handle = cx.focus_handle();
     this.v2 = new TicketV2(); // the V2_UI page (v2.js); drawn only while the gate is on
     this.v2.init();
     // Props only smoke runs pass: open on a tab, and on the Memory tab run a search or open the editor.
     const p = props() ?? {};
     if (p.tab) { this.tab = String(p.tab); this.v2.opened = p.ticket ?? null; }
+    if (p.view) this.view = String(p.view);
+    if (p.session) this.v2.chat.first = Number(p.session); // the chat's session to open on (smoke runs)
     this.v2.seed = { search: p.search ?? null, edit: Boolean(p.edit) };
     if (!checking()) cx.spawn(async (cx) => {
       for (;;) {
-        const m = (await nextCommand()).match(/tab-(\d)$/);
-        // tab-5 (The ask) and tab-6 (Memory) are the V2 page's alone.
-        if (m && (Number(m[1]) < 5 || v2UI(status()))) this.tab = m[1];
+        const c = await nextCommand();
+        const m = c.match(/tab-(\d)$/);
+        // tab-5 (The ask) and tab-6 (Memory) are the V2 page's alone, and so are view-* (Overview · Chat · Diff).
+        if (m && (Number(m[1]) < 5 || v2UI(status()))) { this.tab = m[1]; this.view = "overview"; }
+        if (viewOf(c) && v2UI(status())) this.view = viewOf(c);
         cx.notify();
       }
     });
@@ -68,6 +74,7 @@ export default class FactoryTicket extends View {
     if (ticket.id !== this.id || state().at !== this.at) this.load(ticket.id, cx);
     if (v2UI(s)) return this.v2.render(this, ticket, s, cx);
     if (Number(this.tab) >= 5) this.tab = "1"; // the gate went off on V2's The ask or Memory tab
+    this.view = "overview"; // and on its Chat or Diff
     const { summary, stages } = parseStatusMd(this.files["STATUS.md"]);
     const dot = (state) => div().size(12).flex_none().mt(3).rounded_full()
       .bg(state === "done" ? t.done : state === "now" ? t.working : t.raised).border(1).border_color(state === "next" ? t.border : t.background);

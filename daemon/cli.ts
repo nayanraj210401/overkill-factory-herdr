@@ -104,7 +104,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
   merge-order <id> owner/name…       the order a cross-repo ticket's PRs merge in (default: the others, then the lead)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
-  sessions <id>                      the agent sessions started for a ticket, with their tokens and transcripts
+  sessions <id> [--json]             the agent sessions started for a ticket, with their tokens and transcripts
   journal <id> [--search "<words>"] [--json]  the ticket's history in order: created, stages, sessions (with their transcripts), questions
                                      and answers, checks, verdicts, send-backs, the PR, the merge; --search ranks its events by full text
   recall [<id>] "<words>" [--json] [--limit n]  search a ticket's journal and its sessions' transcripts together (every ticket's without an
@@ -771,7 +771,12 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       for (const r of rules) log(`${RULE_MARK[r.result]} ${r.rule}: ${r.detail}`);
       return;
     } else if (cmd === "sessions") {
-      for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
+      const rows = db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[];
+      // --json: what the V2 Chat view reads (lib/ticketchat.js): each session's transcript and terminal.
+      if (json) return log(JSON.stringify(rows.map((r) => ({ id: r.id, stage: r.stage, agent: r.agent ?? null, terminal: r.terminal ?? null,
+        started_at: r.started_at, ended_at: r.ended_at ?? null, claude_session: r.claude_session ?? null, transcript: r.transcript ?? null,
+        tokens_in: r.tokens_in, tokens_out: r.tokens_out, usd: r.usd ?? 0 }))));
+      for (const r of rows)
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}${r.transcript ? `  ${r.transcript}` : ""}`);
       return;
     } else if (cmd === "journal") {
