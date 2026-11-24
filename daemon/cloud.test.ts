@@ -180,7 +180,7 @@ test("a branch that committed to .factory/ stays local: nothing is pushed", () =
   writeFileSync(join(wt, ".factory/factory.yaml"), "name: changed\n");
   sh(["git", "-C", wt, "add", "-f", ".factory/factory.yaml"]);
   sh(["git", "-C", wt, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "tune"]);
-  expect(() => toCloud(db, { dir, repo, id: 7, run, now: "x" })).toThrow("this ticket changed .factory/, which stays local (.factory/factory.yaml)");
+  expect(() => toCloud(db, { dir, repo, id: 7, run, now: "x" })).toThrow("this ticket changed the factory's local files (.factory/, TICKET-MEMORY.md), which stay local (.factory/factory.yaml)");
   expect(sh(["git", "--git-dir", origin, "rev-parse", "--verify", "-q", "factory/7-rate-limit-login"]).code).not.toBe(0);
   expect(calls.some((c) => c[1] === "kill")).toBe(false);
   expect(ticket().location).toBe("local");

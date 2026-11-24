@@ -4,6 +4,8 @@ Ticket #{{ticket.id}}: {{ticket.title}}. You groom it: decide how it should be b
 
 {{issue}}
 
+{{digest}}
+
 The code is in {{repo}}.
 
 {{agent.prompt}}

@@ -159,7 +159,7 @@ export function recordUsage(db: Database, log: (s: string) => void = () => {}) {
 
 // "Tokens in" is what the budget limits: fresh input plus cache writes. Cache reads
 // are the session re-reading its own context; they count in dollars only.
-function totals(db: Database, id: number) {
+export function totals(db: Database, id: number) {
   const sum = "SUM(input + cache_write_5m + cache_write_1h) AS i, SUM(output) AS o";
   for (const s of db.query(`SELECT session, ${sum} FROM usage WHERE ticket = ? AND session IS NOT NULL GROUP BY session`).all(id) as any[])
     db.query("UPDATE sessions SET tokens_in = ?, tokens_out = ? WHERE id = ?").run(s.i, s.o, s.session);

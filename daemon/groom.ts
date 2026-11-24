@@ -24,6 +24,7 @@ import { compact } from "../lib/model.js";
 import { loadPrompt, render } from "./prompts.ts";
 import { splitGate } from "./split.ts";
 import { ASK_IN_TERMINAL } from "./attention.ts";
+import { digestBlock } from "./digest.ts";
 import { claudeSession, endSessions, journal, journalSessionStart } from "./journal.ts";
 
 type Question = { n: number; kind: "product" | "engineering"; text: string; asked_at: string; answer: string | null };
@@ -55,7 +56,7 @@ const ticket = (db: Database, id: number) => {
 const openQuestions = (db: Database, id: number) =>
   db.query("SELECT n, kind, text, asked_at, answer FROM questions WHERE ticket = ? AND answer IS NULL ORDER BY n").all(id) as Question[];
 
-export function triageBrief(t: { id: number; title: string }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null; others?: Repo[]; neighbours?: string }) {
+export function triageBrief(t: { id: number; title: string }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null; others?: Repo[]; neighbours?: string; digest?: string }) {
   const others = o.others ?? [];
   return render(loadPrompt(o.repo, "groom"), {
     neighbours: o.neighbours,
@@ -68,6 +69,7 @@ export function triageBrief(t: { id: number; title: string }, o: { slug: string;
     "agent.prompt": o.prompt,
     repos: others.map((r) => `${r.slug} (${r.path})`).join(", "),
     issue: isIssue(t.id) ? `Read the issue first: gh issue view ${t.id} --repo ${o.slug} --comments` : "It has no issue: the line above is the whole request.",
+    digest: o.digest,
   });
 }
 
@@ -97,7 +99,7 @@ export function startGrooming(db: Database, o: { dir: string; repo: string; id: 
   const lead = needLead(db).slug;
   const notes = notesForBrief(db, { agent: g.agent, repo: lead, ticket: o.id }); // notes left for the triage agent (ask.ts)
   const argv = giveAccess(argvFor(agent, { harness: "claude", model: DEFAULT_MODEL }, [
-    triageBrief(t as any, { slug: lead, repo: o.repo, folder, blueprints: g.blueprints, prompt: withSkillsLine(agent?.prompt, agent), others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db, lead) }),
+    triageBrief(t as any, { slug: lead, repo: o.repo, folder, blueprints: g.blueprints, prompt: withSkillsLine(agent?.prompt, agent), others: listRepos(db).filter((r) => !r.lead), neighbours: factoryMap(db, lead), digest: digestBlock(db, o.id) }),
     earlierQuestions(earlier), briefNotes(notes, basename(o.dir))].filter(Boolean).join("\n\n")), agent, join(folder, ".skills", g.agent), from);
   // Auto mode and the allowlist like every agent, so `factory pick` never waits (allow.ts); its questions are asked in the terminal.
   // A known Claude session id: the row names the triager's transcript (journal.ts).

@@ -14,7 +14,8 @@ import { openAgent } from "./herdr.ts";
 import { pushbackGate } from "./agreement.ts";
 import { artifactPolicy, sharedLinks, type Kind, type Link } from "./artifacts.ts";
 import { agentRepos, loadAgent } from "./agents.ts";
-import { LOCAL_REASON } from "./local.ts";
+import { LOCAL_REASON, MEMORY_FILE } from "./local.ts";
+import { digestOf } from "./digest.ts";
 import { enterStage } from "./ticket.ts";
 import { loadBlueprint, localChanges, plannedPath, readFactory, restartStage, startStage, title, type Run } from "./runner.ts";
 import { endSessions, journal } from "./journal.ts";
@@ -42,7 +43,7 @@ export const runDir = (id: number) => join(".factory-run", String(id));
 // rules, what to report, then each stage's agent prompt. Nothing in it points at .factory/,
 // which isn't on the branch.
 export function cloudBrief(o: { id: number; title: string; branch: string; blueprint: string; stages: CloudStage[];
-  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[]; noPushbacks?: string | null; shared?: Link[]; as?: Kind; cap?: number }) {
+  ready: string[]; floor: string[]; hardStops: string[]; files: string[]; others?: string[]; noPushbacks?: string | null; shared?: Link[]; as?: Kind; cap?: number; memory?: string }) {
   const here = runDir(o.id);
   const others = o.others ?? [];
   const shared = o.shared ?? [];
@@ -61,6 +62,12 @@ This ticket changes ${others.length + 1} repos, each on the same branch \`${o.br
 - Stages left after it: ${left.length ? left.map((s) => s.stage).join(" → ") : "none"}. For each stage with an agent, follow that agent's prompt below.
 - The ticket's files from the factory are in \`${here}/\`: ${o.files.length ? o.files.join(", ") : "none yet"}. Act on every note in REVIEW.md and GATES.md.
 ${shared.length ? `- The plan is shared on claude.ai too: ${shared.map((l) => `${l.file} ${l.url}`).join(", ")}. Read it there with ${tool} if the copy in \`${here}/\` is missing; the two hold the same text. If you change one of those files, republish it to the same link (best-effort: carry on if the publish fails).
+` : ""}${o.memory?.trim() ? `
+## What the ticket has learned so far
+
+Its digest, from the factory's journal and the earlier sessions' transcripts:
+
+${o.memory.trim()}
 ` : ""}
 ## Rules
 
@@ -161,15 +168,15 @@ export function toCloud(db: Database, o: { dir: string; repo: string; id: number
     id: o.id, title: t.title, branch: t.branch, blueprint: t.blueprint, stages,
     ready: f.ready ?? ["evidence", "holdout", "quality_floor", "review", "template", "budget"], floor: f.quality_floor ?? [], hardStops: f.hard_stops ?? [...STOPS], files,
     others: repos.slice(1).map((r) => r.repo), noPushbacks: gate.ok ? null : gate.why,
-    shared: sharedLinks(db, o.id, artifactPolicy(f)), as: artifactPolicy(f).as,
+    shared: sharedLinks(db, o.id, artifactPolicy(f)), as: artifactPolicy(f).as, memory: digestOf(db, o.id)?.text,
   });
   // Every repo's work in progress goes up on its branch while the local agent is still alive; the pack
   // rides in the lead's. A retry commits nothing new when nothing changed, so it never duplicates the commit.
-  // .factory/ is unstaged, so it stays out even where a repo isn't adopted yet (no exclude line).
+  // .factory/ and TICKET-MEMORY.md are unstaged, so they stay out even where a repo isn't adopted yet (no exclude line).
   const snapshot = () => {
     for (const r of repos) {
       git(o.run, r.worktree!, ["add", "-A"], `git add in ${r.repo}`);
-      o.run(["git", "-C", r.worktree!, "reset", "-q", "--", ".factory"]);
+      o.run(["git", "-C", r.worktree!, "reset", "-q", "--", ".factory", MEMORY_FILE]);
       if (o.run(["git", "-C", r.worktree!, "diff", "--cached", "--quiet"]).code !== 0)
         git(o.run, r.worktree!, ["commit", "-q", "-m", `factory: hand #${o.id} to a cloud session at ${stage}`], `git commit in ${r.repo}`);
       git(o.run, r.worktree!, ["push", "-u", "origin", r.branch!], `git push in ${r.repo}`);

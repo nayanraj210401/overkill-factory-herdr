@@ -323,6 +323,13 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
      INSERT INTO transcript_chunks_fts (rowid, text) VALUES (new.id, new.text);
    END;
    ALTER TABLE sessions ADD COLUMN chunked_size INTEGER;`,
+  // Ticket memory, layer 3 (digest.ts): each ticket's digest, written by Haiku, when, and the last
+  // journal event and transcript chunk it covers. The link a re-request starts from is
+  // tickets.parent, which splits added earlier: a part and a re-request both start from its digest.
+  `ALTER TABLE tickets ADD COLUMN digest TEXT;
+   ALTER TABLE tickets ADD COLUMN digest_at TEXT;
+   ALTER TABLE tickets ADD COLUMN digest_event INTEGER;
+   ALTER TABLE tickets ADD COLUMN digest_chunk INTEGER;`,
 ];
 
 export function open(path: string): Database {

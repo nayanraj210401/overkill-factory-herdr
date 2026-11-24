@@ -21,6 +21,7 @@ import { loadPrompt, render } from "./prompts.ts";
 import { settingOf } from "./learn.ts";
 import { ticketRepos } from "./db.ts";
 import { slicesOf } from "./slices.ts";
+import { digestBlock } from "./digest.ts";
 import { claudeSession, endSessions, journal, journalSessionStart } from "./journal.ts";
 
 export const DEFAULT_HANDOFF_AT = 0.6;
@@ -181,7 +182,7 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
   let stagePrompt: string | undefined, output: string | undefined;
   try { ({ prompt: stagePrompt, output } = own ? loadBlueprint(o.repo, own).stages[o.s.stage] ?? {} : {}); } catch {}
   const share = shareFor(db, { repo: o.repo, id: t.id, folder: o.folder, output });
-  const stageBrief = brief(t, o.s.stage, agent?.prompt ?? null, o.folder, agent?.role, repos, [], loadPrompt(o.repo, stagePrompt ?? "stage"), "", share);
+  const stageBrief = brief(t, o.s.stage, agent?.prompt ?? null, o.folder, agent?.role, repos, [], loadPrompt(o.repo, stagePrompt ?? "stage"), "", share, "", "", digestBlock(db, t.id));
   // The handoff this session starts from is renamed HANDOFF.session-<n-1>.md; it is shared as HANDOFF.md.
   const kept = join(o.folder, `HANDOFF.session-${o.n - 1}.md`);
   return render(loadPrompt(o.repo, "handoff"), {

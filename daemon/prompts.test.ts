@@ -11,6 +11,7 @@ import { brief, sh, startTicket, type Run } from "./runner.ts";
 import { validateDir, validateFile } from "./validate.ts";
 import { matchBrief } from "./snap.ts";
 import { neighbourMap } from "./agents.ts";
+import { digestBlock } from "./digest.ts";
 import { ask } from "./ask.ts";
 
 const FIXTURE = join(import.meta.dir, "../fixtures/acme-api/.factory");
@@ -33,6 +34,12 @@ test("the built-in templates give the briefs the code used to build", () => {
   matchBrief("stageHoldout", brief({ id: 1, title: "t" }, "verify", "P", "/f", "verify"));
   matchBrief("stageReview", brief({ id: 1, title: "t" }, "review", "P", "/f", "review"));
   matchBrief("stageFix", brief({ id: 1, title: "t" }, "implement", "P", dir, "build", repos).split(dir).join("/f"));
+  // The ticket's digest (digest.ts), with the pointer to factory recall; a re-request's is its parent's.
+  const db = open(join(dir, "factory.db"));
+  db.query("INSERT INTO tickets (id, title, digest, digest_at, updated_at) VALUES (1, 't', ?, 'x', 'x')").run("## Decisions and why\n- A sliding window.\n## The person's answers\n- Q1: \"sliding, please\"\n## Tried and failed\n- none\n## Open questions\n- none\n## Current state\n- Spec written.");
+  db.query("INSERT INTO tickets (id, title, parent, updated_at) VALUES (7, 'x', 1, 'x')").run();
+  matchBrief("stageDigest", brief({ id: 1, title: "t" }, "implement", "P", "/f", "build", [repos[0]], [], undefined, "", {}, "", "", digestBlock(db, 1)));
+  matchBrief("groomDigest", triageBrief({ id: 7, title: "x" }, { ...o, digest: digestBlock(db, 7) }));
   // One Overwatch for every factory: its brief lists each, with its repos and data folder.
   const acme = { name: "acme-api", dir: "/h/acme-api", repos: [{ slug: "acme/api", path: "/src/api", lead: true }, { slug: "acme/web", path: "/src/web", lead: false }] };
   const shop = { name: "shop", dir: "/h/shop", repos: [{ slug: "acme/shop", path: "/src/shop", lead: true }] };
