@@ -2,6 +2,7 @@
 # Each stage names a shared step (.factory/steps/<name>.yaml, else ~/.factory/steps/);
 # a field set here wins over the step's, like per: slice on implement.
 name: feature
+description: "New behaviour a user will notice: it needs a spec before anyone builds it."
 orchestrator: foreman
 start: spec
 stages:

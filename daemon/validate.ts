@@ -47,12 +47,12 @@ export const KINDS: Record<string, Rule> = {
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
       budget: { object: { per_ticket: open, per_day: open, headroom: num, floor: "any", learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, arms: open, warmup_tickets: num, pause_above: "any", promote_after: num, review_every: num, retire_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, artifacts: ARTIFACTS, maintainer: { object: { gate } },
-      verify: { object: { features: str } },
+      verify: { object: { features: str } }, memory: { object: { chunk_days: num } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
       V2_UI: "boolean", // the V2 UI gate (account.ts v2UI), over the account's
     },
   },
-  blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },
+  blueprint: { required: ["name", "start", "stages"], object: { name: str, description: str, orchestrator: str, start: str, stages: { map: STAGE } } },
   step: { required: ["description"], object: { description: str, ...WORK } },
   agent: {
     object: {

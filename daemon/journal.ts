@@ -10,6 +10,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { transcriptDir } from "./usage.ts";
 import { ftsQuery } from "./memory.ts";
+import { indexSession } from "./recall.ts";
 
 export const MAX_EVENT = 2000; // characters kept of an event's text
 export const STATUS_EVENTS = 8; // the newest events per ticket in status.json
@@ -30,13 +31,15 @@ export function journal(db: Database, e: NewEvent) {
     .run(e.ticket, e.session ?? null, e.kind, cap(e.text, MAX_EVENT), e.ref ?? null, e.at);
 }
 
-// Ends a ticket's open sessions (or one), each with a session-end event saying why.
+// Ends a ticket's open sessions (or one), each with a session-end event saying why, and indexes
+// each one's transcript (recall.ts). Indexing never stops a session ending: the tick retries it.
 export function endSessions(db: Database, o: { ticket: number; at: string; why: string; id?: number }) {
   const open = db.query(`SELECT id, stage, agent FROM sessions WHERE ticket = ? AND ended_at IS NULL${o.id != null ? " AND id = ?" : ""}`)
     .all(...(o.id != null ? [o.ticket, o.id] : [o.ticket])) as { id: number; stage: string; agent: string | null }[];
   for (const s of open) {
     db.query("UPDATE sessions SET ended_at = ? WHERE id = ?").run(o.at, s.id);
     journal(db, { ticket: o.ticket, session: s.id, kind: "session-end", text: `${s.stage} session ended${s.agent ? ` (${s.agent})` : ""}: ${o.why}`, ref: `session:${s.id}`, at: o.at });
+    try { indexSession(db, s.id); } catch {}
   }
 }
 
