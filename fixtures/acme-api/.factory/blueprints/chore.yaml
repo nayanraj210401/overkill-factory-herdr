@@ -1,5 +1,6 @@
 # .factory/blueprints/chore.yaml
 name: chore
+description: "Upkeep with no behaviour change: dependencies, config, renames."
 orchestrator: foreman
 start: implement
 stages:

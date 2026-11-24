@@ -52,7 +52,7 @@ export const KINDS: Record<string, Rule> = {
       V2_UI: "boolean", // the V2 UI gate (account.ts v2UI), over the account's
     },
   },
-  blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },
+  blueprint: { required: ["name", "start", "stages"], object: { name: str, description: str, orchestrator: str, start: str, stages: { map: STAGE } } },
   step: { required: ["description"], object: { description: str, ...WORK } },
   agent: {
     object: {
