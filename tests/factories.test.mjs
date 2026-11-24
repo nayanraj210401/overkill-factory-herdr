@@ -69,10 +69,11 @@ test("the brand's second line: lead repo, branch, and the repo count when there 
   assert.equal(brandSub({ factory: { name: "a", repo: "me/a" } }, null), "me/a");
 });
 
-test("g f, ] and [ are bound for the factory layout and left to terminals", () => {
+test("the factory picker and needs-you keys are chords; no bare key is bound, so text boxes get every letter", () => {
   const k = keys();
-  assert.equal(k["layout:factory"]["g f"], "mod.open:factory-picker");
-  assert.equal(k["layout:factory"]["]"], "factory-chrome.needs-next");
-  assert.equal(k["layout:factory"]["["], "factory-chrome.needs-prev");
-  for (const key of ["g", "[", "]"]) assert.equal(k.terminal[key], "terminal");
+  assert.equal(k["layout:factory"]["cmd-k"], "mod.open:factory-picker");
+  assert.equal(k["layout:factory"]["cmd-j"], "factory-chrome.needs-next");
+  assert.equal(k["layout:factory"]["cmd-shift-j"], "factory-chrome.needs-prev");
+  for (const [section, bindings] of Object.entries(k))
+    for (const key of Object.keys(bindings)) assert.match(key, /^(cmd|ctrl|alt|shift)-/, `${section}: "${key}" is a bare key`);
 });

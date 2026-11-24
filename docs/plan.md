@@ -214,8 +214,10 @@ Every action is a click or a key, and each one is a single call to the daemon. T
 | Key | Does |
 | --- | --- |
 | `cmd-shift-f` | Switch to factory mode and back |
-| `g f` | The factory picker: every factory on this machine; pick one to switch to its space |
-| `]` / `[` | The next / previous other factory that needs you |
+| `cmd-k` | The factory picker: every factory on this machine; pick one to switch to its space |
+| `cmd-j` / `cmd-shift-j` | The next / previous other factory that needs you |
+
+Factory keys are chords. A key bound for the layout is matched before text input, so a bare key would be taken from every text box on the pages (the chat, search, the answer box). `scripts/sync.sh --keys` removes the bare `g f`, `]` and `[` earlier versions bound.
 | `g h`, `g t`, `g o`, `g b`, `g m`, `g c` | Home, Tickets, Overwatch, Blueprint, Metrics, Config (built as ⌘1–⌘8: Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Repo config, Config) |
 | `j` / `k`, `enter` | Move through tickets, open one |
 | `e` | The ticket's live agent terminal |
