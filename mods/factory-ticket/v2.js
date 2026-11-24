@@ -527,7 +527,9 @@ export class TicketV2 {
           .child(v.title))))
       .child(div().flex_none().text_size(11.5).text_color(t.dim).child("⌘⌥7–9"));
     const chatEl = (view === "chat" || this.chat.entity) && this.chat.render(ticket, s, cx, view === "chat");
-    const body = view === "chat" ? div().id("chat-view").flex_1().min_h(0).child(chatEl)
+    // The page focuses itself on mouse down; inside the chat that would pull focus out of its
+    // message box right after a click puts it there, so the chat keeps its own clicks.
+    const body = view === "chat" ? div().id("chat-view").flex_1().min_h(0).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(chatEl)
       : view === "diff" ? this.diffView(ticket, daemon, d, t, mono)
       : h_flex().id("overview").flex_1().min_h(0).child(left).child(right);
 
