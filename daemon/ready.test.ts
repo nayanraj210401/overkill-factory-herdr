@@ -53,7 +53,7 @@ test("the pr stage waits while a rule fails, then pushes the branch and opens th
   expect(ticket()).toMatchObject({ state: "ready", pr_number: 42, pr_watched: 1, stage: "merge" });
   expect(sh(["git", "-C", origin, "branch", "--list", "factory/7-rate-limit-login"]).out).toContain("factory/7-rate-limit-login");
   expect(gh.map((a) => a.slice(0, 3))).toEqual([["gh", "pr", "list"], ["gh", "pr", "create"]]); // no PR on the branch yet, so one opens
-  expect(gh[1].slice(0, 4)).toEqual(["gh", "pr", "create", "--head"]); // ready for review, not a draft
+  expect(gh[1].slice(0, 4)).toEqual(["gh", "pr", "create", "--draft"]); // a draft; merging marks it ready
   const body = readFileSync(gh[1][gh[1].indexOf("--body-file") + 1], "utf8");
   expect(body).toStartWith("Rate-limits login per user");
   expect(body).toContain("- ✓ evidence: 1 checks pass after the last commit");
