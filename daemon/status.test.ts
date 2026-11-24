@@ -36,7 +36,12 @@ test("a running ticket carries its stage's start, its live agent and the slice i
   expect(validateStatus(s)).toEqual([]);
   const [t, q] = s.tickets as any[];
   expect([t.stage_started_at, t.agent, t.slice]).toEqual(["2026-11-21T00:05:00Z", "builder", { n: 2, of: 3 }]);
-  expect(["stage_started_at", "agent", "slice"].filter((k) => k in q)).toEqual([]); // nothing when there's none
+  expect(["stage_started_at", "agent", "slice", "transcript"].filter((k) => k in q)).toEqual([]); // nothing when there's none
+  expect("transcript" in t).toBe(false); // a live session with no transcript recorded
+  db.query("UPDATE sessions SET transcript = '/p/abc.jsonl'").run();
+  expect((buildStatus(db).tickets[0] as any).transcript).toBe("/p/abc.jsonl");
+  db.query("UPDATE sessions SET ended_at = '2026-11-21T00:07:00Z'").run(); // no live session: none
+  expect("transcript" in (buildStatus(db).tickets[0] as any)).toBe(false);
 });
 
 test("status.json carries each PR's url and state, one per repo for a cross-repo ticket", () => {

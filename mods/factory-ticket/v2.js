@@ -5,10 +5,12 @@
 // diff, the ready rules), the answer box, and the Memory tab (the digest, its edit, the search).
 // Over both columns, the Overview · Chat · Diff switch (docs/prototypes/chat-v2): Chat is the
 // ticket's agent as a chat (factory-chat's view, copied into ./chat by sync.sh), Diff the
-// ticket's diff as the d window draws it.
+// ticket's diff as the d window draws it. Beside the chat, the Changes + ticket memory panel
+// (⌘⌥0, or Changes in the chat's head): the files changed, each opening its diff, and the
+// digest, short, with the journal's last events.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, TextView, InputState, Input, EditorState, Editor } from "gpui-base";
-import { theme, exec, hc, notify, checking } from "herdr";
+import { theme, exec, hc, notify, checking, shared, setShared } from "herdr";
 import { parseStatusMd, repoBadge, prLinks, prColor, watchNote, crossRepoCards, sharedLinks, questionCards } from "./lib/model.js";
 import { root, state, peekAgent, act, ask } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
@@ -18,7 +20,7 @@ import { V2_TABS, ticketKind, waitsOnYou, stageStrip, chips, askShort, askSource
   mdSections, digestView, hitRows, memoryKey, rebuildAsk } from "./lib/ticketv2.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { parseDiff } from "./lib/diff.js";
-import { ticketViews } from "./lib/ticketchat.js";
+import { ticketViews, askedView, chatPanel, panelOpen, panelShown, VIEW_KEY, OPEN_KEY, PANEL_KEY, PANEL_W, PANEL_HINT } from "./lib/ticketchat.js";
 import { TicketChat } from "./chat/host.js"; // mods/factory-chat/chat/, copied by scripts/sync.sh
 
 const TAIL_MS = 2000; // the live terminal's tail, while it shows
@@ -40,6 +42,8 @@ export class TicketV2 {
     this.editing = null; // the ticket whose digest is open in the editor
     this.busy = null; // "save" | "rebuild" while the CLI runs
     this.chat = new TicketChat(); // the Chat view; its retained view is made the first time it shows
+    this.chatW = 0; // the Chat view's width, for folding the panel away on a narrow window
+    this.diffFile = null; // { id, path }: the Diff view shows this one file (a click in the panel)
   }
 
   // What the page's keys skip while you type: the answer box, the search box or the digest editor.
@@ -516,7 +520,24 @@ export class TicketV2 {
 
     // ── Overview · Chat · Diff ───────────────────────────────────────────
     const views = ticketViews(s) ?? [];
+    // A sidebar click asked for this ticket on Chat (factory-tickets, lib/sidebar.js threadTarget).
+    const ask = shared(OPEN_KEY);
+    if (askedView(ask, ticket.id, now) && ask.at !== this.asked) { this.asked = ask.at; page.view = ask.view; }
     const view = views.some((v) => v.id === page.view) ? page.view : "overview";
+    if (view !== "diff") this.diffFile = null;
+    // The sidebar reads which view shows, to open its threads on Chat while it does.
+    // Written from a task after the frame: Herdr drops a setShared made while drawing.
+    if (!checking() && shared(VIEW_KEY) !== view && this.publishing !== view) {
+      this.publishing = view;
+      cx.spawn(async (cx) => {
+        await new Promise((done) => cx.timer.after(0, done));
+        this.publishing = null;
+        if (shared(VIEW_KEY) !== view) setShared(VIEW_KEY, view);
+      });
+    }
+    const open = panelOpen(shared(PANEL_KEY));
+    const panel = view === "chat" && panelShown(open, this.chatW);
+    if (panel && daemon && !checking()) this.loadMemory(ticket, cx);
     const switchEl = h_flex().id("views").flex_none().gap(10).px(16).py(7).items_center().border_b(1).border_color(t.border)
       .child(div().flex_1().min_w_0().truncate().text_size(12.5).text_color(t.muted)
         .child(view === "overview" ? " " : `#${ticket.id} ${ticket.title}`))
@@ -526,10 +547,13 @@ export class TicketV2 {
           .hover((st) => st.text_color(t.foreground)).on_click((_e, cx) => { page.view = v.id; cx.notify(); })
           .child(v.title))))
       .child(div().flex_none().text_size(11.5).text_color(t.dim).child("⌘⌥7–9"));
-    const chatEl = (view === "chat" || this.chat.entity) && this.chat.render(ticket, s, cx, view === "chat");
-    // The page focuses itself on mouse down; inside the chat that would pull focus out of its
-    // message box right after a click puts it there, so the chat keeps its own clicks.
-    const body = view === "chat" ? div().id("chat-view").flex_1().min_h(0).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(chatEl)
+    const chatEl = (view === "chat" || this.chat.entity) && this.chat.render(ticket, s, cx, view === "chat", { open, folded: open && !panel });
+    // The page focuses itself on mouse down; inside the chat (and its panel) that would pull focus
+    // out of its message box right after a click puts it there, so the chat keeps its own clicks.
+    const body = view === "chat" ? h_flex().id("chat-view").flex_1().min_h(0).on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_size_change((size, cx) => { const w = Math.round(size.width); if (w !== this.chatW) { this.chatW = w; cx.notify(); } })
+        .child(div().flex_1().min_w_0().h_full().child(chatEl))
+        .when(panel, (el) => el.child(this.panelView(page, ticket, s, d, t, mono, now)))
       : view === "diff" ? this.diffView(ticket, daemon, d, t, mono)
       : h_flex().id("overview").flex_1().min_h(0).child(left).child(right);
 
@@ -545,13 +569,67 @@ export class TicketV2 {
       .child(body);
   }
 
+  // The Changes + ticket memory panel beside the chat (docs/prototypes/chat-v2): the files the
+  // ticket changed, a click opening that file's diff; the digest, short, with Edit on Memory;
+  // the journal's last events. What it says is lib/ticketchat.js chatPanel's.
+  panelView(page, ticket, s, d, t, mono, now) {
+    const p = chatPanel({ ticket, diff: d, memory: this.memory?.id === ticket.id ? this.memory : null, daemon: s.source === "daemon", now });
+    const tone = (k) => ({ ok: t.done, bad: t.ansi1, warn: t.blocked, ask: t.blocked, accent: t.accent, dim: t.dim })[k] ?? t.muted;
+    const label = (text, right) => h_flex().gap(8).items_center().text_size(11).text_color(t.dim)
+      .child(div().flex_1().child(text.toUpperCase())).when(Boolean(right), (el) => el.child(div().text_size(11.5).text_color(t.muted).child(right)));
+    const note = (id, text) => div().id(id).text_size(12).text_color(t.dim).child(text);
+    const STATUS_C = { A: t.done, D: t.ansi1, R: t.accent, M: t.accent };
+    const file = (f, i) => h_flex().id(`chg-${i}`).gap(8).px(6).py(3).rounded(5).items_center().font_family(mono).text_size(12).cursor_pointer()
+      .hover((st) => st.bg(t.hover)).tooltip(`${f.path}: open its diff`)
+      .on_click((_e, cx) => { this.diffFile = { id: ticket.id, path: f.path }; page.view = "diff"; cx.notify(); })
+      .child(div().w(10).flex_none().text_color(STATUS_C[f.status]).child(f.status))
+      .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(f.path))
+      .child(div().flex_none().text_color(t.done).child(f.add ? `+${f.add}` : ""))
+      .child(div().flex_none().text_color(t.ansi1).child(f.del ? `−${f.del}` : ""));
+    const g = p.digest;
+    // The page's mouse-down focuses the page, which would take focus from the chat's message box.
+    return v_flex().id("chat-panel").w(PANEL_W).flex_none().h_full().border_l(1).border_color(t.border).bg(t.surface)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .child(h_flex().flex_none().h(34).px(12).gap(8).items_center().border_b(1).border_color(t.border).text_size(12)
+        .child(div().flex_1().font_semibold().text_color(t.foreground).child("Changes and memory"))
+        .child(div().text_color(t.dim).child(PANEL_HINT))
+        .child(div().id("panel-close").px(6).py(2).rounded(5).cursor_pointer().text_color(t.muted)
+          .hover((st) => st.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => { setShared(PANEL_KEY, false); cx.notify(); }).child("×")))
+      .child(v_flex().id("panel-scroll").flex_1().min_h(0).overflow_y_scroll().px(12).py(12).gap(14)
+        .child(v_flex().id("panel-changes").gap(3)
+          .child(label("Changes", p.changes.total))
+          .when(Boolean(p.changes.note), (el) => el.child(note("changes-note", p.changes.note)))
+          .children(p.changes.files.map(file)))
+        .child(v_flex().id("panel-memory").gap(6)
+          .child(label("Ticket memory", g.age))
+          .when(Boolean(g.note), (el) => el.child(note("digest-note", g.note)))
+          .children(g.sections.map((sec, i) => v_flex().id(`digest-sec-${i}`).gap(1)
+            .when(Boolean(sec.heading), (el) => el.child(div().text_size(11.5).font_semibold().text_color(t.muted).child(sec.heading)))
+            .children(sec.lines.map((l, j) => div().id(`digest-line-${i}-${j}`).text_size(12).text_color(t.foreground).child(l)))))
+          .child(h_flex().child(div().id("edit-on-memory").flex_none().px(9).py(4).rounded(6).border(1).border_color(t.border).text_size(12).cursor_pointer()
+            .text_color(t.foreground).hover((st) => st.border_color(t.accent))
+            .on_click((_e, cx) => { page.view = "overview"; page.tab = "6"; cx.notify(); }).child("Edit on Memory"))))
+        .child(v_flex().id("panel-journal").gap(1)
+          .child(label("Journal"))
+          .children(p.events.length ? p.events.map((e, i) => h_flex().id(`pev-${i}`).gap(8).py(1).text_size(12).items_start()
+            .child(div().w(40).flex_none().text_right().text_color(t.dim).child(e.time))
+            .child(div().w(12).flex_none().text_color(tone(e.tone)).child(e.mark))
+            .child(div().flex_1().min_w_0().text_color(t.muted).child(e.text)))
+            : [note("journal-empty", "Nothing in the journal yet.")])));
+  }
+
   // The Diff view: the ticket's diff as the d window draws it (factory-diff), from the same
-  // `factory diff` the right column's file list reads.
+  // `factory diff` the right column's file list reads. A file clicked in the panel shows alone.
   diffView(ticket, daemon, d, t, mono) {
     const parsed = d?.raw != null ? parseDiff(d.raw, 3000) : null;
+    const only = this.diffFile?.id === ticket.id ? this.diffFile.path : null;
+    let cur = null;
+    const rows = !parsed ? [] : only ? parsed.rows.filter((r) => (r.kind === "file" ? (cur = r.file.path) : cur) === only) : parsed.rows;
+    const one = only && parsed?.files.find((f) => f.path === only);
     const note = ["grooming", "queued"].includes(ticket.state) ? `#${ticket.id} hasn't started; no diff yet.`
       : !daemon ? "Sample data: a real ticket's diff shows here."
-      : !d ? "Reading the diff…" : d.error ? d.error : !parsed.rows.length ? "No changes yet." : null;
+      : !d ? "Reading the diff…" : d.error ? d.error : !parsed.rows.length ? "No changes yet."
+      : only && !rows.length ? `${only} is past the first 3000 lines: open the diff in a window (d).` : null;
     const row = (r, i) => {
       if (r.kind === "file") return h_flex().id(`dr-${i}`).w_full().h(26).flex_none().px(12).gap(10).items_center().bg(t.surface).border_t(1).border_color(t.border)
         .child(div().flex_1().min_w_0().truncate().font_semibold().text_color(t.foreground).child(r.file.path))
@@ -564,10 +642,13 @@ export class TicketV2 {
     };
     return v_flex().id("diff-view").flex_1().min_h(0)
       .child(h_flex().flex_none().px(16).py(8).gap(10).items_center().border_b(1).border_color(t.border).text_size(12.5)
-        .child(div().flex_1().min_w_0().truncate().text_color(t.muted).child(parsed?.files.length ? `${parsed.files.length} file${parsed.files.length > 1 ? "s" : ""} · +${parsed.add} −${parsed.del}${parsed.cut ? ` · first 3000 lines` : ""}` : "Diff"))
+        .child(div().flex_1().min_w_0().truncate().text_color(t.muted).child(one ? `${one.path} · +${one.add} −${one.del}`
+          : parsed?.files.length ? `${parsed.files.length} file${parsed.files.length > 1 ? "s" : ""} · +${parsed.add} −${parsed.del}${parsed.cut ? ` · first 3000 lines` : ""}` : "Diff"))
+        .when(Boolean(only), (el) => el.child(div().id("diff-all").px(10).py(4).rounded(6).border(1).border_color(t.border).cursor_pointer().text_color(t.foreground)
+          .hover((st) => st.border_color(t.accent)).on_click((_e, cx) => { this.diffFile = null; cx.notify(); }).child("All files")))
         .child(div().id("diff-window").px(10).py(4).rounded(6).border(1).border_color(t.border).cursor_pointer().text_color(t.foreground)
           .hover((st) => st.border_color(t.accent)).on_click(() => act({ kind: "diff" }, ticket)).child("Open in a window  d")))
       .child(note ? div().px(16).py(12).text_color(t.dim).child(note)
-        : v_flex().id("diff-rows").flex_1().min_h(0).overflow_y_scroll().font_family(mono).text_size(12).children(parsed.rows.map(row)));
+        : v_flex().id("diff-rows").flex_1().min_h(0).overflow_y_scroll().font_family(mono).text_size(12).children(rows.map(row)));
   }
 }

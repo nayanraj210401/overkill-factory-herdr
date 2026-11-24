@@ -78,6 +78,8 @@ export function keys() {
   for (const n of ["1", "2", "3", "4", "5", "6"]) factory[`cmd-alt-${n}`] = `factory-ticket.tab-${n}`;
   // The V2 Ticket page's Overview · Chat · Diff switch (the page ignores them with V2_UI off).
   for (const v of TICKET_VIEWS) factory[`cmd-alt-${v.key}`] = `factory-ticket.view-${v.id}`;
+  // The Chat view's Changes + ticket memory panel, open or closed.
+  factory["cmd-alt-0"] = "factory-ticket.chat-panel";
   for (const p of PAGES) if (p.key) factory[`cmd-${p.key}`] = { command: "layout.select", args: { stack: STACK, child: p.id } };
   // The factory picker, and the next / previous other factory that needs you (factory-chrome).
   Object.assign(factory, FACTORY_KEYS);

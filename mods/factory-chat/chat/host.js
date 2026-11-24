@@ -37,8 +37,9 @@ export class TicketChat {
     });
   }
 
-  // `active`: the chat shows now (it follows its terminal only then).
-  render(ticket, s, cx, active = true) {
+  // `active`: the chat shows now (it follows its terminal only then). `panel`: the page's Changes
+  // panel ({ open, folded }), for the toggle in the chat's head; none on factory-chat's own page.
+  render(ticket, s, cx, active = true, panel = null) {
     const daemon = s.source === "daemon";
     this.load(ticket, daemon, cx);
     const props = {
@@ -46,6 +47,7 @@ export class TicketChat {
       who: ticket.agent ?? ticket.stage ?? "agent",
       sessions: chatSessions(this.rows ?? [], ticket),
       daemon, active, first: this.first,
+      ...(panel ? { panel } : {}),
     };
     const text = JSON.stringify(props);
     // A retained view is made and given props outside render: in a task, after a tick (a task's

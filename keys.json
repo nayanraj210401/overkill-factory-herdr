@@ -14,6 +14,7 @@
     "cmd-alt-7": "factory-ticket.view-overview",
     "cmd-alt-8": "factory-ticket.view-chat",
     "cmd-alt-9": "factory-ticket.view-diff",
+    "cmd-alt-0": "factory-ticket.chat-panel",
     "cmd-1": {
       "command": "layout.select",
       "args": {
