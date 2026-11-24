@@ -142,6 +142,7 @@ Both pages are read-only. A line on each says the maintainer makes every change 
 - **Where it's set:** a top-level key in the account config (`~/.factory/config.yaml`, every factory) or in a repo's `.factory/factory.yaml` (that factory). The lead repo's `factory.yaml` wins over the account. `factory validate` checks it is `true` or `false`.
 - **How the mods read it:** the daemon writes `ui: { v2: <bool> }` into status.json (`lib/status.js` checks it when present). A page calls `v2UI(status())` from `lib/model.js`. It's off when `ui` is missing, so an older daemon keeps the current pages.
 - **Backward compatibility:** the current pages stay the default. A V2 page draws only when the gate is on.
+- **Ticket V2** (`mods/factory-ticket/v2.js`, views in `lib/ticketv2.js`): left, the title, chips (blueprint, source, a deadline the ask names, spend against the budget, hard rules from INTENT.md or GROOMING.md), the ask in short, a stage strip and five tabs (Plan, Checks, Questions, PR, The ask; ⌘⌥1–5). Right, the agent line and token bar, then by state: the live terminal's tail (`hc read`, read-only) while it works; an inline question card when it waits on you, whose Send types the picked option or your words into the live terminal (`hc keys`/`hc send --force`, options read from the question tool's screen) or, parked, opens the `factory answer` dialog prefilled; the ready rules (`factory ready`) on a ready PR. Then files changed (`factory diff`) and Activity from `events`. x closes a parked ticket (`factory drop`), b sends a ready one back, o opens its PR.
 - **Blueprint V2** (`mods/factory-blueprint/v2.js`, numbers in `lib/blueprint-v2.js`): blueprints.json adds each blueprint's `description` (an optional `description:` line in the blueprint file, the "why grooming picks it"), a `stats` strip (tickets in 7 days, the share with no fail-back, the median ask → PR time and cost over PRs opened), per stage its last 10 outcomes, pass/fail and median time and recent runs (a run fails when the ticket goes next to its `on_fail`, or parks on it with retries used up), and `steps` (each step's file, description and output). A number with nothing to measure is null and the page leaves it out.
 
 #### Reviews
@@ -386,7 +387,7 @@ A ticket's history used to be scattered: `sessions` rows with no link to their t
 | 1 | Session → transcript link, and the ticket journal | **Built** (`daemon/journal.ts`, migrations 35 and 36) |
 | 2 | Transcript chunk index, and `factory recall` | **Built** (`daemon/recall.ts`, migration 37) |
 | 3 | A ticket digest, written by Haiku, in every brief | Planned |
-| 4 | The Ticket page's Activity feed and search | Planned |
+| 4 | The Ticket page's Activity feed and search | Activity built on the V2 Ticket page; search planned |
 
 **Layer 1: link and journal (built).**
 
