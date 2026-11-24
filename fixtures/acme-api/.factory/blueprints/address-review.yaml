@@ -1,5 +1,6 @@
 # .factory/blueprints/address-review.yaml
 name: address-review
+description: "A reviewer left comments on a factory PR: fix them and run the tests again."
 orchestrator: foreman
 start: fix
 stages:
