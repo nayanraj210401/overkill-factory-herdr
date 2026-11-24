@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { repoPrecedence, globalPrecedence, fileBadge, globalFiles, repoChoices, leadOf, maintainerAsk } from "../lib/configfiles.js";
+import { repoPrecedence, globalPrecedence, fileBadge, globalFiles, repoChoices, leadOf, maintainerAsk, newUIRow } from "../lib/configfiles.js";
 
 const o = { home: "/h/.factory", checkout: "/src", lead: null };
 const other = { ...o, lead: "/p/api" };
@@ -87,4 +87,12 @@ test("the checkout comes from the CLI path sync.sh writes", async () => {
   const { checkoutOf } = await import("../lib/configfiles.js");
   assert.equal(checkoutOf(["/bin/bun", "/src/factory/daemon/cli.ts"]), "/src/factory");
   assert.equal(checkoutOf(["/usr/local/bin/factory"]), null);
+});
+
+test("the New UI row shows config.yaml's value, and says so when the factory's own factory.yaml wins", () => {
+  assert.deepEqual(newUIRow({ account: null, factory: null, repo: "acme/api" }), { on: false, note: null });
+  assert.deepEqual(newUIRow({ account: true, factory: null, repo: "acme/api" }), { on: true, note: null });
+  assert.deepEqual(newUIRow({ account: false, factory: true, repo: "nayan/irctc-mcp" }), { on: false, note: "irctc-mcp's factory.yaml sets it on; that wins here" });
+  assert.deepEqual(newUIRow({ account: true, factory: false, repo: null }), { on: true, note: "this factory's factory.yaml sets it off; that wins here" });
+  assert.deepEqual(newUIRow(null), { on: false, note: null });
 });

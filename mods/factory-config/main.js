@@ -2,7 +2,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, exec, watchFolder, checking, notify, home, appHome } from "herdr";
 import { daemonView, pendingNotes } from "./lib/model.js";
-import { globalFiles, globalPrecedence, fileBadge, checkoutOf, maintainerAsk, GLOBAL_TOP } from "./lib/configfiles.js";
+import { globalFiles, globalPrecedence, fileBadge, checkoutOf, maintainerAsk, newUIRow, GLOBAL_TOP } from "./lib/configfiles.js";
 import { FileView, listFiles, badgesFor, badgedRow, viewerLabels, viewerDetail, maintainerLine } from "./lib/fileview.js";
 import { cliCommand } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
@@ -12,6 +12,7 @@ import { keyAction, clamp } from "./lib/keys.js";
 // The Config page, the factory's global settings: the daemon's service controls, then the files in
 // ~/.factory every repo shares (factory agents, skills, shared steps, the account's files), the
 // selected one read-only, ⌘O to edit it in your own editor. Each repo's own .factory/ is on Repo config.
+// One setting is a switch here, not a file edit: New UI (V2_UI in config.yaml).
 export default class FactoryConfig extends View {
   // ~/.factory. `herdr-app check` has none: it shows the sample repo's folder, so the list draws rows.
   get dir() {
@@ -27,9 +28,13 @@ export default class FactoryConfig extends View {
     this.busy = null;
     this.loginWanted = true; // the box before install: Install passes it as --login
     this.at = 0; // the selected override
+    // `factory config get V2_UI --json`: undefined until asked; `herdr-app check` draws it off.
+    this.newUI = checking() ? { account: false, factory: null, repo: null } : undefined;
+    this.newUIBusy = false;
     this.handle = cx.focus_handle();
     if (!checking()) {
       this.refreshDaemon(cx);
+      this.loadNewUI(cx);
       cx.timer.every(30000, (cx) => this.refreshDaemon(cx));
     }
     const wait = (ms) => new Promise((done) => cx.timer.after(ms, done));
@@ -46,6 +51,7 @@ export default class FactoryConfig extends View {
         watch?.cancel?.();
         await wait(300); // one reload for a burst of saves
         await this.list();
+        this.loadNewUI(cx); // config.yaml or the shown factory may have changed
         cx.notify();
       }
     });
@@ -53,6 +59,56 @@ export default class FactoryConfig extends View {
 
   factory(args) {
     return exec(CLI[0], [...CLI.slice(1), ...args], { timeout: 20000 });
+  }
+
+  // The CLI against the shown factory's FACTORY_HOME (cliCommand), as validate runs it; with
+  // no factory shown, the CLI's own default.
+  account(args) {
+    const r = root();
+    const { command, args: argv } = r ? cliCommand(CLI, r, args) : { command: CLI[0], args: [...CLI.slice(1), ...args] };
+    return exec(command, argv, { timeout: 20000 });
+  }
+
+  loadNewUI(cx) {
+    cx.spawn(async (cx) => {
+      const r = await this.account(["config", "get", "V2_UI", "--json"]).catch(() => null);
+      try { this.newUI = r?.code === 0 ? JSON.parse(r.stdout.trim().split("\n").pop()) : null; } catch { this.newUI = null; }
+      cx.notify();
+    });
+  }
+
+  // The switch: `factory config set V2_UI`, which also rewrites every status.json, so the
+  // Ticket and Blueprint pages follow at once.
+  setNewUI(on, cx) {
+    if (this.newUIBusy) return;
+    this.newUIBusy = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.account(["config", "set", "V2_UI", String(on)]).catch((e) => ({ code: 1, stderr: String(e) }));
+      if (r.code !== 0) notify({ title: "New UI: the change failed", body: (r.stderr || r.stdout).trim(), level: "error" });
+      this.newUIBusy = false;
+      this.loadNewUI(cx);
+    });
+  }
+
+  newUICard(t) {
+    const v = this.newUI;
+    const row = newUIRow(v);
+    const known = v != null;
+    const click = (_e, cx) => known && this.setNewUI(!row.on, cx);
+    const state = v === undefined ? "checking…" : v === null ? "couldn't read config.yaml" : this.newUIBusy ? "saving…" : row.on ? "On" : "Off";
+    return h_flex().id("new-ui").flex_none().px(14).py(8).gap(12).items_center().rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .child(v_flex().flex_1().min_w_0().gap(2)
+        .child(h_flex().gap(8).items_baseline()
+          .child(div().font_semibold().text_color(t.foreground).child("New UI"))
+          .child(div().text_size(11).text_color(t.dim).child("V2_UI in ~/.factory/config.yaml")))
+        .child(div().text_size(12).text_color(t.muted).child("The new Ticket, Blueprint and Chat pages. Off keeps the current pages."))
+        .when(Boolean(row.note), (el) => el.child(div().id("new-ui-note").text_size(12).text_color(t.blocked).child(row.note))))
+      .child(div().flex_none().text_size(12).text_color(row.on ? t.foreground : t.muted).child(state))
+      .child(h_flex().id("new-ui-switch").flex_none().w(34).h(20).p(2).rounded_full().cursor_pointer()
+        .bg(known && !this.newUIBusy && row.on ? t.accent : t.border).when(row.on, (el) => el.justify_end())
+        .on_click(click)
+        .child(div().size(16).rounded_full().bg(t.background)));
   }
 
   refreshDaemon(cx) {
@@ -206,12 +262,12 @@ export default class FactoryConfig extends View {
     // neither the file list nor the file view grows past the window. overflow_y_scroll, not
     // _scrollbar: the scrollbar kind fills its max_h (or a parent's height) instead of its
     // content, which left an empty band under a lone Claude card.
-    return v_flex().size_full().min_h(0).gap(8).text_size(13).child(this.daemonBar(t))
+    return v_flex().size_full().min_h(0).gap(8).text_size(13).child(this.daemonBar(t)).child(this.newUICard(t))
       .when(cards, (el) => el.child(v_flex().id("config-cards").flex_none().max_h(260).gap(8).overflow_y_scroll()
         .when(Boolean(status()?.claude?.found?.length), (c) => c.child(this.claudeCard(t, status().claude)))
         .when(notes.length > 0, (c) => c.child(this.pendingCard(t, notes)))
         .when(overrides.length > 0, (c) => c.child(this.overridesCard(t, overrides)))))
-      .child(maintainerLine(t, "Global: ~/.factory, shared by every factory and repo. The maintainer makes every change here; this view is read-only.", () => ask(maintainerAsk())))
+      .child(maintainerLine(t, "Global: ~/.factory, shared by every factory and repo. The maintainer makes every change here; apart from the New UI switch, this view is read-only.", () => ask(maintainerAsk())))
       .child(h_flex().flex_1().min_h(0).w_full().gap(8)
         .child(v.list(t, "~/.FACTORY", v.files.map((f) => badgedRow(v, t, f, this.badges[f.path], this.checks[f.path])),
           this.error ? div().px(8).text_color(t.blocked).child(this.error) : null))
