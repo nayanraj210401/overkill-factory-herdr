@@ -13,7 +13,7 @@ test("the sample .factory/ from plan.md is valid", () => {
 test("unknown keys, wrong types and bad enums are named, one line each", () => {
   const errors = validateFile("factory.yaml", "name: x\nmax_runing: 3\nmerge: sometimes\nrepos: acme/api\n");
   expect(errors).toEqual([
-    "max_runing: unknown key (allowed: name, repos, cross_check, tickets, queue, grooming, max_running, defaults, budget, plan, learn, review, away, cloud, artifacts, maintainer, verify, ready, quality_floor, hard_stops, merge, merge_method, secrets, mcp)",
+    "max_runing: unknown key (allowed: name, repos, cross_check, tickets, queue, grooming, max_running, defaults, budget, plan, learn, review, away, cloud, artifacts, maintainer, verify, ready, quality_floor, hard_stops, merge, merge_method, secrets, mcp, V2_UI)",
     'merge: "sometimes" is not one of human, auto',
     "repos: expected a list of text, got string",
   ]);

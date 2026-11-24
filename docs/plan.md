@@ -135,6 +135,14 @@ Both pages are read-only. A line on each says the maintainer makes every change 
 
 ![Config · factory.yaml as readable settings](layouts/07-config.png)
 
+#### V2 UI gate
+
+`V2_UI: true | false` (default `false`) switches the Ticket and Blueprint pages to their V2 designs. Those pages come in follow-up PRs; the designs they build are the prototypes `docs/prototypes/ticket-v2/index.html` and `docs/prototypes/blueprint-v2/index.html`. Until a page has a V2 version, the gate changes nothing on it.
+
+- **Where it's set:** a top-level key in the account config (`~/.factory/config.yaml`, every factory) or in a repo's `.factory/factory.yaml` (that factory). The lead repo's `factory.yaml` wins over the account. `factory validate` checks it is `true` or `false`.
+- **How the mods read it:** the daemon writes `ui: { v2: <bool> }` into status.json (`lib/status.js` checks it when present). A page calls `v2UI(status())` from `lib/model.js`. It's off when `ui` is missing, so an older daemon keeps the current pages.
+- **Backward compatibility:** the current pages stay the default. A V2 page draws only when the gate is on.
+
 #### Reviews
 
 Redesigned on 2026-11-23 for peer review as the user redesigned it (below): a review is a ticket on a peer-review blueprint, the agent decides the verdict, the output follows the risk level, and cost comes before tokens. The old page (a low-risk fast lane, then a risk-ordered list with must-fix/suggestion/noise) no longer fits, so the page is two views, both built from Herdr's own parts.

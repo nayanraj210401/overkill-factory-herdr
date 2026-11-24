@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { prLinks, watchNote, groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks, healthLine } from "../lib/model.js";
+import { prLinks, watchNote, groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks, healthLine, v2UI } from "../lib/model.js";
 
 const status = JSON.parse(readFileSync(new URL("../fixtures/acme-api/status.json", import.meta.url)));
 const now = Date.parse("2026-11-21T10:00:00Z");
@@ -314,4 +314,14 @@ test("the contract checks health entries: a failure names its command and failur
   assert.equal(validateStatus({ ...status, health: [{ ...h, ok: null }] }).length, 1);
   assert.equal(validateStatus({ ...status, health: [{ ...h, ok: "yes" }] }).length, 1);
   assert.equal(validateStatus({ ...status, health: {} }).length, 1);
+});
+
+test("v2UI is on only when status.json says ui.v2: true; ui is optional but checked", () => {
+  assert.equal(v2UI(status), false); // the fixture has no ui
+  assert.equal(v2UI(null), false);
+  assert.equal(v2UI({ ...status, ui: { v2: false } }), false);
+  assert.equal(v2UI({ ...status, ui: { v2: "true" } }), false);
+  assert.equal(v2UI({ ...status, ui: { v2: true } }), true);
+  assert.deepEqual(validateStatus({ ...status, ui: { v2: true } }), []);
+  assert.deepEqual(validateStatus({ ...status, ui: { v2: "yes" } }), ["ui: needs {v2: boolean}"]);
 });
