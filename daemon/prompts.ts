@@ -9,10 +9,11 @@ export const BUILT_IN_PROMPTS = join(import.meta.dir, "../fixtures/acme-api/.fac
 
 const TICKET = ["ticket.id", "ticket.title"];
 // What each template may name. Any other prompts/<name>.md (a stage's `prompt:`) is a stage template.
-// Every template may name {{neighbours}}, the map of the factory's agents (agents.ts).
+// Every template may name {{neighbours}}, the map of the factory's agents (agents.ts). Stage and
+// groom templates may name {{digest}}, the ticket's memory (digest.ts).
 export const PLACEHOLDERS: Record<string, string[]> = {
-  groom: [...TICKET, "neighbours", "repo", "slug", "folder", "blueprints", "agent.prompt", "repos", "issue"],
-  stage: [...TICKET, "neighbours", "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "memory", "fix_brief", "slice", "shared", "publish"],
+  groom: [...TICKET, "neighbours", "repo", "slug", "folder", "blueprints", "agent.prompt", "repos", "issue", "digest"],
+  stage: [...TICKET, "neighbours", "stage", "folder", "agent.prompt", "repos", "repo_count", "verdict", "profile", "lessons", "memory", "digest", "fix_brief", "slice", "shared", "publish"],
   handoff: [...TICKET, "neighbours", "stage", "folder", "session", "stage_brief", "previous", "rerun", "handoff", "slice", "acceptance", "acceptance_missing", "diff", "last_check", "snapshot", "tail", "publish_handoff"],
   overwatch: ["neighbours", "agent.prompt", "home", "factories"],
   maintainer: ["neighbours", "agent.prompt", "home", "factories", "app", "notes"],
@@ -49,9 +50,11 @@ export function render(template: string, vars: Record<string, string | null | un
 
 // The factory's own prompts/<name>.md, else the built-in. A file with a bad placeholder or a
 // name with neither file is an error, so a typo fails loudly instead of sending a broken brief.
-// A template that doesn't place {{neighbours}} gets it first: every brief carries the map.
+// A template that doesn't place {{neighbours}} gets it first: every brief carries the map. One
+// that may name {{digest}} and doesn't gets it next: every brief carries the ticket's memory.
 export function loadPrompt(repo: string | null | undefined, name: string) {
-  const withMap = (text: string) => (/\{\{\s*neighbours\s*\}\}/.test(text) ? text : `{{neighbours}}\n\n${text}`);
+  const withDigest = (text: string) => (!placeholdersFor(name).includes("digest") || /\{\{\s*digest\s*\}\}/.test(text) ? text : `{{digest}}\n\n${text}`);
+  const withMap = (raw: string) => { const text = withDigest(raw); return /\{\{\s*neighbours\s*\}\}/.test(text) ? text : `{{neighbours}}\n\n${text}`; };
   const own = repo ? join(repo, ".factory", "prompts", `${name}.md`) : null;
   if (own && existsSync(own)) {
     const text = readFileSync(own, "utf8");

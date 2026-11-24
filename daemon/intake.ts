@@ -19,7 +19,15 @@ export function parseSource(text: string): Source {
   return { goal: t.replace(/\s+/g, " ") };
 }
 
-export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string; groom?: boolean }) {
+// `parent`: the ticket this one re-requests (factory new --parent). Its digest is where this one's
+// memory starts (digest.ts). A paused ticket can't be one: a paused ticket with parts is a split's,
+// which closes once its parts merge.
+export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string; groom?: boolean; parent?: number }) {
+  if (o.parent != null) {
+    const p = db.query("SELECT state FROM tickets WHERE id = ?").get(o.parent) as { state: string } | null;
+    if (!Number.isInteger(o.parent) || !p) throw new Error(`--parent: no ticket ${o.parent}`);
+    if (p.state === "paused") throw new Error(`--parent: #${o.parent} is paused; resume or drop it first (a paused ticket's parts come from factory split)`);
+  }
   const src = parseSource(o.text);
   let id: number;
   let title: string;
@@ -42,9 +50,9 @@ export function newTicket(db: Database, o: { text: string; repo: string; bluepri
   }
   if (db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`#${id} is already a ticket`);
   // Groomed first (plan: grooming is the one stop), unless the caller starts it right away.
-  db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, title, o.groom ? "grooming" : "queued", o.blueprint, o.trigger ?? "manual", o.now);
+  db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, parent, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, title, o.groom ? "grooming" : "queued", o.blueprint, o.trigger ?? "manual", o.parent ?? null, o.now);
   db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, `added ${"goal" in src ? "a goal" : `issue #${id}`}`, o.now);
-  journal(db, { ticket: id, kind: "created", text: `you added ${"goal" in src ? "a goal" : `issue #${id}`}: ${title} (${o.blueprint} blueprint${o.groom ? ", grooming first" : ""})`, ref: "goal" in src ? null : `issue:${id}`, at: o.now });
+  journal(db, { ticket: id, kind: "created", text: `you added ${"goal" in src ? "a goal" : `issue #${id}`}: ${title} (${o.blueprint} blueprint${o.groom ? ", grooming first" : ""}${o.parent != null ? `; it re-requests #${o.parent}` : ""})`, ref: "goal" in src ? null : `issue:${id}`, at: o.now });
   return { id, title };
 }
 

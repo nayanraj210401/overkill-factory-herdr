@@ -63,15 +63,17 @@ import { migrateFlowStack } from "./migrate.ts";
 import { claudeConfig, MIGRATION_META, MIGRATION_REQUEST, migrationRequest, realProbe, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
 import { decideSplit, followSplits, pendingParts, proposePart } from "./split.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
-import { EXCLUDE_LINE, keepLocal, trackedFactory, trackedWarning } from "./local.ts";
+import { EXCLUDE_LINE, MEMORY_FILE, keepLocal, trackedFactory, trackedWarning } from "./local.ts";
 import { listMemories, memoryLine, pruneMemories, recall, remember, setOutcome, settleMemories, type Memory } from "./memory.ts";
 import { eventLine, journal, ticketEvents } from "./journal.ts";
 import { CHUNK_DAYS, hitLine, indexTranscripts, pruneChunks, recallHits } from "./recall.ts";
+import { digestOf, runDigest, runDueDigest } from "./digest.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
-  new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
+  new <issue link | #n | goal…> [--blueprint b] [--start] [--parent id]  add a ticket (goals get ids from 10000); --parent: it re-requests
+                                     ticket <id>, and its digest starts from that one's
   ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request: typed into its terminal, which starts if it isn't running; takes --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run), or a repo agent as <owner/name>:<agent> (a bare <agent> is the asker's own repo's; a note typed into its live session there, else its next brief). A repo agent asks the factory agents and its own repo's; another repo's goes through overwatch
   asks [agent] [--json] | asks done <id>  the open notes (to one agent) / mark one handled
   request [--repo owner/name] <the change…>  ask the maintainer, for you, for a change to the factory itself (config, a blueprint, an agent,
@@ -107,6 +109,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
                                      and answers, checks, verdicts, send-backs, the PR, the merge; --search ranks its events by full text
   recall [<id>] "<words>" [--json] [--limit n]  search a ticket's journal and its sessions' transcripts together (every ticket's without an
                                      id), best match first; each hit says its ticket, kind or role, a snippet, and where it came from
+  digest <id> [--print|--rebuild]    the ticket's digest, the memory every brief carries (or its parent's, until it has one); --rebuild
+                                     has Haiku write it again from the whole journal and every transcript chunk, now
   cloud <id> | all                   hand a running ticket (or every one) to a Claude Code cloud session; skips what can't move, with a reason
   local <id> | all                   bring a ticket (or every one in the cloud) back and resume it here
   routine [brief]                    write ROUTINE.md, the prompt for a Claude Code scheduled task that watches PRs while you sleep, and print how to set it up
@@ -263,6 +267,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const aboutFlag = flag(args, "ticket");
   const daysFlag = flag(args, "days");
   const searchFlag = flag(args, "search");
+  const parentFlag = flag(args, "parent");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -272,7 +277,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const folders = args.includes("--folders");
   const propose = args.includes("--propose");
   const runFlag = args.includes("--run");
-  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work", "--folders", "--propose", "--run"].includes(a));
+  const rebuild = args.includes("--rebuild");
+  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work", "--folders", "--propose", "--run", "--rebuild", "--print"].includes(a));
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0], login: loginFlag ?? undefined });
@@ -593,7 +599,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       // A held start still adds the ticket; it waits in the queue.
       const held = start ? startHold(db, lead.path, new Date()) : null;
       change(db, () => {
-        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start });
+        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start, parent: parentFlag == null ? undefined : Number(parentFlag) });
         if (start && !held) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
       });
       log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " added; the triage agent grooms it, and it starts once nothing is left to ask"}`);
@@ -761,6 +767,22 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (json) return log(JSON.stringify(hits));
       for (const h of hits) log(hitLine(h));
       if (!hits.length) log(`${ticket != null ? `#${ticket}: ` : ""}nothing in the journal${ticket != null ? "" : "s"} or transcripts matches "${words}"`);
+      return;
+    } else if (cmd === "digest") {
+      // The ticket's digest (digest.ts): printed, or written again now from everything (--rebuild).
+      const id = Number(sub);
+      if (!Number.isInteger(id) || !sub) throw new Error("usage: factory digest <id> [--print|--rebuild]");
+      if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`no ticket ${id}`);
+      if (rebuild) {
+        const r = runDigest(db, { id, repo: needLead(db).path, run: sh, now: now(), cwd: p.dir, rebuild: true, commit: (fn) => change(db, fn) });
+        if (!r.ok) throw new Error(`#${id}: the digest wasn't rebuilt: ${r.why}`);
+        log(`#${id}: digest rebuilt (${r.chars} characters, $${r.usd.toFixed(4)})${r.files.length ? `; wrote ${r.files.join(", ")}` : ""}`);
+      }
+      const d = digestOf(db, id);
+      if (json) return log(JSON.stringify(d));
+      if (!d) return log(`#${id} has no digest yet: it is written after the ticket's next session ends (or now: factory digest ${id} --rebuild)`);
+      log(`# #${id}'s digest${d.from !== id ? `: none of its own yet, so #${d.from}'s, which it starts from` : ""} · ${d.at.slice(0, 16).replace("T", " ")}${d.event != null ? ` · the journal up to event ${d.event}` : ""}\n`);
+      log(d.text);
       return;
     } else if (cmd === "cloud" || cmd === "local") {
       const repoDir = needLead(db).path;
@@ -1140,6 +1162,10 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
       pruneChunks(db, { now: nowIso, days });
     } catch (e) { log(`factory: indexing transcripts: ${(e as Error).message}`); }
   }
+  // The ticket digest (digest.ts): after a session ended or handed off, Haiku rewrites the ticket's
+  // memory, one ticket a tick, after its chunks above. A failure is journaled and waits for the next end.
+  try { runDueDigest(db, { repo: repoDir, run, now: nowIso, cwd: p.dir, commit: (fn) => change(db, fn), log }); }
+  catch (e) { log(`factory: the ticket digest: ${(e as Error).message}`); }
   // What the cloud PR watch did while the laptop slept, before the watcher sees the same comments.
   if (routineDue(db, Date.now())) {
     try {
@@ -1337,7 +1363,7 @@ function ownFactory(db: string) {
 function adopt(path: string, slug: string, log: (s: string) => void, quiet = false) {
   try {
     const r = keepLocal(path);
-    if (r.excluded) log(`${slug}: .factory/ stays on this machine (added ${EXCLUDE_LINE} to its .git/info/exclude)`);
+    if (r.excluded) log(`${slug}: .factory/ and ${MEMORY_FILE} stay on this machine (in its .git/info/exclude: ${EXCLUDE_LINE}, /${MEMORY_FILE})`);
     if (r.tracked.length) log(trackedWarning(slug, r.tracked.length));
   } catch (e) { if (!quiet) throw e; log(`${slug}: couldn't keep .factory/ local: ${(e as Error).message}`); }
 }

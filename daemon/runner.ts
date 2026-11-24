@@ -35,6 +35,7 @@ import { briefNotes, deliveredInBrief, notesForBrief } from "./ask.ts";
 import { classify, EVIDENCE_OF, fileRepair, repairs, type CheckResult } from "./broken.ts";
 import { factoryChanges, LOCAL_REASON } from "./local.ts";
 import { claudeSession, endSessions, journal, journalSessionStart } from "./journal.ts";
+import { digestBlock, writeMemoryFile } from "./digest.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -81,7 +82,8 @@ export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").r
 // A session starts from files, not chat: the brief names them (plan: Worktrees and sessions).
 // `share`: the claude.ai links and the publish step for the stage's output (artifacts.ts); "" when sharing is off.
 // `neighbours`: the map of the factory's agents (agents.ts), first in the brief.
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "", memory = "") {
+// `digest`: the ticket's memory (digest.ts digestBlock), with the pointer to `factory recall`.
+export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "", memory = "", digest = "") {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return render(template, {
     neighbours,
@@ -99,6 +101,7 @@ export function brief(t: { id: number; title: string }, stage: string, prompt: s
     profile: profileText(),
     lessons: lessons.map((l) => `- ${l}`).join("\n"),
     memory,
+    digest,
     fix_brief: latestBrief(folder),
     slice,
     shared: share.shared,
@@ -208,11 +211,12 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   const memory = memoryBlock(db, { agent: s.agent, repo: t.repo ?? "", query: `${t.title} ${intent.slice(0, 1000)}` });
   const use = agentSettings(t, s.agent, agent, defaults);
   const share = shareFor(db, { repo: o.repo, id: o.id, folder, output: s.output });
+  try { writeMemoryFile(db, o.id); } catch {} // TICKET-MEMORY.md beside the code: a parent's digest has none yet
   // The repo the session works in (its ticket's lead): its agents are the ones this agent may ask,
   // and notes other agents left this agent there come last in the brief (ask.ts).
   const workRepo = repos[0].repo;
   const notes = notesForBrief(db, { agent: s.agent, repo: workRepo, ticket: o.id });
-  const text = [brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db, workRepo), memory), briefNotes(notes, basename(o.dir)), o.opening].filter(Boolean).join("\n\n");
+  const text = [brief(t as any, o.stage, withSkillsLine(agent?.prompt, agent), folder, agent?.role, repos, lessons, loadPrompt(o.repo, s.prompt ?? "stage"), slice?.text, share, factoryMap(db, workRepo), memory, digestBlock(db, o.id)), briefNotes(notes, basename(o.dir)), o.opening].filter(Boolean).join("\n\n");
   // Only the skills and tools its frontmatter lists (skills.ts); the plugin sits in the ticket folder, never the repo.
   // A known Claude session id, so the session's row names its transcript (journal.ts).
   const cs = claudeSession(withHandoffHook(giveAccess(argvFor(use, defaults, text), agent, join(folder, ".skills", s.agent), from), o.dir, o.id, guard, readFactory(o.repo).quality_floor ?? [], [folder, ...repos.flatMap((r) => r.worktree ?? [])], share.allow), t.worktree);
