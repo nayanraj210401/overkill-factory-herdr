@@ -53,6 +53,7 @@ export class TicketV2 {
 
   // From the page's init: an InputState needs a live host call, so it can't wait for render.
   init() {
+    this.tabs = new Map(); // "<factory root>#<ticket id>" → the tab you left it on
     this.input = InputState.new({ placeholder: "Or type your own answer…" });
     this.input.on("change", (_e, cx) => { this.text = this.input.value(); cx.notify(); });
     this.input.on("focus", () => this.focus("answer", true));
@@ -248,7 +249,13 @@ export class TicketV2 {
     this.ticket = ticket;
     const kind = ticketKind(ticket);
     // A ticket opens on the tab its state is about: the PR when it's ready, the questions when it waits on you.
-    if (this.opened !== ticket.id) { this.opened = ticket.id; page.tab = kind === "ready" ? "4" : waitsOnYou(kind) ? "3" : "1"; }
+    // Back on a ticket you had open (in this factory or another), on the tab you left it on.
+    const key = `${root()}#${ticket.id}`;
+    if (this.opened !== key && this.opened !== ticket.id) { // a bare id: a smoke run's prop, keep its tab
+      if (this.opened) this.tabs.set(this.opened, page.tab);
+      page.tab = this.tabs.get(key) ?? (kind === "ready" ? "4" : waitsOnYou(kind) ? "3" : "1");
+    }
+    this.opened = key;
     const daemon = s.source === "daemon";
     const showTail = daemon && ticket.terminal && (kind === "working" || kind === "asks");
     const live = showTail ? { id: ticket.id, terminal: ticket.terminal } : null;

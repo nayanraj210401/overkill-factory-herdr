@@ -5,10 +5,10 @@ import { FILTERS, filterTickets, countBy, factoryRepos, groupOf, repoBadge, subt
 import { validateRuns, kindCounts, filterRuns, duration, runWhat, startedAt, runModel } from "./lib/runs.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status, act, root } from "./lib/store.js";
+import { status, act, root, pickTicket } from "./lib/store.js";
 
 const runTitle = (r) => (r.ticket == null ? r.title : `#${r.ticket} ${r.title}`);
-const open = (id) => { setShared("factory.ticket", id); run("layout.select", { stack: STACK, child: "ticket" }); };
+const open = (id) => { pickTicket(id); run("layout.select", { stack: STACK, child: "ticket" }); };
 const DOT = { needs: "blocked", running: "working", ready: "done", queue: "dim" };
 const COLS = [["Stage", 230], ["PR", 150], ["Blueprint", 100], ["Tokens in", 90], ["Cost", 70]];
 const RUN_COLS = [["Kind", 140], ["Harness · model", 190], ["Started", 100], ["Time", 70], ["Tokens in / out", 110], ["Cost", 60]];
