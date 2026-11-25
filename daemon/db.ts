@@ -334,6 +334,8 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
   // and when. Every later rewrite is told to keep their corrections; null until they edit it.
   `ALTER TABLE tickets ADD COLUMN digest_user TEXT;
    ALTER TABLE tickets ADD COLUMN digest_edited_at TEXT;`,
+  // A ticket's own chat session (chat.ts): 1 when opening it paused the ticket, so closing it resumes.
+  addColumn("sessions", "paused_ticket", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 export function open(path: string): Database {

@@ -36,6 +36,7 @@ import { classify, EVIDENCE_OF, fileRepair, repairs, type CheckResult } from "./
 import { factoryChanges, LOCAL_REASON } from "./local.ts";
 import { claudeSession, endSessions, journal, journalSessionStart } from "./journal.ts";
 import { digestBlock, writeMemoryFile } from "./digest.ts";
+import { closeChat } from "./chat.ts";
 
 export type Run = (argv: string[], cwd?: string) => { code: number; out: string };
 export const sh: Run = (argv, cwd) => {
@@ -877,6 +878,7 @@ export function resume(db: Database, o: { dir: string; repo: string; id: number;
   const t = db.query("SELECT * FROM ticket_lead WHERE id = ?").get(o.id) as Record<string, any> | null;
   if (!t) throw new Error(`no ticket ${o.id}`);
   if (t.state !== "paused") throw new Error(`#${o.id} is ${t.state}; only a paused ticket resumes`);
+  closeChat(db, { id: o.id, run, now, resume: false, why: "the ticket resumed" }); // your chat session, if open: never two agents on the worktree
   if (pendingParts(db, o.id).length) throw new Error(`#${o.id} has a split proposed: factory split ${o.id} approve|reject`);
   if (childrenOf(db, o.id).length) throw new Error(`#${o.id} is split into ${childrenOf(db, o.id).map((c) => `#${c.id}`).join(", ")}; it closes when they're done`);
   // Paused before it ever started (pulled back while queued): "keep" puts it back in the queue.
