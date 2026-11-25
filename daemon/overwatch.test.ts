@@ -66,6 +66,15 @@ test("one Overwatch for every factory: in FACTORY_HOME, every repo added, every 
   expect(h.calls.length).toBeGreaterThan(calls);
 });
 
+test("a terminal Herdr stopped (finished, no exit code) isn't the live Overwatch", () => {
+  const { home } = twoFactories();
+  const h = hc();
+  overwatch({ run: h.run, now, home });
+  const stopped: Run = (a) => (a[1] === "get" ? { code: 0, out: '{"exit_code":null,"state":"finished","reason":"stopped_by_restart"}' } : h.run(a));
+  expect(liveOverwatch(stopped, home)).toBeNull();
+  expect(overwatch({ run: stopped, now, home })).toEqual({ terminal: "t2", started: true });
+});
+
 test("in tests, the real hc never starts a terminal", () => {
   const { sh } = require("./runner.ts") as typeof import("./runner.ts");
   expect(sh(["hc", "run", "--bg", "--", "true"])).toEqual({ code: 1, out: "hc run is stubbed in tests" });

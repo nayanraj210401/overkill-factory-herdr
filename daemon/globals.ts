@@ -44,9 +44,11 @@ export const allRepos = (fs: FactoryInfo[]) => [...new Map(fs.flatMap((f) => f.r
 // is committed in, on a local branch. FACTORY_APP_REPO points elsewhere (tests).
 export const appCheckout = () => process.env.FACTORY_APP_REPO ?? resolve(import.meta.dir, "..");
 
+// A terminal Herdr stopped (state "finished", e.g. stopped_by_restart) keeps a null exit_code,
+// so the exit code alone would call it alive, and the page would focus a dead terminal.
 const alive = (run: Run, terminal: string) => {
   const r = run(["hc", "get", terminal, "--json"]);
-  try { return r.code === 0 && JSON.parse(r.out).exit_code == null; } catch { return false; }
+  try { const t = JSON.parse(r.out); return r.code === 0 && t.exit_code == null && t.state !== "finished"; } catch { return false; }
 };
 
 export const readState = (home: string, agent: Session = "overwatch"): { terminal?: string; started_at?: string } => {
