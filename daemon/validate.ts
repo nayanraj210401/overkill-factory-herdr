@@ -238,7 +238,8 @@ export function validateFile(path: string, text: string): string[] {
   if (kind === "trigger") {
     const t = doc as any;
     if (t?.on === "schedule" && parseEvery(t.every) === null) errors.push("every: a schedule trigger needs every: 30m, 6h or 1d");
-    if (t?.on !== "schedule" && t?.every !== undefined) errors.push("every: only a schedule trigger has it");
+    if (t?.on === "manual" && t?.every !== undefined) errors.push("every: a manual trigger doesn't poll");
+    if (t?.on !== "schedule" && t?.on !== "manual" && t?.every !== undefined && parseEvery(t.every) === null) errors.push("every: how often it polls GitHub, in whole minutes or more: 2m, 5m or 1h");
     if (t?.run === "health" && !["schedule", "manual"].includes(t?.on)) errors.push("run: health runs on: schedule (or on: manual, by factory health only)");
     if (t?.run !== "health" && t?.setup !== undefined) errors.push("setup: only a run: health trigger has it");
   }

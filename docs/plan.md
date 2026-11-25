@@ -936,6 +936,7 @@ A session gets its skills through a plugin folder of its own: the factory copies
 | `filter` | Which events count: repos, authors, paths |
 | `blueprint` | The blueprint to run |
 | `concurrency` | How many tickets from this trigger run at once |
+| `every` | How often it runs or polls: `30m`, `6h`, `1d`. A `schedule` trigger needs it. A polling trigger (`project_ready`, `pr_review_comment`) may set it, in whole minutes; without it, the queue polls every 3m and PRs every 2m. A `manual` trigger has none |
 | `enabled` | `false` keeps the trigger from firing; it also turns off the built-in trigger that does the same job. Defaults to `true`, and `factory validate` marks a disabled file "(off)" |
 
 ```yaml
@@ -944,6 +945,7 @@ on: pr_review_comment
 filter: { pr_author: factory }
 blueprint: address-review   # fix, push back, or escalate (PRD 6.5)
 concurrency: 2
+every: 5m                    # poll the factory's PRs every 5 minutes (default 2m)
 ```
 
 Triggers run the babysitter (review comments on factory PRs), the maintenance agent (stale checks, scheduled full test runs, drift) and intake from your GitHub Project queue. Setup ships the maintenance agent's daily trigger with `enabled: false`, so it stays off until you set `enabled: true` in `triggers/maintenance.yaml` or ask Overwatch to turn it on, which the maintainer does in a normal `.factory/` PR. Since everything is local, the daemon polls GitHub every few minutes instead of receiving webhooks, so triggers fire only while the machine is awake.
