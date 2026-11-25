@@ -387,11 +387,11 @@ test("sidebar: a grown transcript marks its row; a thread click opens the ticket
   assert.ok(!sidebar({ seen, sizes: { "/p/412.jsonl": 100 } }).ids.has("unread-t-412"));
   assert.ok(!sidebar({ v2: false, seen, sizes: { "/p/412.jsonl": 180 } }).ids.has("unread-t-412")); // gate off: nothing
   sidebar().click("t-421");
-  assert.equal(fake.shared["factory.ticket"], 421);
+  assert.equal(Object.values(fake.shared["factory.picked"])[0], 421);
   assert.equal(fake.shared[OPEN_KEY].view, "chat");
   assert.equal(fake.shared[OPEN_KEY].id, 421);
   sidebar({ view: "overview" }).click("t-412");
-  assert.equal(fake.shared["factory.ticket"], 412);
+  assert.equal(Object.values(fake.shared["factory.picked"])[0], 412);
   assert.equal(fake.shared[OPEN_KEY], undefined); // as today: no ask
   sidebar({ v2: false }).click("t-412");
   assert.equal(fake.shared[OPEN_KEY], undefined);
@@ -465,4 +465,19 @@ test("your session: slash commands reach its terminal as typed, it opens ready, 
   const menu = chat(props({ ticket: { id: 412, terminal: "t8", state: "paused" }, sessions }), { lines: [], terminals: [{ address: "t8", status: "idle" }], prep: (x) => { x.screen = picker; x.idleAsk = "menu"; } });
   for (const id of ["question", "choice-0", "choice-1", "choice-2", "key-esc", "q-terminal"]) assert.ok(menu.ids.has(id), id);
   assert.match(menu.words, /Sonnet/);
+});
+
+test("the picked ticket is per factory: switching away and back keeps each one's pick", async () => {
+  const { pickTicket, pickedTicket } = await import("../lib/store.js");
+  const show = (root) => { fake.root = root; };
+  show("/f/api");
+  pickTicket(412);
+  show("/f/web");
+  assert.equal(pickedTicket(), null); // another factory: its own pick, not #412
+  pickTicket(10001);
+  show("/f/api");
+  assert.equal(pickedTicket(), 412);
+  show("/f/web");
+  assert.equal(pickedTicket(), 10001);
+  fake.root = null;
 });

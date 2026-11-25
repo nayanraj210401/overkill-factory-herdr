@@ -4,7 +4,7 @@ import { theme, run, setShared, props, exec, notify, home } from "herdr";
 import { needsYou, overwatchNotes, ago, compact, repoBadge, warnMark, holdText, localRunning, healthLine } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status, state, act, sampleOn, showSample, peekAgent } from "./lib/store.js";
+import { status, state, act, sampleOn, showSample, peekAgent, pickTicket } from "./lib/store.js";
 import { cliCommand, talkable } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { SETUP_SAMPLE, setupProgress } from "./lib/setup.js";
@@ -13,7 +13,7 @@ import { SETUP_SAMPLE, setupProgress } from "./lib/setup.js";
 const clock = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
 const open = (id) => {
-  setShared("factory.ticket", id);
+  pickTicket(id);
   run("layout.select", { stack: STACK, child: "ticket" });
 };
 // A ticket whose agent waits on you opens straight into that agent's live terminal.

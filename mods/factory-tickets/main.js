@@ -5,7 +5,7 @@ import { repoBadge, warnMark, v2UI } from "./lib/model.js";
 import { GLYPH, sidebarView, elapsed, tickMs, rowTitle, threadTarget, chatUnread, seenNext } from "./lib/sidebar.js";
 import { STACK, activePage } from "./lib/pages.js";
 import { VIEW_KEY, OPEN_KEY } from "./lib/ticketchat.js";
-import { status, liveAgents } from "./lib/store.js";
+import { status, liveAgents, pickTicket, pickedTicket } from "./lib/store.js";
 
 const FOLD = "factory.sidebar.settled"; // Settled unfolded: this viewer's choice, kept in shared.json
 const LIST_ASK = "factory.list-ask"; // what the Tickets page should show when it opens (factory-list reads it)
@@ -15,7 +15,7 @@ const page = (child) => run("layout.select", { stack: STACK, child });
 // `view`: "chat" opens it on the V2 page's Chat view (the page reads the ask, lib/ticketchat.js askedView).
 const openTicket = (id, view = null) => {
   if (view) setShared(OPEN_KEY, { id, view, at: Date.now() });
-  setShared("factory.ticket", id);
+  pickTicket(id);
   page("ticket");
 };
 // The Ticket page shown, and the view it shows (it writes VIEW_KEY while the gate is on).
@@ -64,7 +64,7 @@ export default class FactoryTickets extends View {
     }
     this.sizes = sizes;
     const p = ticketPage();
-    const viewing = p.page === "ticket" && p.view === "chat" ? shared("factory.ticket") : null;
+    const viewing = p.page === "ticket" && p.view === "chat" ? pickedTicket() : null;
     const seen = shared(SEEN) ?? {};
     const next = seenNext(seen, tickets, sizes, viewing);
     if (next !== seen) setShared(SEEN, next);
@@ -81,7 +81,7 @@ export default class FactoryTickets extends View {
     const ticket = r.ticket != null ? tickets.get(r.ticket) : null;
     const v2 = v2UI(s);
     const unread = v2 && ticket && r.kind !== "settled" && chatUnread(ticket, shared(SEEN), this.sizes?.[ticket.transcript]);
-    const on = r.ticket != null && shared("factory.ticket") === r.ticket;
+    const on = r.ticket != null && pickedTicket() === r.ticket;
     const badge = ticket ? repoBadge(s, ticket) : null;
     const warn = ticket && r.kind === "work" ? warnMark(ticket) : null;
     const right = r.kind === "work" ? elapsed(r.since, now) : r.age;

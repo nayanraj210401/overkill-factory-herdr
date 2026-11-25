@@ -42,7 +42,7 @@ export const ScrollHandle = { new: () => ({ scroll_to_item() {}, release() {} })
 export const settings = () => ({ dark: true });
 export const theme = () => new Proxy({}, { get: (_t, k) => `color:${String(k)}` });
 export const checking = () => false;
-export const shared = (key) => (key === "factory.state" ? { at: 0, status: fake.status, errors: [] } : fake.shared[key] ?? null);
+export const shared = (key) => (key === "factory.state" ? { at: 0, status: fake.status, root: fake.root ?? null, errors: [] } : fake.shared[key] ?? null);
 export const setShared = (key, value) => { fake.shared[key] = value; };
 export const layout = () => fake.layout;
 export const run = () => {};

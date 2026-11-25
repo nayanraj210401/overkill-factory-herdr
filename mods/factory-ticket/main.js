@@ -2,7 +2,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, shared, setShared, readTextFile, nextCommand, checking, props, exec, notify } from "herdr";
 import { v2UI, parseStatusMd, TICKET_TABS, compact, currentTicket, crossRepoCards, repoBadge, prLinks, prColor, watchNote, stageDetail, stageRounds, questionCards, sharedLinks, ANSWER_HOW, TALK_HOW } from "./lib/model.js";
-import { root, status, state, peekAgent, act } from "./lib/store.js";
+import { root, status, state, peekAgent, act, pickedTicket } from "./lib/store.js";
 import { keyAction } from "./lib/keys.js";
 import { cliCommand, talkable } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
@@ -70,7 +70,7 @@ export default class FactoryTicket extends View {
   render(cx) {
     const t = theme();
     const s = status();
-    const ticket = s && currentTicket(s.tickets, props()?.ticket ?? shared("factory.ticket")) // ticket: a prop only smoke.sh passes;
+    const ticket = s && currentTicket(s.tickets, props()?.ticket ?? pickedTicket()) // ticket: a prop only smoke.sh passes;
     if (!ticket) return div().size_full().bg(t.background);
     // The daemon rewrites these files with each status.json, so re-read on every reload.
     if (ticket.id !== this.id || state().at !== this.at) this.load(ticket.id, cx);
