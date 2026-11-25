@@ -16,6 +16,7 @@ import { withAccount } from "./herdr.ts";
 import { giveAccess } from "./skills.ts";
 import { DEFAULT_MODEL } from "./models.ts";
 import { guardSettings } from "./guard.ts";
+import { planStatusLine } from "./planline.ts";
 
 export const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory");
 
@@ -76,7 +77,7 @@ export function startSession(o: { run: Run; now: string; agent: Session; brief: 
     // skipAutoPermissionPrompt: registering the repos was the consent to auto mode (handoff-hook.ts).
     // The guard hook joins it in the one settings file Claude Code takes.
     const guard = JSON.parse(guardSettings({ stops: [], roots: [o.home, ...dirs], log: join(o.home, `${o.agent}.hard-stops.jsonl`), local: { app: appCheckout() } })!);
-    argv.splice(1, 0, "--permission-mode", "auto", "--settings", JSON.stringify({ skipAutoPermissionPrompt: true, ...guard }), ...dirs.flatMap((d) => ["--add-dir", d]));
+    argv.splice(1, 0, "--permission-mode", "auto", "--settings", JSON.stringify({ skipAutoPermissionPrompt: true, statusLine: planStatusLine(), ...guard }), ...dirs.flatMap((d) => ["--add-dir", d]));
   }
   const hc = o.run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f-${o.agent}`,
     "--cwd", o.home, "--label", `factory.${o.agent}=1`, ...withAccount(argv, o.home, o.agent)]);
