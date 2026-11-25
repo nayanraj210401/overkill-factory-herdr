@@ -60,7 +60,7 @@ test("read-only: no agent running, an earlier session, or sample data", () => {
   const parkedT = ticket({ state: "parked", terminal: null });
   const parked = chatSessions(ROWS.map((r) => ({ ...r, ended_at: r.ended_at ?? "2026-11-20T12:00:00Z" })), parkedT, NOW);
   assert.deepEqual(chatTarget(parkedT, pickSession(parked), { sessions: parked }), { file: "/p/cccc.jsonl", terminal: null, readonly: true, note: NO_AGENT });
-  assert.equal(NO_AGENT, "No agent running. Open Your session to work on it yourself, or use Talk it through (u) or Answer & resume.");
+  assert.equal(NO_AGENT, "No agent running. Press + to open your own session, or use Talk it through (u) or Answer & resume.");
   const list = chatSessions(ROWS, ticket(), NOW);
   const old = chatTarget(ticket(), pickSession(list, 2), { sessions: list });
   assert.equal(old.terminal, null);
@@ -136,7 +136,7 @@ test("read-only: no agent running disables the composer with the note", () => {
   const { ids, words } = chat(props({ ticket: { id: 412, terminal: null, state: "parked" }, sessions: chatSessions(ended, parkedT, NOW) }));
   assert.ok(ids.has("composer-disabled"));
   assert.ok(!ids.has("send"));
-  assert.match(words, /No agent running\. Open Your session to work on it yourself, or use Talk it through \(u\) or Answer & resume\./);
+  assert.match(words, /No agent running\. Press \+ to open your own session, or use Talk it through \(u\) or Answer & resume\./);
   assert.match(words, /read-only/);
   assert.match(words, /I'll read the config first\./); // the transcript still shows
 });
@@ -418,11 +418,15 @@ test("your session: Open on a started ticket, Close once it's open, none before 
   assert.equal(ownChat(ticket(), [], false), null);
 });
 
-test("the head draws Your session, and Close your session once it's open", () => {
-  assert.match(chat(props()).words, /Your session/);
-  assert.ok(chat(props()).ids.has("own-session"));
+test("the switcher ends in + for your session, which becomes Close your session once it's open", () => {
+  const fresh = chat(props());
+  assert.ok(fresh.ids.has("own-session"));
+  assert.ok(!fresh.ids.has("own-close"));
+  assert.match(fresh.words, /\+/);
   const paused = ticket({ state: "paused", terminal: "t8" });
   const { words } = chat(props({ ticket: { id: 412, terminal: "t8", state: "paused" }, sessions: chatSessions([...ROWS.map((r) => ({ ...r, ended_at: r.ended_at ?? "2026-11-20T11:30:00Z" })), OWN], paused, NOW) }));
   assert.match(words, /Close your session/);
+  const open = chat(props({ ticket: { id: 412, terminal: "t8", state: "paused" }, sessions: chatSessions([...ROWS.map((r) => ({ ...r, ended_at: r.ended_at ?? "2026-11-20T11:30:00Z" })), OWN], paused, NOW) }));
+  assert.ok(open.ids.has("own-close") && !open.ids.has("own-session"));
   assert.ok(!chat(props({ daemon: false })).ids.has("own-session"));
 });
