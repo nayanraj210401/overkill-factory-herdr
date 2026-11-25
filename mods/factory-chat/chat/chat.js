@@ -27,7 +27,7 @@ import { parsePrompt, choose, menuAtBottom } from "./prompt.js";
 import { askSide, sessionOf } from "./sdk.js";
 import { copyText, openFile, imageSize } from "./platform.js";
 import { live } from "./stream.js";
-import { pickSession, chatTarget, chatEmpty, ownChat, PANEL_KEY, PANEL_HINT } from "../lib/ticketchat.js";
+import { pickSession, chatTarget, chatEmpty, ownChat, composerRoute, OWN_READY, PANEL_KEY, PANEL_HINT } from "../lib/ticketchat.js";
 import { cliCommand } from "../lib/actions.js";
 import CLI from "../lib/cli.js"; // written by scripts/sync.sh
 import { root } from "../lib/store.js";
@@ -348,23 +348,21 @@ export class ChatView extends View {
   }
 
   send(cx) {
-    const text = this.input.value().trim();
-    // /btw and /side never reach the agent: they open the side chat.
-    const aside = /^\/(?:btw|side)(?:\s+([\s\S]*))?$/.exec(text);
-    if (aside) {
+    const route = composerRoute(this.input.value());
+    if (route.kind === "side") {
       this.input.set_value("");
-      this.openSide(aside[1]?.trim() ?? "", cx);
+      this.openSide(route.question, cx);
       return cx.notify();
     }
     const term = this.term;
     if (!term) return; // read-only: the composer says why
     if (this.idleAsk) { this.error = ASK_FIRST; return cx.notify(); }
-    // A lone "/" would open the terminal's own menu and run its first command.
-    if (!text || text === "/") { this.input.set_value(""); return; }
+    if (route.kind === "none") { this.input.set_value(""); return; }
+    const { text } = route;
     this.input.set_value("");
     this.off = 0;
     // Slash commands and ! lines are logged as notes, not messages: no bubble for them.
-    if (!/^[\/!]/.test(text)) this.pending.push({ text, users: this.userCount(), at: Date.now() });
+    if (!route.note) this.pending.push({ text, users: this.userCount(), at: Date.now() });
     cx.spawn(async (cx) => {
       const r = await hc(["send", term, text]).catch((e) => ({ code: 1, stderr: String(e) }));
       this.error = r.code === 0 ? null : String(r.stderr || "").trim() || "send failed";
@@ -700,6 +698,13 @@ export class ChatView extends View {
           .when(!this.ownBusy, (b) => b.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => this.own(own, cx)))
           .tooltip(own.tip)
           .child(this.ownBusy === "close" ? "Closing…" : own.label)))
+        // Your session is a full Claude session: what the chat can't draw (a full-screen panel,
+        // a menu you type into, Shift+Tab for the mode) is one click away in its terminal.
+        .when(Boolean(session?.own && target.terminal), (el) => el.child(div().id("own-terminal").flex_none().px(8).py(2).rounded(6).border_1().text_size(12)
+          .border_color(t.border).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip(`Open ${target.terminal}, your session's terminal`)
+          .on_click(() => run("terminal.peek", { terminal: target.terminal }))
+          .child("Open in terminal")))
         .child(icon("search", "search", `Search (${shortcut("F")})`, this.searching, (_e, cx) => (this.searching ? this.closeSearch(cx) : this.openSearch(cx))))
         .child(icon("side-toggle", "terminal", `Side chat (${shortcut(";")})`, this.side.open, (_e, cx) => { this.side.open = !this.side.open; (this.side.open ? this.sideInput : this.input).focus(); cx.notify(); }))
         .when(Boolean(this.props?.panel), (el) => el.child(this.panelToggle(t))))
@@ -765,7 +770,7 @@ export class ChatView extends View {
         .hover((s) => s.bg(t.hover)).on_click((_e, cx) => { this.off = 0; cx.notify(); }).child("↓ Latest"));
     }
     if (!this.t?.entries.length) {
-      const msg = this.error ?? (this.t ? "Nothing in this session yet." : chatEmpty(session, sessions, target));
+      const msg = this.error ?? (session?.own && target.terminal ? OWN_READY : this.t ? "Nothing in this session yet." : chatEmpty(session, sessions, target));
       scroll.child(v_flex().id("chat-empty").absolute().inset_0().items_center().justify_center().p(24).child(div().text_color(t.dim).child(msg)));
     }
     return scroll;

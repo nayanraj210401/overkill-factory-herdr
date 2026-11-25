@@ -54,9 +54,22 @@ test("a chat session pauses a running ticket, works in its worktree, and closing
   const argv = h.runs[1];
   expect(argv[argv.indexOf("--cwd") + 1]).toBe(ticket(h.db).worktree);
   expect(argv).toContain("factory.stage=chat");
-  expect(argv).toContain("auto");
-  expect(argv.at(-1)).toContain("You are the person's own session on ticket #412: Rate-limit login");
-  expect(argv.at(-1)).toContain("blueprint is paused while you're open");
+  // The person's own claude: none of a factory agent's pins, the ticket as system-prompt context,
+  // and no prompt, so it opens idle.
+  const claude = argv.slice(argv.findIndex((a) => /(^|\/)claude$/.test(a)));
+  for (const pin of ["--model", "--permission-mode", "--settings", "--tools", "--allowedTools"]) expect(claude.some((a) => a === pin || a.startsWith(`${pin}=`))).toBe(false);
+  expect(claude.some((a) => a.startsWith("--plugin-dir"))).toBe(false);
+  expect(claude.join(" ")).not.toContain("guard.ts");
+  const sid = claude.indexOf("--session-id");
+  expect(claude[sid + 1]).toMatch(/^[0-9a-f-]{36}$/);
+  expect(claude).toContain(`--add-dir=${join(h.dir, "tickets", "412")}`);
+  const primer = claude.at(-1)!;
+  expect(primer.startsWith("--append-system-prompt=")).toBe(true);
+  expect(primer).toContain("This is the person's own session on factory ticket #412: Rate-limit login");
+  expect(primer).toContain("blueprint is paused while this session is open");
+  expect(primer).not.toContain("Start by");
+  // No positional prompt: every argument is a flag, or the session id's value.
+  expect(claude.slice(1).filter((a, i, all) => !a.startsWith("--") && all[i - 1] !== "--session-id")).toEqual([]);
   // The ticket's terminal is the chat's, so the Chat view types into it.
   const s = buildStatus(h.db);
   expect(validateStatus(s)).toEqual([]);
@@ -98,6 +111,7 @@ test("a ticket that isn't running isn't paused, nor resumed when the chat closes
   h.db.query("UPDATE tickets SET state = 'parked' WHERE id = 412").run();
   h.db.query("UPDATE sessions SET ended_at = ? WHERE ended_at IS NULL").run(at(0));
   expect(startChat(h.db, { dir: h.dir, repo: h.repo, id: 412, run: h.run, now: at(1) })).toMatchObject({ started: true, paused: false });
+  expect(h.runs.at(-1)!.at(-1)).toStartWith("--append-system-prompt=");
   expect(h.runs.at(-1)!.at(-1)).not.toContain("blueprint is paused");
   expect(closeChat(h.db, { dir: h.dir, repo: h.repo, id: 412, run: h.run, now: at(2) })).toEqual({ closed: "t2", resumed: null });
   expect(ticket(h.db).state).toBe("parked");

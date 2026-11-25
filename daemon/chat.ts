@@ -1,18 +1,18 @@
-// A ticket's own chat session: the person's session on the ticket, outside its blueprint. It works
-// in the ticket's worktree with the ticket's context, does whatever the person asks, and the
-// runner never starts, waits on or advances it. Opening it pauses a running ticket, so two agents
-// never edit the same files; when it ends (closed, or its terminal exits) a ticket it paused
-// resumes. Its row is a session with stage "chat", so its transcript and cost are the ticket's.
+// A ticket's own chat session: the person's session on the ticket, outside its blueprint. It is
+// `claude` as the person runs it, started in the ticket's worktree: their default model, settings,
+// permission mode, skills, plugins, MCP servers and slash commands, and no factory hard-stop hook.
+// The ticket's context is appended to the system prompt, and it opens idle, waiting for the
+// person. The runner never starts, waits on or advances it. Opening it pauses a running ticket, so
+// two agents never edit the same files; when it ends (closed, or its terminal exits) a ticket it
+// paused resumes. Its row is a session with stage "chat", so its transcript and cost are the ticket's.
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ticketRepos } from "./db.ts";
-import { STOPS, guardSettings, hardStopLog } from "./guard.ts";
 import { withFactory } from "./herdr.ts";
-import { DEFAULT_MODEL, pinModel } from "./models.ts";
 import { digestBlock } from "./digest.ts";
 import { claudeSession, endSessions, journal, journalSessionStart } from "./journal.ts";
-import { pause, readFactory, resume, sh, type Run } from "./runner.ts";
+import { pause, resume, sh, type Run } from "./runner.ts";
 
 export const CHAT = "chat";
 
@@ -27,16 +27,16 @@ const alive = (run: Run, terminal: string) => {
 const openChat = (db: Database, id: number) =>
   db.query("SELECT id, terminal, paused_ticket FROM sessions WHERE ticket = ? AND stage = 'chat' AND ended_at IS NULL ORDER BY id DESC LIMIT 1").get(id) as Open | null;
 
-// What the session is told: the ticket, where its files are, and that it answers to the person.
-export function chatBrief(o: { id: number; title: string; folder: string; worktrees: string[]; intent: string; digest: string; paused: boolean }) {
+// What the session knows, appended to Claude's own system prompt: the ticket, where its files are,
+// and that it answers to the person. Context, not a task: the person starts the conversation.
+export function chatPrimer(o: { id: number; title: string; folder: string; worktrees: string[]; intent: string; digest: string; paused: boolean }) {
   return [
-    `## You are the person's own session on ticket #${o.id}: ${o.title}`,
-    "The person opened you to work on this ticket directly, outside the factory's blueprint. Do what they ask, in this terminal: answer questions, explore, change code, run things. No stage owns you: there is no handoff, verdict or output file to write, and you don't move the ticket on.",
-    `The ticket's code is in ${o.worktrees.join(", ")}; its files (TICKET.md, INTENT.md, SLICES.md, HANDOFF.md, GATES.md) are in ${o.folder}. Commit what you change on the ticket's branch, as a stage agent would; never push to main.`,
-    o.paused ? "The ticket's blueprint is paused while you're open. When the person closes you, it resumes where it stopped and its next stage starts from the worktree as you leave it." : "",
+    `## This is the person's own session on factory ticket #${o.id}: ${o.title}`,
+    "The person opened it from the factory's Ticket page to work on this ticket directly, outside the factory's blueprint. Help with whatever they ask: questions, research, exploring, changing code, running things. No stage owns this session: there is no handoff, verdict or output file to write, and it doesn't move the ticket on.",
+    `The ticket's code is in ${o.worktrees.join(", ")}; its files (TICKET.md, INTENT.md, SLICES.md, HANDOFF.md, GATES.md) are in ${o.folder}. Code changes belong on the ticket's branch.`,
+    o.paused ? "The ticket's blueprint is paused while this session is open. When the person closes it, the blueprint resumes where it stopped and its next stage starts from the worktree as this session leaves it." : "",
     o.intent ? `## Intent\n\n${o.intent.trim()}` : "",
     o.digest,
-    "Start by saying in one or two lines where the ticket stands, then ask the person what they want to do.",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -66,11 +66,13 @@ export function startChat(db: Database, o: { dir: string; repo: string; id: numb
   const worktrees = repos.flatMap((r) => r.worktree ?? []);
   const folder = join(o.dir, "tickets", String(o.id));
   const intent = existsSync(join(folder, "INTENT.md")) ? readFileSync(join(folder, "INTENT.md"), "utf8") : "";
-  const text = chatBrief({ id: o.id, title: t.title, folder, worktrees, intent, digest: digestBlock(db, o.id), paused });
-  // Auto mode like every factory session, with the factory's hard stops on its tool calls.
-  const guard = guardSettings({ stops: readFactory(o.repo).hard_stops ?? [...STOPS], roots: [...worktrees, folder], log: hardStopLog(o.dir, o.id) });
-  const settings = { skipAutoPermissionPrompt: true, permissions: { additionalDirectories: [...worktrees.slice(1), folder] }, ...(guard ? JSON.parse(guard) : {}) };
-  const cs = claudeSession(["claude", "--permission-mode", "auto", "--settings", JSON.stringify(settings), "--model", pinModel(DEFAULT_MODEL)!, text], t.worktree);
+  const primer = chatPrimer({ id: o.id, title: t.title, folder, worktrees, intent, digest: digestBlock(db, o.id), paused });
+  // The person's own claude: no --model, --settings, --permission-mode, hook or plugin, so theirs
+  // apply. --add-dir only grants: the ticket's other worktrees and its folder. No prompt, so it
+  // opens idle. The `=` forms keep each value with its flag: --add-dir takes several values, and
+  // claudeSession puts --session-id before the last argument (a stage's prompt).
+  const dirs = [...worktrees.slice(1), folder].map((d) => `--add-dir=${d}`);
+  const cs = claudeSession(["claude", ...dirs, `--append-system-prompt=${primer}`], t.worktree);
   const cmd = withFactory(cs.argv, o.dir, { agent: CHAT, ticket: o.id, repo: repos[0]?.repo });
   const hc = run(["hc", "run", "--bg", "--json", "--no-parent", "--outlive-parent", "--name", `f${o.id}-chat`, "--cwd", t.worktree,
     "--label", `factory.ticket=${o.id}`, "--label", "factory.stage=chat", ...cmd]);

@@ -47,7 +47,8 @@ export const setShared = (key, value) => { fake.shared[key] = value; };
 export const layout = () => fake.layout;
 export const run = () => {};
 export const exec = () => {};
-export const hc = async () => ({ code: 1, stdout: "", stderr: "" });
+// `hc`: every call a test makes is kept in fake.hc when the test sets it to an array.
+export const hc = async (args) => (fake.hc?.push(args), { code: 1, stdout: "", stderr: "" });
 export const notify = () => {};
 export const props = () => ({});
 export const readTextFile = async () => null;

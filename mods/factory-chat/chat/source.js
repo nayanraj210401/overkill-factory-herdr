@@ -27,6 +27,8 @@ export class Tail {
       this.truncated = skipFirst;
     }
     const r = await exec("tail", ["-c", `+${this.offset + 1}`, this.file], { on: this.on });
+    // Not written yet (a session that opened idle logs nothing before its first message): empty for now.
+    if (r.code !== 0 && /No such file/i.test(r.stderr)) { this.offset = null; return []; }
     if (r.code !== 0) throw new Error(r.stderr.trim() || "can't read the session log");
     const s = r.stdout;
     const cut = s.lastIndexOf("\n");
