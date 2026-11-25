@@ -49,7 +49,7 @@ import { learningMetrics, type LearningMetrics } from "./experiments.ts";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
-import { overwatch } from "./overwatch.ts";
+import { liveOverwatch, overwatch } from "./overwatch.ts";
 import { liveSession, SESSIONS } from "./globals.ts";
 import { liveRoster, rosterText, writeLive } from "./live.ts";
 import { ask as askAgent, askerOf, askTarget, deliverToGlobal, deliverToRepoAgents, doneAsk, doneAsks, noteText, openAsks, type AskResult, type Live } from "./ask.ts";
@@ -132,7 +132,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   memory outcome <id> <outcome> [--source who]  how it went: kept, edited, deleted, accepted, pushed-back, missed, merged, reverted, …
   memory search <words…> [--agent a] [--kind k,…] [--limit n] [--json]  the closest past rows, those with an outcome first (good and bad)
   memory list [--agent a] [--kind k,…] [--limit n] [--json]  the newest rows; the daemon fills stage and babysitter outcomes and keeps 5000 rows per agent and repo
-  overwatch [--json]                 start the overwatch agent, or print the live one's terminal
+  overwatch [--find] [--json]        start the overwatch agent, or print the live one's terminal (--find: never start one)
   blueprints                         write blueprints.json (stages, runs in 7 days) for the Blueprint page
   dry-run <file|name> [--tickets N] [--json]  replay the last N (default 5) finished tickets through a draft blueprint, no agents; writes DRYRUN.md here
   plan <5h tokens> <week tokens>     your plan's limits, for the 5h and week meters: plan 20M 400M
@@ -990,9 +990,13 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       writeStatus(db, p.status);
       return log(json ? JSON.stringify(r) : `maintainer ${r.started ? "started" : "running"} in ${r.terminal}`);
     } else if (cmd === "overwatch") {
-      let r: any = null;
+      // --find: the live one's terminal or null, never a start; the Overwatch page offers a Start button instead.
+      if (args.includes("--find")) {
+        const terminal = liveOverwatch(sh);
+        return log(json ? JSON.stringify({ terminal }) : terminal ? `overwatch running in ${terminal}` : "overwatch isn't running");
+      }
       // One for every factory: found or started from any of them (overwatch.ts).
-      r = overwatch({ run: sh, now: now() });
+      const r = overwatch({ run: sh, now: now() });
       if (r.started) change(db, () => { db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (NULL, 'you', 'started the overwatch agent', ?)").run(now()); });
       return log(json ? JSON.stringify(r) : `overwatch ${r.started ? "started" : "running"} in ${r.terminal}`);
     } else if (cmd === "blueprints") {
