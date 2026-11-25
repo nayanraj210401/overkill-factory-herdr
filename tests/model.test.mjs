@@ -325,3 +325,12 @@ test("v2UI is on only when status.json says ui.v2: true; ui is optional but chec
   assert.deepEqual(validateStatus({ ...status, ui: { v2: true } }), []);
   assert.deepEqual(validateStatus({ ...status, ui: { v2: "yes" } }), ["ui: needs {v2: boolean}"]);
 });
+
+test("planAge says how old Claude Code's plan reading is, once it's over an hour", async () => {
+  const { planAge } = await import("../lib/model.js");
+  const now = Date.parse("2026-11-25T12:00:00Z");
+  assert.equal(planAge({ source: "claude", as_of: "2026-11-25T11:30:00Z" }, now), null);
+  assert.equal(planAge({ source: "claude", as_of: "2026-11-25T09:00:00Z" }, now), "as of 3h ago");
+  assert.equal(planAge({ source: "claude", as_of: "2026-11-24T08:57:00Z" }, now), "as of 1d ago");
+  assert.equal(planAge({ source: "estimate", as_of: null }, now), null);
+});

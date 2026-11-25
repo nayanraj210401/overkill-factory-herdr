@@ -10,6 +10,13 @@ import { join } from "node:path";
 // One file for the whole account, beside every factory's folder.
 export const planFile = () => join(process.env.FACTORY_HOME ?? join(homedir(), ".factory"), "plan.json");
 
+// The status line every factory agent runs (stages, and Overwatch and the maintainer, which run all
+// day), so the plan reading stays fresh while any of them is open.
+export const planStatusLine = () => {
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  return { type: "command", command: `${q(process.execPath)} ${q(join(import.meta.dir, "planline.ts"))} ${q(planFile())}` };
+};
+
 export type Window = { used: number; resets_at: string | null };
 export type Reading = { at: string; five_hour: Window | null; seven_day: Window | null };
 

@@ -2,7 +2,7 @@ import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { theme, agents } from "herdr";
 import { status } from "./lib/store.js";
-import { planPct } from "./lib/model.js";
+import { planPct, planAge } from "./lib/model.js";
 
 // The status bar: agents, cloud, watched PRs, plan windows, failing rules.
 export default class FactoryStatus extends View {
@@ -17,7 +17,7 @@ export default class FactoryStatus extends View {
       `${running.filter((x) => x.where === "cloud").length} in cloud`,
       `${s.tickets.filter((x) => x.pr?.watched).length} PR watched`,
       `5h window ${planPct(s.plan, "window_5h")}`,
-      `week ${planPct(s.plan, "week")}`,
+      `week ${planPct(s.plan, "week")}${planAge(s.plan) ? ` (${planAge(s.plan)})` : ""}`,
       `${s.rules_failing} rules failing`,
       ...(s.plan.hold ? [`nothing new starts: ${s.plan.hold}`] : []),
     ];

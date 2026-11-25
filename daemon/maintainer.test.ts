@@ -73,6 +73,9 @@ test("the maintainer is a live global session: started with the waiting requests
   const settings = JSON.parse(argv[argv.indexOf("--settings") + 1]);
   expect(settings.skipAutoPermissionPrompt).toBe(true);
   expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain("--local");
+  // And the status line that saves the plan reading, so the meters stay fresh while it runs (planline.ts).
+  expect(settings.statusLine.command).toContain("planline.ts");
+  expect(settings.statusLine.command).toContain("plan.json");
   const brief = argv.at(-1)!;
   expect(brief).toContain("You maintain this factory");
   expect(brief).toContain(`Note #${first.ask.id} from overwatch: Clean up merged tickets.`);

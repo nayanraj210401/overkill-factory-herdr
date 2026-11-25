@@ -10,7 +10,7 @@
 //   bun handoff-hook.ts --precompact <snapshot file>
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { planFile } from "./planline.ts";
+import { planStatusLine } from "./planline.ts";
 import { agentAllow } from "./allow.ts";
 
 export const EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -80,7 +80,7 @@ export function withHandoffHook(argv: string[], dir: string, id: number, also?: 
   const precompact = { hooks: [{ type: "command", command: `${hook} --precompact ${quote(snapshotFile(dir, id))}` }] };
   const others = also ? JSON.parse(also).hooks?.PreToolUse ?? [] : [];
   // The status line saves Claude Code's plan-usage reading for the plan meters (planline.ts).
-  const statusLine = { type: "command", command: `${quote(process.execPath)} ${quote(join(dirname(import.meta.path), "planline.ts"))} ${quote(planFile())}` };
+  const statusLine = planStatusLine();
   // skipAutoPermissionPrompt: registering a repo with the factory is the consent to auto mode, so
   // Claude Code's one-time "Enable auto mode?" dialog never holds up an agent.
   writeFileSync(settings, JSON.stringify({ skipAutoPermissionPrompt: true, permissions: { allow: [...agentAllow(commands), ...allow], additionalDirectories: [...new Set(dirs.filter(Boolean))] }, hooks: { PreToolUse: [...others, ours], PreCompact: [precompact] }, statusLine }, null, 2) + "\n");
