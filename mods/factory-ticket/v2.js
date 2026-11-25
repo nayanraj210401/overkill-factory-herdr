@@ -19,6 +19,8 @@ import { V2_TABS, ticketKind, waitsOnYou, stageStrip, chips, askShort, askSource
   diffFiles, cut, activity, agentLine, tokenBar, tail, terminalQuestion, answerKeys, buttons, pageKey,
   mdSections, digestView, hitRows, memoryKey, rebuildAsk } from "./lib/ticketv2.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
+
+const TITLE_LINE = 23; // the title's line height, px: its box is two of them
 import { parseDiff } from "./lib/diff.js";
 import { ticketViews, askedView, chatPanel, panelOpen, panelShown, VIEW_KEY, OPEN_KEY, PANEL_KEY, PANEL_W, PANEL_HINT } from "./lib/ticketchat.js";
 import { TicketChat } from "./chat/host.js"; // mods/factory-chat/chat/, copied by scripts/sync.sh
@@ -391,9 +393,13 @@ export class TicketV2 {
     const links = sharedLinks(ticket);
     const short = askShort(files);
     const left = v_flex().id("ticket-left").flex_1().min_w_0().h_full().px(22).py(18).gap(14).overflow_y_scroll()
-      // At most two lines: the title's box is two lines tall and cuts the rest.
-      .child(div().id("title").max_h(46).overflow_hidden().text_size(17).font_semibold().text_color(t.foreground)
-        .child(h_flex().gap(6).flex_wrap().child(div().text_color(t.dim).child(`#${ticket.id}`)).child(ticket.title)))
+      // The number on its own line, then the title in at most two whole lines: a fixed line height and a
+      // box exactly two lines tall, so the cut falls between lines. (The number and title shared a
+      // wrapping row: a long title wrapped below the number and the box cut its line in half.)
+      .child(v_flex().id("title").gap(2)
+        .child(div().id("title-id").text_size(12).text_color(t.dim).child(`#${ticket.id}`))
+        .child(div().id("title-text").line_height(`${TITLE_LINE}px`).max_h(2 * TITLE_LINE).overflow_hidden()
+          .text_size(17).font_semibold().text_color(t.foreground).child(ticket.title)))
       .child(h_flex().id("chips").gap(6).flex_wrap().children([...chips(ticket, s.factory.repo, files, now), ...(repoBadge(s, ticket) ? [{ id: "repos", label: "repos", value: repoBadge(s, ticket) }] : [])].map(chipEl)))
       .when(Boolean(short), (el) => el.child(div().id("ask-short").text_color(t.muted).child(short)))
       .when(Boolean(ticket.warning), (el) => el.child(div().id("budget-warning").text_size(12).text_color(t.blocked).child(`Budget: ${ticket.warning}`)))
