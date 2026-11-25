@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { pathToFileURL } from "node:url";
-import { TICKET_VIEWS, ticketViews, viewOf, chatSessions, pickSession, chatTarget, chatEmpty, ownChat, NO_AGENT, askedView, panelOpen, panelShown, shortDigest, chatPanel, VIEW_KEY, OPEN_KEY, PANEL_KEY, PANEL_MIN } from "../lib/ticketchat.js";
+import { TICKET_VIEWS, ticketViews, viewOf, chatSessions, pickSession, chatTarget, chatEmpty, ownChat, composerRoute, NO_AGENT, askedView, panelOpen, panelShown, shortDigest, chatPanel, VIEW_KEY, OPEN_KEY, PANEL_KEY, PANEL_MIN } from "../lib/ticketchat.js";
 
 // The V2 Chat view (mods/factory-chat): which session it shows, the transcript it reads and the
 // terminal it types into, then its real render() against tests/fake-gpui.mjs, and the gate.
@@ -429,4 +429,40 @@ test("the switcher ends in + for your session, which becomes Close your session 
   const open = chat(props({ ticket: { id: 412, terminal: "t8", state: "paused" }, sessions: chatSessions([...ROWS.map((r) => ({ ...r, ended_at: r.ended_at ?? "2026-11-20T11:30:00Z" })), OWN], paused, NOW) }));
   assert.ok(open.ids.has("own-close") && !open.ids.has("own-session"));
   assert.ok(!chat(props({ daemon: false })).ids.has("own-session"));
+});
+
+test("the composer: /btw and /side open the side chat, a lone / is dropped, anything else goes to the terminal", () => {
+  assert.deepEqual(composerRoute("/btw what changed?"), { kind: "side", question: "what changed?" });
+  assert.deepEqual(composerRoute("/side"), { kind: "side", question: "" });
+  assert.deepEqual(composerRoute(" / "), { kind: "none" });
+  assert.deepEqual(composerRoute(""), { kind: "none" });
+  for (const c of ["/model", "/model opus", "/agents", "/review-pr 12", "/pstack:how where is auth checked?", "/btwx", "!git status"]) assert.deepEqual(composerRoute(c), { kind: "send", text: c, note: true });
+  assert.deepEqual(composerRoute("add a test"), { kind: "send", text: "add a test", note: false });
+});
+
+test("your session: slash commands reach its terminal as typed, it opens ready, and Open in terminal peeks it", () => {
+  const paused = ticket({ state: "paused", terminal: "t8" });
+  const sessions = chatSessions([...ROWS.map((r) => ({ ...r, ended_at: r.ended_at ?? "2026-11-20T11:30:00Z" })), OWN], paused, NOW);
+  const { v, ids, words } = chat(props({ ticket: { id: 412, terminal: "t8", state: "paused" }, sessions }), { lines: [], terminals: [{ address: "t8", status: "idle" }] });
+  assert.ok(ids.has("own-terminal") && ids.has("composer"));
+  assert.match(words, /Your session is ready\. Type a message, or any Claude command: \/model, \/agents, a skill\./);
+  assert.match(words, /Open in terminal/);
+  // A stage agent's session has no such button.
+  assert.ok(!chat(props(), { terminals: [{ address: "t7", status: "idle" }] }).ids.has("own-terminal"));
+  const now = { ...cx, spawn: (f) => f(now) };
+  fake.hc = [];
+  for (const c of ["/model", "/agents", "/pstack:how where is auth checked?", "/side"]) {
+    let value = c;
+    v.input = { value: () => value, set_value: (x) => { value = x; }, focus() {}, on() {} };
+    v.send(now);
+  }
+  assert.deepEqual(fake.hc, [["send", "t8", "/model"], ["send", "t8", "/agents"], ["send", "t8", "/pstack:how where is auth checked?"]]);
+  assert.equal(v.side.open, true); // /side opened the side chat instead
+  assert.equal(v.pending.length, 0); // commands are notes, not message bubbles
+  fake.hc = null;
+  // /model's picker, left on screen while the session is idle, is answered from the chat.
+  const picker = [" Select model", " Switch between Claude models.", "", " ❯ 1. Default (recommended) ✔  Opus for most usage", "   2. Sonnet                   Best for everyday tasks", "   3. Haiku                    Fastest for quick answers", "", " Enter to confirm · Esc to exit"].join("\n");
+  const menu = chat(props({ ticket: { id: 412, terminal: "t8", state: "paused" }, sessions }), { lines: [], terminals: [{ address: "t8", status: "idle" }], prep: (x) => { x.screen = picker; x.idleAsk = "menu"; } });
+  for (const id of ["question", "choice-0", "choice-1", "choice-2", "key-esc", "q-terminal"]) assert.ok(menu.ids.has(id), id);
+  assert.match(menu.words, /Sonnet/);
 });

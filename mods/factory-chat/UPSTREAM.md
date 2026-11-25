@@ -10,7 +10,7 @@
 | `chat/parse.js` | `mods/chat/parse.js` | Claude Code only: the Codex reader is gone. It keeps the log's `cwd`, which the side chat asks from. |
 | `chat/stream.js` | `mods/chat/stream.js` | Claude Code only: Codex's screen rules are gone. |
 | `chat/prompt.js` | `mods/chat/prompt.js` | Unchanged. |
-| `chat/source.js` | `mods/chat/source.js` | Only `Tail`, the log reader. The factory knows each session's transcript, so the code that finds the log from the terminal's process is gone. |
+| `chat/source.js` | `mods/chat/source.js` | Only `Tail`, the log reader. The factory knows each session's transcript, so the code that finds the log from the terminal's process is gone. A log not written yet reads as empty (your session opens idle). |
 | `chat/sdk.js` | `mods/chat/sdk.js` | Only `control`, `sessionOf` and `askSide`, which the side chat uses. |
 | `chat/platform.js` | `mods/chat/platform.js` | Only `copyText`, `openFile` and `imageSize`. |
 | `icons/` | `mods/chat/icons/` | Only copy, check, edit, search and terminal. |
