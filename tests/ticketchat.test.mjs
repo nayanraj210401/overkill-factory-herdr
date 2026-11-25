@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { pathToFileURL } from "node:url";
-import { TICKET_VIEWS, ticketViews, viewOf, chatSessions, pickSession, chatTarget, chatEmpty, NO_AGENT, askedView, panelOpen, panelShown, shortDigest, chatPanel, VIEW_KEY, OPEN_KEY, PANEL_KEY, PANEL_MIN } from "../lib/ticketchat.js";
+import { TICKET_VIEWS, ticketViews, viewOf, chatSessions, pickSession, chatTarget, chatEmpty, ownChat, NO_AGENT, askedView, panelOpen, panelShown, shortDigest, chatPanel, VIEW_KEY, OPEN_KEY, PANEL_KEY, PANEL_MIN } from "../lib/ticketchat.js";
 
 // The V2 Chat view (mods/factory-chat): which session it shows, the transcript it reads and the
 // terminal it types into, then its real render() against tests/fake-gpui.mjs, and the gate.
@@ -60,7 +60,7 @@ test("read-only: no agent running, an earlier session, or sample data", () => {
   const parkedT = ticket({ state: "parked", terminal: null });
   const parked = chatSessions(ROWS.map((r) => ({ ...r, ended_at: r.ended_at ?? "2026-11-20T12:00:00Z" })), parkedT, NOW);
   assert.deepEqual(chatTarget(parkedT, pickSession(parked), { sessions: parked }), { file: "/p/cccc.jsonl", terminal: null, readonly: true, note: NO_AGENT });
-  assert.equal(NO_AGENT, "No agent running. Use Talk it through (u) or Answer & resume.");
+  assert.equal(NO_AGENT, "No agent running. Open Your session to work on it yourself, or use Talk it through (u) or Answer & resume.");
   const list = chatSessions(ROWS, ticket(), NOW);
   const old = chatTarget(ticket(), pickSession(list, 2), { sessions: list });
   assert.equal(old.terminal, null);
@@ -136,7 +136,7 @@ test("read-only: no agent running disables the composer with the note", () => {
   const { ids, words } = chat(props({ ticket: { id: 412, terminal: null, state: "parked" }, sessions: chatSessions(ended, parkedT, NOW) }));
   assert.ok(ids.has("composer-disabled"));
   assert.ok(!ids.has("send"));
-  assert.match(words, /No agent running\. Use Talk it through \(u\) or Answer & resume\./);
+  assert.match(words, /No agent running\. Open Your session to work on it yourself, or use Talk it through \(u\) or Answer & resume\./);
   assert.match(words, /read-only/);
   assert.match(words, /I'll read the config first\./); // the transcript still shows
 });
@@ -395,4 +395,34 @@ test("sidebar: a grown transcript marks its row; a thread click opens the ticket
   assert.equal(fake.shared[OPEN_KEY], undefined); // as today: no ask
   sidebar({ v2: false }).click("t-412");
   assert.equal(fake.shared[OPEN_KEY], undefined);
+});
+
+// Your own session on the ticket (daemon/chat.ts): a "chat" stage row.
+const OWN = { id: 4, stage: "chat", agent: "chat", terminal: "t8", started_at: "2026-11-20T12:00:00Z", ended_at: null, claude_session: "dddd", transcript: "/p/dddd.jsonl", paused_ticket: 1 };
+
+test("your session: Open on a started ticket, Close once it's open, none before a worktree or on sample data", () => {
+  const ended = ROWS.map((r) => ({ ...r, ended_at: r.ended_at ?? "2026-11-20T11:30:00Z" }));
+  const paused = ticket({ state: "paused", terminal: "t8", stage: "implement", agent: "chat" });
+  const list = chatSessions([...ended, OWN], paused, NOW);
+  assert.equal(list.at(-1).label, "your session · 1 · Nov 20");
+  assert.equal(list.at(-1).agent, "your session");
+  assert.equal(pickSession(list).id, 4); // the chat follows it: it's the ticket's terminal
+  assert.deepEqual(chatTarget(paused, pickSession(list), { sessions: list }).terminal, "t8");
+  assert.deepEqual(ownChat(paused, list), { action: "close", args: ["chat", "412", "--close"], label: "Close your session", tip: "End your session; the blueprint resumes where it paused" });
+  const running = ownChat(ticket(), chatSessions(ROWS, ticket(), NOW));
+  assert.deepEqual(running.args, ["chat", "412"]);
+  assert.equal(running.label, "Your session");
+  assert.match(running.tip, /blueprint pauses until you close it/);
+  assert.doesNotMatch(ownChat(ticket({ state: "parked", terminal: null }), []).tip, /pauses/);
+  assert.equal(ownChat(ticket({ state: "queued" }), []), null);
+  assert.equal(ownChat(ticket(), [], false), null);
+});
+
+test("the head draws Your session, and Close your session once it's open", () => {
+  assert.match(chat(props()).words, /Your session/);
+  assert.ok(chat(props()).ids.has("own-session"));
+  const paused = ticket({ state: "paused", terminal: "t8" });
+  const { words } = chat(props({ ticket: { id: 412, terminal: "t8", state: "paused" }, sessions: chatSessions([...ROWS.map((r) => ({ ...r, ended_at: r.ended_at ?? "2026-11-20T11:30:00Z" })), OWN], paused, NOW) }));
+  assert.match(words, /Close your session/);
+  assert.ok(!chat(props({ daemon: false })).ids.has("own-session"));
 });

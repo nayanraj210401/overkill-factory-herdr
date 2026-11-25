@@ -27,7 +27,10 @@ import { parsePrompt, choose, menuAtBottom } from "./prompt.js";
 import { askSide, sessionOf } from "./sdk.js";
 import { copyText, openFile, imageSize } from "./platform.js";
 import { live } from "./stream.js";
-import { pickSession, chatTarget, chatEmpty, PANEL_KEY, PANEL_HINT } from "../lib/ticketchat.js";
+import { pickSession, chatTarget, chatEmpty, ownChat, PANEL_KEY, PANEL_HINT } from "../lib/ticketchat.js";
+import { cliCommand } from "../lib/actions.js";
+import CLI from "../lib/cli.js"; // written by scripts/sync.sh
+import { root } from "../lib/store.js";
 
 const ASK_FIRST = "Answer the question above first.";
 const CACHE = "data/factory-chat";
@@ -648,8 +651,26 @@ export class ChatView extends View {
         .child(div().text_size(11.5).text_color(t.dim).child(q ? "Or type your own answer below." : "The keys go to its terminal.")));
   }
 
+  // Your session: `factory chat <id>` opens your own session on the ticket (the chat then follows
+  // it, since it's the ticket's terminal), `--close` ends it. The page reloads the sessions when
+  // status.json's terminal changes.
+  own(o, cx) {
+    if (this.ownBusy) return;
+    this.ownBusy = o.action;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const c = cliCommand(CLI, root(), o.args);
+      const r = await exec(c.command, c.args, { timeout: 30000 }).catch((e) => ({ code: 1, stderr: String(e) }));
+      this.ownBusy = null;
+      if (r.code !== 0) notify({ title: o.action === "open" ? "Your session didn't start" : "Your session didn't close", body: (r.stderr || r.stdout || "").trim(), level: "error" });
+      else this.picked = null; // follow the live session: yours once it's open
+      cx.notify();
+    });
+  }
+
   // The chat's head: who, what it runs on, and the session switcher.
   header(t, sessions, session, target) {
+    const own = ownChat(this.props?.ticket, sessions, this.props?.daemon !== false);
     const status = this.status();
     const dot = !target.terminal ? t.dim : status === "blocked" || this.idleAsk ? t.blocked : status === "working" ? t.working : t.done;
     const model = this.t?.model ? this.t.model.replace(/^claude-/, "") : null;
@@ -668,6 +689,11 @@ export class ChatView extends View {
             .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(x.id, cx))
             .when(x.live, (el) => el.child(div().size(6).rounded_full().bg(t.working)))
             .child(x.label))))
+        .when(Boolean(own), (el) => el.child(div().id("own-session").flex_none().px(8).py(2).rounded(6).border_1().text_size(12)
+          .border_color(own.action === "open" ? t.accent : t.border).text_color(own.action === "open" ? t.foreground : t.muted)
+          .when(!this.ownBusy, (b) => b.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => this.own(own, cx)))
+          .tooltip(own.tip)
+          .child(this.ownBusy === "open" ? "Starting…" : this.ownBusy === "close" ? "Closing…" : own.label)))
         .child(icon("search", "search", `Search (${shortcut("F")})`, this.searching, (_e, cx) => (this.searching ? this.closeSearch(cx) : this.openSearch(cx))))
         .child(icon("side-toggle", "terminal", `Side chat (${shortcut(";")})`, this.side.open, (_e, cx) => { this.side.open = !this.side.open; (this.side.open ? this.sideInput : this.input).focus(); cx.notify(); }))
         .when(Boolean(this.props?.panel), (el) => el.child(this.panelToggle(t))))

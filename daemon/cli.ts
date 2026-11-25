@@ -50,6 +50,7 @@ import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { liveOverwatch, overwatch } from "./overwatch.ts";
+import { closeChat, liveChat, startChat } from "./chat.ts";
 import { liveSession, SESSIONS } from "./globals.ts";
 import { liveRoster, rosterText, writeLive } from "./live.ts";
 import { ask as askAgent, askerOf, askTarget, deliverToGlobal, deliverToRepoAgents, doneAsk, doneAsks, noteText, openAsks, type AskResult, type Live } from "./ask.ts";
@@ -95,6 +96,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   send-back <id> <note…>             a ready PR goes back to its fix stage with your note (REVIEW.md)
   answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one), for scripts
   talk <id> [--json]                 a parked ticket's stage (or a grooming one's triage) starts fresh and asks you in its terminal first
+  chat <id> [--close] [--json]       your own session on a ticket, outside its blueprint, in its worktree; a running ticket pauses until --close (or resume)
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
   split <id> add <title…> [--scope text] [--keeps-work]  propose one part of a ticket that is really several, in order
   split <id> [approve|reject]        list a ticket's proposed parts / make them sub-issues / go on as one ticket
@@ -707,6 +709,19 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       });
       const { stage, terminal } = r!;
       return log(json ? JSON.stringify({ stage, terminal }) : `#${id}: the ${stage} agent asks you in ${terminal}`);
+    } else if (cmd === "chat") {
+      // The ticket's own session, outside the blueprint (chat.ts); --close ends it and resumes a ticket it paused.
+      const repoDir = needLead(db).path;
+      const id = Number(sub);
+      if (!Number.isInteger(id)) throw new Error("usage: factory chat <id> [--close] [--json]");
+      if (args.includes("--close")) {
+        let r: any = null;
+        change(db, () => { r = closeChat(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); });
+        return log(json ? JSON.stringify(r) : !r.closed ? `#${id}: no chat session open` : `#${id}: chat session closed${r.resumed ? `; resumed at ${r.resumed.stage}` : ""}`);
+      }
+      let r: any = null;
+      change(db, () => { r = startChat(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); });
+      return log(json ? JSON.stringify(r) : `#${id}: chat session ${r.started ? "started" : "open"} in ${r.terminal}${r.paused ? "; the ticket is paused until you close it" : ""}`);
     } else if (cmd === "diff") {
       const repoDir = needLead(db).path;
       return log(ticketDiff(db, { repo: repoDir, id: Number(sub) }));
@@ -775,7 +790,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       // --json: what the V2 Chat view reads (lib/ticketchat.js): each session's transcript and terminal.
       if (json) return log(JSON.stringify(rows.map((r) => ({ id: r.id, stage: r.stage, agent: r.agent ?? null, terminal: r.terminal ?? null,
         started_at: r.started_at, ended_at: r.ended_at ?? null, claude_session: r.claude_session ?? null, transcript: r.transcript ?? null,
-        tokens_in: r.tokens_in, tokens_out: r.tokens_out, usd: r.usd ?? 0 }))));
+        tokens_in: r.tokens_in, tokens_out: r.tokens_out, usd: r.usd ?? 0, paused_ticket: r.paused_ticket ?? 0 }))));
       for (const r of rows)
         log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}${r.transcript ? `  ${r.transcript}` : ""}`);
       return;
@@ -1291,6 +1306,16 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     log(`factory: starting groomed tickets: ${(e as Error).message}`);
   }
   for (const s of open_) {
+    // Your chat session isn't a stage: it never advances the ticket, and you're in it already, so it
+    // never flags Needs you. Its terminal gone, it ends, and a ticket it paused resumes (chat.ts).
+    if (s.stage === "chat") {
+      try {
+        let open: string | null = null;
+        change(db, () => { open = liveChat(db, { dir: p.dir, repo: repoDir, id: s.ticket, run, now: nowIso }); });
+        if (!open) log(`factory: #${s.ticket}'s chat session in ${s.terminal} ended`);
+      } catch (e) { log(`factory: #${s.ticket}: chat session: ${(e as Error).message}`); }
+      continue;
+    }
     const r = run(["hc", "get", s.terminal, "--json"]);
     let state = "exited";
     let info: any = null;

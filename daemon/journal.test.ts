@@ -188,5 +188,5 @@ test("factory sessions --json: each session's stage, terminal, transcript and Cl
     ["implement", "t3", "2026-11-22T09:40:00Z", "aaaa", "/x/aaaa.jsonl"],
     ["implement", "t7", null, "bbbb", "/x/bbbb.jsonl"],
   ]);
-  expect(Object.keys(rows[0]).sort()).toEqual(["agent", "claude_session", "ended_at", "id", "stage", "started_at", "terminal", "tokens_in", "tokens_out", "transcript", "usd"]);
+  expect(Object.keys(rows[0]).sort()).toEqual(["agent", "claude_session", "ended_at", "id", "paused_ticket", "stage", "started_at", "terminal", "tokens_in", "tokens_out", "transcript", "usd"]);
 });
