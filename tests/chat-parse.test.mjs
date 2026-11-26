@@ -78,3 +78,42 @@ test("a picker on the terminal: its question, options and the selected one; keys
   assert.equal(menuAtBottom(["Pick one", "❯ 1. A", "  2. B", "Enter to confirm · Esc to cancel"].join("\n")), "menu");
   assert.equal(menuAtBottom("a reply that ends\nwith no hint"), null);
 });
+
+test("a question in its box: the rule above bounds it, and the │ borders come out of the text", () => {
+  // Real AskUserQuestion screen (from a live capture): a rule, a ☐ header, │-bordered
+  // question lines that wrap with a trailing │, then numbered options and the hint.
+  const bar = "─".repeat(60);
+  const screen = [
+    "❯ Read src/a.ts",
+    bar,
+    " ☐ Retry policy",
+    "",
+    "│ Our service client currently retries failed requests a fixed three times with no delay between attempts, which causes thundering-herd spikes when a downstream dependency degrades. Several teammates │",
+    "│ have proposed different retry and backoff policies, and the choice affects latency for end users, load on the downstream service, and how much duplicate work non-idempotent operations might trigger. │",
+    "│ Which retry and backoff policy should this hypothetical client adopt as its default? │",
+    "",
+    "❯ 1. Exponential backoff with jitter",
+    "     Doubles the wait after each failed attempt, randomizes it within that window, and caps total attempts at five.",
+    "  2. Fixed interval, fixed count",
+    "  3. No retries, fail fast",
+    bar,
+    "  6. Chat about this",
+    "",
+    "Enter to select · ↑/↓ to navigate · Esc to cancel",
+  ].join("\n");
+  const q = parsePrompt(screen);
+  assert.equal(q.question, "☐ Retry policy\n\nOur service client currently retries failed requests a fixed three times with no delay between attempts, which causes thundering-herd spikes when a downstream dependency degrades. Several teammates have proposed different retry and backoff policies, and the choice affects latency for end users, load on the downstream service, and how much duplicate work non-idempotent operations might trigger. Which retry and backoff policy should this hypothetical client adopt as its default?");
+  assert.equal(q.options.length, 3);
+  assert.equal(q.selected, 0);
+  // A wrapped description line folds into its option (existing behavior).
+  assert.equal(q.options[0], "Exponential backoff with jitter Doubles the wait after each failed attempt, randomizes it within that window, and caps total attempts at five.");
+  assert.deepEqual(q.options.slice(1), ["Fixed interval, fixed count", "No retries, fail fast"]);
+});
+
+test("a capture cut mid-question still parses the options, and keeps only what it has", () => {
+  // The top of the question scrolled out of the pane: what remains still yields a menu.
+  const screen = ["from the rate limiter when the request carries a retry-after header?", "❯ 1. Back off and retry", "  2. Fail fast", "Enter to confirm"].join("\n");
+  const q = parsePrompt(screen);
+  assert.equal(q.options.length, 2);
+  assert.equal(q.question, "from the rate limiter when the request carries a retry-after header?");
+});
