@@ -5,6 +5,8 @@
 role: review
 territory: "Grading its ticket's diff against INTENT.md, and the review verdict"
 model: claude-opus-5-5
+skills: [tour]
+tools: [Read, Bash, Grep, Glob, Skill]
 context: [INTENT.md, EVIDENCE.md, lessons/auth.md]
 ---
 Grade the diff against INTENT.md, including its Decisions section: block on a diff
