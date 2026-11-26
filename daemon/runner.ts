@@ -84,12 +84,13 @@ export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").r
 // `share`: the claude.ai links and the publish step for the stage's output (artifacts.ts); "" when sharing is off.
 // `neighbours`: the map of the factory's agents (agents.ts), first in the brief.
 // `digest`: the ticket's memory (digest.ts digestBlock), with the pointer to `factory recall`.
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "", memory = "", digest = "") {
+export function brief(t: { id: number; title: string; notes?: string | null }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "", memory = "", digest = "") {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return render(template, {
     neighbours,
     "ticket.id": String(t.id),
     "ticket.title": t.title,
+    "ticket.notes": t.notes,
     stage,
     folder,
     "agent.prompt": prompt,

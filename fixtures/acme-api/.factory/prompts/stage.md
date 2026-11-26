@@ -2,6 +2,8 @@
 
 Ticket #{{ticket.id}}: {{ticket.title}}. You run its {{stage}} stage.
 
+The owner's note outweighs everything else here: {{ticket.notes}} What it answers, don't ask again.
+
 It spans {{repo_count}} repos, each checked out on the same branch: {{repos}}. Change each one the work needs, and commit in each.
 
 {{agent.prompt}}

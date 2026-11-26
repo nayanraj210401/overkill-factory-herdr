@@ -336,6 +336,9 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
    ALTER TABLE tickets ADD COLUMN digest_edited_at TEXT;`,
   // A ticket's own chat session (chat.ts): 1 when opening it paused the ticket, so closing it resumes.
   addColumn("sessions", "paused_ticket", "INTEGER NOT NULL DEFAULT 0"),
+  // The owner's note (factory new --note, the New ticket dialog's second box): their own words,
+  // which outweigh the factory's prompts in every brief ({{ticket.notes}}).
+  addColumn("tickets", "notes", "TEXT"),
   // Reviews (reviews.ts): teammates' PRs waiting on you, one row each, with the risk the
   // intake poll scored, its reasons, and when it first saw the PR (requested_at). checks and
   // reasons are JSON. Approved rows stay (approved_at set) but drop out of reviews.json.

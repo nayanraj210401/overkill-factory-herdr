@@ -74,7 +74,7 @@ import { digestOf, runDigest, runDueDigest, setDigest } from "./digest.ts";
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
-  new <issue link | #n | goal…> [--blueprint b] [--start] [--parent id]  add a ticket (goals get ids from 10000); --parent: it re-requests
+  new <issue link | #n | goal…> [--blueprint b] [--start] [--parent id] [--note text]  add a ticket (goals get ids from 10000); --parent: it re-requests; --note: your words, which outweigh the factory's prompts in every brief
                                      ticket <id>, and its digest starts from that one's
   ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request: typed into its terminal, which starts if it isn't running; takes --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run), or a repo agent as <owner/name>:<agent> (a bare <agent> is the asker's own repo's; a note typed into its live session there, else its next brief). A repo agent asks the factory agents and its own repo's; another repo's goes through overwatch
   asks [agent] [--json] | asks done <id>  the open notes (to one agent) / mark one handled
@@ -275,6 +275,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const daysFlag = flag(args, "days");
   const searchFlag = flag(args, "search");
   const parentFlag = flag(args, "parent");
+  const noteFlag = flag(args, "note");
   const setFlag = flag(args, "set");
   const p = paths(name);
   const all = args.includes("--all");
@@ -634,7 +635,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       // A held start still adds the ticket; it waits in the queue.
       const held = start ? startHold(db, lead.path, new Date()) : null;
       change(db, () => {
-        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start, parent: parentFlag == null ? undefined : Number(parentFlag) });
+        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start, parent: parentFlag == null ? undefined : Number(parentFlag), note: noteFlag ?? undefined });
         if (start && !held) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
       });
       log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " added; the triage agent grooms it, and it starts once nothing is left to ask"}`);
