@@ -23,6 +23,7 @@ import { exampleFiles, examplesDir, factoryAgentFiles, factoryAgentsDir, install
 import { installSkills, skillFiles, skillFileErrors, skillsDir } from "./skills.ts";
 import { accountFile, readAccount, setSwitch } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
+import { approvePr, pollReviews, writeReviews } from "./reviews.ts";
 import { backup, closeRetiredRequests, liveMaintainer, maintainer as startMaintainer, restore } from "./maintainer.ts";
 import { cleanupDir, cleanupPlan, performCleanup, planMarkdown, proposeCleanup } from "./cleanup.ts";
 import { learnerDigest, learnerDue, learnerHold, learningHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
@@ -147,6 +148,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   comment <id> C<n> fix|pushback|escalate <reason…>  the fix agent's verdict on a reviewer's comment
   label <id> C<n> fix|pushback|escalate  your own verdict on a review comment, for the agreement benchmark
   agreement [--dry-run] [--json]     re-judge your past review comments with review.judge_model and record how often it matches you (--dry-run counts them)
+  review approve <owner/repo>#<n>    approve a PR waiting on you (gh pr review --approve) and take it out of reviews.json (#<n>: this factory's repos)
   verdict <id> holdout|review pass|fail [detail…] [--by voter]  a checker's or reviewer's verdict
   artifact <id> <file> <url>         record where an agent shared a ticket file on claude.ai (artifacts: in factory.yaml); --fail <why> logs a publish that failed
   decide <ticket> <who> <what> [why] log a decision
@@ -1040,6 +1042,14 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let added: number[] = [];
       change(db, () => { added = pollQueue(db, { queue, repo: needLead(db).slug, run: sh, now: now() }); });
       log(added.length ? `added ${added.map((n) => `#${n}`).join(", ")} to grooming` : "no new issues in the queue");
+    } else if (cmd === "review") {
+      // Approve a PR waiting on you, from the Reviews page's a key or by hand.
+      const m = (sub === "approve" ? rest[0] ?? "" : "").match(/^(?:([^/\s#]+\/[^\s#]+))?#(\d+)$/);
+      if (!m) throw new Error("usage: factory review approve <owner/repo>#<n>, like factory review approve acme/api#88");
+      const slug = m[1] ?? needLead(db).slug;
+      approvePr(db, { slug, number: Number(m[2]), run: sh, now: now(), commit: (fn) => change(db, fn) });
+      log(`${slug}#${m[2]} approved; it leaves reviews.json on the next write`);
+      writeReviews(db, p.dir);
     } else if (cmd === "usage") {
       change(db, () => recordUsage(db, log));
     } else if (cmd === "decide") {
@@ -1292,6 +1302,17 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     try { change(db, () => { settleMemories(db, nowIso); }); }
     catch (e) { log(`factory: memory outcomes: ${(e as Error).message}`); }
   }
+  // PRs waiting on your review, every 10 minutes, for reviews.json. Same rhythm and stamp
+  // rule as the reverts: the clock is written first, so a failing gh waits its turn.
+  const repos = listRepos(db);
+  if (lead.slug !== "unknown" && repos.length) {
+    const lastIntake = getMeta(db, "review_intake_at");
+    if (!lastIntake || Date.now() - Date.parse(lastIntake) >= 600_000) {
+      setMeta(db, "review_intake_at", nowIso);
+      try { change(db, () => { pollReviews(db, { repos, run, now: nowIso, log }); }); }
+      catch (e) { log(`factory: the review queue: ${(e as Error).message}`); }
+    }
+  }
   // Split tickets: a part goes on once the one before it is done; a parent closes after its last part.
   try { change(db, () => followSplits(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log })); }
   catch (e) { log(`factory: following splits: ${(e as Error).message}`); }
@@ -1356,6 +1377,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
 // status.json plus every ticket's files, so "12m so far" keeps counting.
 function writeAll(db: Database, p: ReturnType<typeof paths>) {
   const s = writeStatus(db, p.status);
+  writeReviews(db, p.dir);
   const lead = leadRepo(db);
   if (lead) writeBlueprints(db, lead.path, p.blueprints);
   writeMetrics(db, p.metrics);

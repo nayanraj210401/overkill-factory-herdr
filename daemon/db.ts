@@ -339,6 +339,15 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
   // The owner's note (factory new --note, the New ticket dialog's second box): their own words,
   // which outweigh the factory's prompts in every brief ({{ticket.notes}}).
   addColumn("tickets", "notes", "TEXT"),
+  // Reviews (reviews.ts): teammates' PRs waiting on you, one row each, with the risk the
+  // intake poll scored, its reasons, and when it first saw the PR (requested_at). checks and
+  // reasons are JSON. Approved rows stay (approved_at set) but drop out of reviews.json.
+  `CREATE TABLE review_queue (
+     repo TEXT, number INTEGER, requested_at TEXT, low_risk INTEGER, risk INTEGER, reasons TEXT,
+     title TEXT, author TEXT, url TEXT, additions INTEGER, deletions INTEGER,
+     pending_review INTEGER, checks TEXT, approved_at TEXT, updated_at TEXT,
+     PRIMARY KEY (repo, number));
+   CREATE INDEX review_queue_open ON review_queue(approved_at);`,
 ];
 
 export function open(path: string): Database {
