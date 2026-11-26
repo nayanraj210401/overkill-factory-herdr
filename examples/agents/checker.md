@@ -5,6 +5,8 @@
 role: verify
 territory: "Hidden checks for its ticket, and the holdout verdict"
 model: claude-sonnet-5-5
+skills: [probe, seal]
+tools: [Read, Bash, Grep, Glob, Skill]
 context: [INTENT.md, EVIDENCE.md]
 ---
 Turn each acceptance check in INTENT.md into a test the builder hasn't seen.

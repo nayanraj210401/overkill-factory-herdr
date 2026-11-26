@@ -928,6 +928,8 @@ without a PASS in EVIDENCE.md. Flag code that could be smaller.
 
 A session gets its skills through a plugin folder of its own: the factory copies exactly the listed skills into `<ticket folder>/.skills/<agent>/` (Overwatch's into `~/.factory/.skills/overwatch/`) and starts `claude --plugin-dir=<that folder>`, so they show as `factory:<name>`. The brief names them in one line. Nothing is written into the repo checkout or `~/.claude/skills/`. `factory validate` errors on a listed skill that isn't in either place, and checks each `SKILL.md` in `~/.factory/skills/`. Stage, handoff, triage and Overwatch sessions get them; the one-shot `claude -p` calls (the learner, the babysitter's judge, the orchestrator) don't. `examples/skills/README.md` has the skill format.
 
+The shipped skills (`examples/skills/`, installed by `factory init` and `factory setup`): `commit-message`, `deslop` (builder), `tour` (reviewer), `probe` and `seal` (checker), and `diagnose` (for a bugfix blueprint's diagnose stage). A listed shipped skill also resolves straight from the examples, so it works before setup ran. A listed skill that isn't shipped and isn't yours is an error, as before.
+
 ### triggers/\<name>.yaml: when work starts
 
 | Field | What it sets |

@@ -10,6 +10,7 @@ Factory sessions start without the flow-stack plugin, so its hooks never run ins
 - **Installed** into `~/.factory/skills/` by `factory init` and `factory setup`, never overwriting a file you edited. Your own skills there count too.
 - **Given to an agent only when its frontmatter lists it** (`skills: [tour, deslop]`, from the M6 design). The brief carries only those.
 - **Built (M7):** a session gets its listed skills as a plugin of its own (`claude --plugin-dir=<ticket folder>/.skills/<agent>`, seen as `factory:<name>`) and, when the agent lists `tools:`, only those tools (`claude --tools=…`). `factory validate` errors on a listed skill it can't find. `examples/skills/README.md` has the format and `commit-message` as a working example; the skills below still need porting.
+- **Ported (priority 1):** `tour`, `probe`, `seal`, `diagnose` and `deslop` are shipped examples now (`examples/skills/`), adapted to the factory's shape: no mid-work hooks, results recorded where the factory already reads them (EVIDENCE.md, HANDOFF.md, PR.md). The example agents list them: builder → `deslop` (+ `commit-message`), checker → `probe` + `seal`, reviewer → `tour`. A listed shipped skill resolves from the examples even before `factory setup` installed it.
 - **No mid-work hooks.** Where flow-stack enforces a rule with a hook, the factory enforces it at a stage boundary or a ready rule instead.
 
 ## Take

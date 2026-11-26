@@ -42,11 +42,14 @@ export const skillFiles = (home?: string) => skillNames(skillsDir(home)).map((n)
 export const badSkillName = (name: string) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.includes("..");
 
 // Where the skill `name` is for an agent of `repos` (the repo the agent loads from first): each
-// repo's .factory/skills/<name>/, then <FACTORY_HOME>/skills/<name>/. A factory agent passes no repo.
+// repo's .factory/skills/<name>/, then <FACTORY_HOME>/skills/<name>/, then the shipped examples
+// (what `factory setup` installs, so a listed shipped skill works before that ran).
+// A factory agent passes no repo.
 export function skillDir(repos: (string | null | undefined)[], name: string): string | null {
   for (const repo of repos) if (repo && isSkill(join(repo, ".factory", "skills", name))) return join(repo, ".factory", "skills", name);
   const own = join(skillsDir(), name);
-  return isSkill(own) ? own : null;
+  if (isSkill(own)) return own;
+  return isSkill(join(SHIPPED_SKILLS, name)) ? join(SHIPPED_SKILLS, name) : null;
 }
 
 export const missingSkill = (name: string, repo: boolean) =>

@@ -40,4 +40,15 @@ When a session starts, the factory copies the agent's listed skills into a plugi
 
 `tools:` becomes `claude --tools=<list>`: the session has only those built-in tools. When the agent also lists skills, `Skill` is added so the session can load them. An agent with no `tools:` keeps every tool.
 
-`commit-message/` is a working example.
+`commit-message/` is a working example. The shipped skills:
+
+| Skill | What it does | Example agents that list it |
+| --- | --- | --- |
+| `commit-message` | Writes the commit message for staged changes | builder |
+| `deslop` | Removes code slop from a diff: narrating comments, dead code, defensive clutter, needless abstraction | builder |
+| `tour` | Risk-ranked diff tour: what to read, skim, or skip, with an estimated review time | reviewer |
+| `probe` | Tests the test: reverts the change and re-runs the check; a check that still passes is TOOTHLESS | checker |
+| `seal` | Locks the acceptance checks so they cannot be weakened to get a pass | checker |
+| `diagnose` | Root-causes a bug: reproduce, hypotheses, the last why. Not listed by an example agent yet; a bugfix blueprint's diagnose stage would list it | — |
+
+`probe` and `seal` carry scripts (`scripts/probe.sh`, `scripts/seal.sh`) that the skill's instructions run. `probe.sh` needs a git repo and uncommitted changes; `seal.sh` writes its hashes to the ticket folder (`FACTORY_TICKET_DIR` or `SEALS`, from the brief), never the repo.
