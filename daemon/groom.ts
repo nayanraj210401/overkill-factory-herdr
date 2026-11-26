@@ -56,12 +56,13 @@ const ticket = (db: Database, id: number) => {
 const openQuestions = (db: Database, id: number) =>
   db.query("SELECT n, kind, text, asked_at, answer FROM questions WHERE ticket = ? AND answer IS NULL ORDER BY n").all(id) as Question[];
 
-export function triageBrief(t: { id: number; title: string }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null; others?: Repo[]; neighbours?: string; digest?: string }) {
+export function triageBrief(t: { id: number; title: string; notes?: string | null }, o: { slug: string; repo: string; folder: string; blueprints: string[]; prompt: string | null; others?: Repo[]; neighbours?: string; digest?: string }) {
   const others = o.others ?? [];
   return render(loadPrompt(o.repo, "groom"), {
     neighbours: o.neighbours,
     "ticket.id": String(t.id),
     "ticket.title": t.title,
+    "ticket.notes": t.notes,
     repo: o.repo,
     slug: o.slug,
     folder: o.folder,

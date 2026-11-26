@@ -4,6 +4,8 @@
 
 You are session {{session}} of #{{ticket.id}}. The one before it {{previous}}. You start from what is true now, not from what it believed.
 
+The owner's note outweighs everything else here: {{ticket.notes}} What it answers, don't ask again.
+
 {{rerun}}
 
 {{publish_handoff}}

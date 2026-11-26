@@ -159,7 +159,7 @@ const section = (text: string, re: RegExp) => text.split(/^(?=#{1,6}[ \t])/m).fi
 // The next session's brief: the stage's usual one (stable parts first), then what this handoff adds (prompts/handoff.md).
 // `limit`: the plan limit stopped the last session (planlimit.ts), in words for the brief.
 function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s: Row; folder: string; ceiling: boolean; compacted?: boolean; limit?: string; fill: number; missing: string[]; n: number }) {
-  const t = db.query("SELECT id, title FROM tickets WHERE id = ?").get(o.s.ticket) as { id: number; title: string };
+  const t = db.query("SELECT id, title, notes FROM tickets WHERE id = ?").get(o.s.ticket) as { id: number; title: string; notes: string | null };
   const agent = o.s.agent ? loadAgent(agentRepos(db, o.s.ticket, o.repo), o.s.agent) : null;
   const repos = ticketRepos(db, o.s.ticket);
   const read = (f: string) => { try { return readFileSync(join(o.folder, f), "utf8"); } catch { return ""; } };
@@ -189,6 +189,7 @@ function handoffBrief(db: Database, o: { dir: string; repo: string; run: Run; s:
     neighbours: factoryMap(db, repos[0].repo), // the stage brief inside goes without it: the map leads once
     "ticket.id": String(t.id),
     "ticket.title": t.title,
+    "ticket.notes": t.notes,
     stage: o.s.stage,
     folder: o.folder,
     session: String(o.n),

@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 export const BUILT_IN_PROMPTS = join(import.meta.dir, "../fixtures/acme-api/.factory/prompts");
 
-const TICKET = ["ticket.id", "ticket.title"];
+const TICKET = ["ticket.id", "ticket.title", "ticket.notes"];
 // What each template may name. Any other prompts/<name>.md (a stage's `prompt:`) is a stage template.
 // Every template may name {{neighbours}}, the map of the factory's agents (agents.ts). Stage and
 // groom templates may name {{digest}}, the ticket's memory (digest.ts).

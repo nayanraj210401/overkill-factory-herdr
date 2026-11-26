@@ -336,6 +336,9 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
    ALTER TABLE tickets ADD COLUMN digest_edited_at TEXT;`,
   // A ticket's own chat session (chat.ts): 1 when opening it paused the ticket, so closing it resumes.
   addColumn("sessions", "paused_ticket", "INTEGER NOT NULL DEFAULT 0"),
+  // The owner's note (factory new --note, the New ticket dialog's second box): their own words,
+  // which outweigh the factory's prompts in every brief ({{ticket.notes}}).
+  addColumn("tickets", "notes", "TEXT"),
 ];
 
 export function open(path: string): Database {

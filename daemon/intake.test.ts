@@ -15,7 +15,7 @@ function setup(issues: Record<number, { title: string; state?: string }> = {}) {
     const i = issues[Number(argv[3])];
     return i ? { code: 0, out: JSON.stringify({ number: Number(argv[3]), title: i.title, state: i.state ?? "OPEN" }) } : { code: 1, out: "GraphQL: Could not resolve to an issue" };
   };
-  const add = (text: string, repo = "acme/api") => newTicket(db, { text, repo, blueprint: "feature", run, now });
+  const add = (text: string, repo = "acme/api", note?: string) => newTicket(db, { text, repo, blueprint: "feature", run, now, note });
   return { db, calls, add };
 }
 
@@ -45,6 +45,19 @@ test("goals get local ids from 10000, clear of issue numbers", () => {
   expect(add("Export API").id).toBe(LOCAL_IDS + 1);
   expect(calls).toEqual([]);
   expect(() => add("   ")).toThrow("type an issue link");
+});
+
+test("a note is saved with the ticket and journalled as the owner's words", () => {
+  const { db, add } = setup();
+  add("Rate-limit login", "acme/api", "Use a token bucket, and never ask me about storage");
+  const t = db.query("SELECT notes FROM tickets WHERE id = ?").get(LOCAL_IDS) as { notes: string | null };
+  expect(t.notes).toBe("Use a token bucket, and never ask me about storage");
+  const journal = db.query("SELECT kind, text FROM ticket_events WHERE ticket = ? ORDER BY id").all(LOCAL_IDS) as { kind: string; text: string }[];
+  expect(journal.some((e) => e.kind === "note" && e.text.includes("token bucket"))).toBe(true);
+  // A blank note is no note: the column stays null and nothing is journalled.
+  add("Export API", "acme/api", "   ");
+  expect((db.query("SELECT notes FROM tickets WHERE id = ?").get(LOCAL_IDS + 1) as { notes: string | null }).notes).toBe(null);
+  expect(db.query("SELECT count(*) AS n FROM ticket_events WHERE ticket = ?").get(LOCAL_IDS + 1)).toEqual({ n: 1 });
 });
 
 test("the queue adds this repo's Ready issues assigned to you as grooming tickets, once", () => {
