@@ -230,14 +230,14 @@ export class ChatView extends View {
     if (term.status === "blocked") {
       this.idleAsk = null;
       cx.spawn(async (cx) => {
-        const r = await hc(["read", this.term, "--lines", "40"]).catch(() => null);
+        const r = await hc(["read", this.term, "--lines", "200"]).catch(() => null);
         this.screen = r ? r.stdout.replace(/\s+$/, "") : null;
         cx.notify();
       });
     } else if (this.t && ["idle", "done"].includes(term.status)) {
       // A menu the agent opens once a turn ends doesn't report "blocked": only the screen shows it.
       cx.spawn(async (cx) => {
-        const r = await hc(["read", this.term, "--lines", "40"]).catch(() => null);
+        const r = await hc(["read", this.term, "--lines", "200"]).catch(() => null);
         const screen = (r?.stdout ?? "").replace(/\s+$/, "");
         const ask = menuAtBottom(screen);
         if (!ask && !this.idleAsk) return;
@@ -636,7 +636,7 @@ export class ChatView extends View {
           .hover((s) => s.border_color(t.blocked))
           .on_click((_e, cx) => { hc(["keys", this.term, ...choose(q.selected, n)]); this.screen = this.idleAsk = null; cx.notify(); })
           .child(div().w(20).flex_none().text_size(11).text_color(t.dim).border_1().border_color(t.border).rounded(3).flex().justify_center().child(String(n + 1)))
-          .child(div().flex_1().text_size(12.5).text_color(t.foreground).child(o))))))
+          .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.foreground).child(o))))))
       .when(!q && lines.length > 0, (el) => el.child(div().text_size(11.5).text_color(t.muted)
         .when(Boolean(mono), (d) => d.font_family(mono))
         .child(this.markdown("screen", "~~~~text\n" + lines.slice(-24).join("\n") + "\n~~~~"))))
