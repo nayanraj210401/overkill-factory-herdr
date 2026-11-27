@@ -30,7 +30,8 @@ export default class FactoryConfig extends View {
     this.at = 0; // the selected override
     // `factory config get V2_UI --json`: undefined until asked; `herdr-app check` draws it off.
     this.newUI = checking() ? { account: false, factory: null, repo: null } : undefined;
-    this.newUIBusy = false;
+    this.newSidebar = checking() ? { account: false, factory: null, repo: null } : undefined;
+    this.switchBusy = {};
     this.handle = cx.focus_handle();
     if (!checking()) {
       this.refreshDaemon(cx);
@@ -71,44 +72,71 @@ export default class FactoryConfig extends View {
 
   loadNewUI(cx) {
     cx.spawn(async (cx) => {
-      const r = await this.account(["config", "get", "V2_UI", "--json"]).catch(() => null);
-      try { this.newUI = r?.code === 0 ? JSON.parse(r.stdout.trim().split("\n").pop()) : null; } catch { this.newUI = null; }
+      const one = async (key) => {
+        const r = await this.account(["config", "get", key, "--json"]).catch(() => null);
+        try { return r?.code === 0 ? JSON.parse(r.stdout.trim().split("\n").pop()) : null; } catch { return null; }
+      };
+      const [ui, sidebar] = await Promise.all([one("V2_UI"), one("V2_SIDEBAR")]);
+      this.newUI = ui;
+      this.newSidebar = sidebar;
       cx.notify();
     });
   }
 
-  // The switch: `factory config set V2_UI`, which also rewrites every status.json, so the
-  // Ticket and Blueprint pages follow at once.
-  setNewUI(on, cx) {
-    if (this.newUIBusy) return;
-    this.newUIBusy = true;
+  // A switch: `factory config set <key>`, which also rewrites every status.json, so every
+  // page that reads it follows at once.
+  setSwitch(key, on, cx) {
+    if (this.switchBusy[key]) return;
+    this.switchBusy[key] = true;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await this.account(["config", "set", "V2_UI", String(on)]).catch((e) => ({ code: 1, stderr: String(e) }));
-      if (r.code !== 0) notify({ title: "New UI: the change failed", body: (r.stderr || r.stdout).trim(), level: "error" });
-      this.newUIBusy = false;
+      const r = await this.account(["config", "set", key, String(on)]).catch((e) => ({ code: 1, stderr: String(e) }));
+      if (r.code !== 0) notify({ title: `${key}: the change failed`, body: (r.stderr || r.stdout).trim(), level: "error" });
+      this.switchBusy[key] = false;
       this.loadNewUI(cx);
     });
   }
 
+  // The on/off pill a switch row ends with.
+  pill(t, id, on, busy, click) {
+    return h_flex().id(id).flex_none().w(34).h(20).p(2).rounded_full().cursor_pointer()
+      .bg(!busy && on ? t.accent : t.border).when(on, (el) => el.justify_end())
+      .on_click(click)
+      .child(div().size(16).rounded_full().bg(t.background));
+  }
+
+  // The New UI card and, nested under it, the New sidebar sub-section: its own switch
+  // (V2_SIDEBAR), which turns the v2 sidebar on without touching the pages.
   newUICard(t) {
-    const v = this.newUI;
-    const row = newUIRow(v);
-    const known = v != null;
-    const click = (_e, cx) => known && this.setNewUI(!row.on, cx);
-    const state = v === undefined ? "checking…" : v === null ? "couldn't read config.yaml" : this.newUIBusy ? "saving…" : row.on ? "On" : "Off";
-    return h_flex().id("new-ui").flex_none().px(14).py(8).gap(12).items_center().rounded(10).bg(t.surface).border(1).border_color(t.border)
-      .child(v_flex().flex_1().min_w_0().gap(2)
-        .child(h_flex().gap(8).items_baseline()
-          .child(div().font_semibold().text_color(t.foreground).child("New UI"))
-          .child(div().text_size(11).text_color(t.dim).child("V2_UI in ~/.factory/config.yaml")))
-        .child(div().text_size(12).text_color(t.muted).child("The new Ticket, Blueprint and Chat pages. Off keeps the current pages."))
-        .when(Boolean(row.note), (el) => el.child(div().id("new-ui-note").text_size(12).text_color(t.blocked).child(row.note))))
-      .child(div().flex_none().text_size(12).text_color(row.on ? t.foreground : t.muted).child(state))
-      .child(h_flex().id("new-ui-switch").flex_none().w(34).h(20).p(2).rounded_full().cursor_pointer()
-        .bg(known && !this.newUIBusy && row.on ? t.accent : t.border).when(row.on, (el) => el.justify_end())
-        .on_click(click)
-        .child(div().size(16).rounded_full().bg(t.background)));
+    const ui = this.newUI;
+    const row = newUIRow(ui);
+    const known = ui != null;
+    const click = (_e, cx) => known && this.setSwitch("V2_UI", !row.on, cx);
+    const state = ui === undefined ? "checking…" : ui === null ? "couldn't read config.yaml" : this.switchBusy.V2_UI ? "saving…" : row.on ? "On" : "Off";
+    const side = this.newSidebar;
+    const sideRow = newUIRow(side);
+    const sideKnown = side != null;
+    const sideClick = (_e, cx) => sideKnown && this.setSwitch("V2_SIDEBAR", !sideRow.on, cx);
+    const sideState = side === undefined ? "checking…" : side === null ? "couldn't read config.yaml" : this.switchBusy.V2_SIDEBAR ? "saving…" : sideRow.on ? "On" : "Off";
+    return v_flex().id("new-ui").flex_none().gap(6).px(14).py(8).rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .child(h_flex().gap(12).items_center()
+        .child(v_flex().flex_1().min_w_0().gap(2)
+          .child(h_flex().gap(8).items_baseline()
+            .child(div().font_semibold().text_color(t.foreground).child("New UI"))
+            .child(div().text_size(11).text_color(t.dim).child("V2_UI in ~/.factory/config.yaml")))
+          .child(div().text_size(12).text_color(t.muted).child("The new Ticket, Blueprint and Chat pages. Off keeps the current pages."))
+          .when(Boolean(row.note), (el) => el.child(div().id("new-ui-note").text_size(12).text_color(t.blocked).child(row.note))))
+        .child(div().flex_none().text_size(12).text_color(row.on ? t.foreground : t.muted).child(state))
+        .child(this.pill(t, "new-ui-switch", known && row.on, this.switchBusy.V2_UI, click)))
+      .child(h_flex().id("new-sidebar").flex_none().gap(12).items_center().px(10).py(6).rounded(8).bg(t.background)
+        .child(v_flex().flex_1().min_w_0().gap(1)
+          .child(h_flex().gap(8).items_baseline()
+            .child(div().text_size(12.5).font_semibold().text_color(t.foreground).child("New sidebar"))
+            .child(div().text_size(11).text_color(t.dim).child("V2_SIDEBAR")))
+          .child(div().text_size(11.5).text_color(t.muted).child("The v2 sidebar: Working and Settled pinned to the bottom and foldable, stage bars, CI dots. Off keeps the current sidebar."))
+          .when(Boolean(sideRow.note), (el) => el.child(div().id("new-sidebar-note").text_size(11.5).text_color(t.blocked).child(sideRow.note))))
+        .child(div().flex_none().text_size(11.5).text_color(sideRow.on ? t.foreground : t.muted).child(sideState))
+        .child(this.pill(t, "new-sidebar-switch", sideKnown && sideRow.on, this.switchBusy.V2_SIDEBAR, sideClick)));
   }
 
   refreshDaemon(cx) {

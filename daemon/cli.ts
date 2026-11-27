@@ -21,7 +21,7 @@ import { agentSkillErrors, validateAccount, validateDir, validateFile } from "./
 import { exampleStepFiles, exampleStepsDir, installExampleSteps, stepFiles } from "./steps.ts";
 import { exampleFiles, examplesDir, factoryAgentFiles, factoryAgentsDir, installExamples, installFactoryAgents } from "./agents.ts";
 import { installSkills, skillFiles, skillFileErrors, skillsDir } from "./skills.ts";
-import { accountFile, readAccount, setSwitch } from "./account.ts";
+import { accountFile, readAccount, setSwitch, SWITCHES, type Switch } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
 import { approvePr, pollReviews, writeReviews } from "./reviews.ts";
 import { backup, closeRetiredRequests, liveMaintainer, maintainer as startMaintainer, restore } from "./maintainer.ts";
@@ -165,8 +165,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
   claude [--json]                    which claude every factory session runs (claude.path in config.yaml, else the newest), and the others found
   validate [dir] [--json]            check .factory/ files (default ./.factory)
-  config get V2_UI [--json]          the account's value (config.yaml), this factory's factory.yaml value, and which wins
-  config set V2_UI true|false        set it in ~/.factory/config.yaml in place (comments stay) and rewrite every factory's status.json
+  config get V2_UI|V2_SIDEBAR [--json]  the account's value (config.yaml), this factory's factory.yaml value, and which wins
+  config set V2_UI|V2_SIDEBAR true|false  set it in ~/.factory/config.yaml in place (comments stay) and rewrite every factory's status.json
   refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
   status                             write status.json and print a summary
   run [--interval seconds] [--all] [--force]  the daemon: keep status.json fresh (--all: every factory); refuses while the service runs it
@@ -335,18 +335,18 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       return log(`${key}: ${r.value} in ${r.file}${r.changed ? "" : " (already)"}${done.length ? `; status rewritten for ${done.join(", ")}` : ""}`);
     }
     if (sub === "get") {
-      if (key !== "V2_UI") throw new Error("usage: factory config get V2_UI [--json]");
-      const account = readAccount().V2_UI ?? null;
+      if (!(SWITCHES as readonly string[]).includes(key)) throw new Error(`usage: factory config get ${SWITCHES.join("|")} [--json]`);
+      const account = readAccount()[key as Switch] ?? null;
       let factory: boolean | null = null, repo: string | null = null;
       if (existsSync(p.db)) {
         const db = open(p.db);
-        try { const lead = leadRepo(db); if (lead) { repo = lead.slug; factory = readFactory(lead.path).V2_UI ?? null; } } finally { db.close(); }
+        try { const lead = leadRepo(db); if (lead) { repo = lead.slug; factory = readFactory(lead.path)[key as Switch] ?? null; } } finally { db.close(); }
       }
       const v = { key, account, factory, repo, effective: (factory ?? account) === true };
       if (json) return log(JSON.stringify(v));
       return log(`${key}: ${v.effective ? "on" : "off"} (config.yaml: ${account ?? "not set"}; ${repo ?? "this factory"}'s factory.yaml: ${factory ?? "not set"})`);
     }
-    throw new Error("usage: factory config get V2_UI [--json] | factory config set V2_UI true|false");
+    throw new Error(`usage: factory config get ${SWITCHES.join("|")} [--json] | factory config set ${SWITCHES.join("|")} true|false`);
   }
   if (cmd === "validate") {
     // An account config (~/.factory/config.yaml, or a copy of it) is checked as one.

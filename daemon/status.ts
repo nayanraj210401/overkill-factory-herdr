@@ -1,7 +1,7 @@
 // Builds status.json (the contract in lib/status.js) from SQLite rows. The
 // window reads only this file, so the daemon stays the one source of truth.
 import { claudeChoice } from "./claude-bin.ts";
-import { v2UI } from "./account.ts";
+import { v2UI, v2Sidebar } from "./account.ts";
 import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
@@ -41,6 +41,8 @@ export const prOf = (r: Row, slug: string, ticket: string) => (r.pr_number == nu
   number: r.pr_number, watched: !!r.pr_watched, checked_at: r.pr_checked_at,
   url: `https://github.com/${slug}/pull/${r.pr_number}`,
   state: ticket === "merged" || r.merged_at ? "merged" : ticket === "closed" ? "closed" : r.pr_state ?? "open",
+  // The PR's CI checks (watch.ts's rollup): pass | fail | running | none, with the failing checks' names.
+  ...(r.pr_ci ? { ci: r.pr_ci, ...(r.pr_ci_fail ? { ci_fail: r.pr_ci_fail } : {}) } : {}),
 });
 
 export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: number } | null) {
@@ -56,6 +58,11 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
       merged_at: x.merged_at ?? null, merge: mergeOrder(repos as any).indexOf(x) + 1 })) } : {}),
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,
+    // The owner's note (#179): its own words, which outweigh the factory's prompts in every brief.
+    ...(r.notes ? { notes: r.notes } : {}),
+    // The sidebar's stage bar (lib/sidebar.js stageBar): how far along the blueprint's planned path
+    // the ticket is — done stages, the one in hand, and the whole path's length. Only while running.
+    ...(r.progress ? { progress: r.progress } : {}),
     // Stopped by the plan limit (planlimit.ts): when its fresh session starts.
     ...(r.resume_at ? { resume_at: r.resume_at } : {}),
     terminal: r.terminal ?? null,
@@ -90,6 +97,19 @@ export function buildStatus(db: Database, now = new Date()) {
   const lead = leadRepo(db);
   const work = Map.groupBy(db.query("SELECT * FROM ticket_repos ORDER BY ticket, lead DESC, repo").all() as Row[], (r) => r.ticket);
   const reposOf = (id: number) => work.get(id) ?? (lead ? [{ repo: lead.slug, lead: 1 }] : undefined);
+  // Stage progress for the sidebar's bar (lib/sidebar.js stageBar): a ticket's finished stages,
+  // the one in hand, and how many planned ones are left (planned keeps the rest of the path).
+  const doneStages = new Map<number, number>();
+  for (const r of db.query("SELECT ticket, COUNT(DISTINCT name) AS n FROM stages WHERE ended_at IS NOT NULL GROUP BY ticket").all() as Row[])
+    doneStages.set(r.ticket, r.n);
+  const plannedStages = new Map<number, number>();
+  for (const r of db.query("SELECT ticket, COUNT(*) AS n FROM planned GROUP BY ticket").all() as Row[])
+    plannedStages.set(r.ticket, r.n);
+  const progressOf = (r: Row) => {
+    if (r.state !== "running" || !r.stage) return null;
+    const done = doneStages.get(r.id) ?? 0;
+    return { done, now: r.stage, total: done + 1 + (plannedStages.get(r.id) ?? 0) };
+  };
   const open = Map.groupBy(db.query("SELECT ticket, n, kind, text FROM questions WHERE answer IS NULL ORDER BY ticket, n").all() as Row[], (q) => q.ticket);
   const questionsOf = (id: number) => (open.get(id) ?? []).map((q) => ({ n: q.n, kind: q.kind, text: q.text }));
   // Each ticket's files shared on claude.ai (artifacts.ts), for the Ticket page's links.
@@ -113,6 +133,7 @@ export function buildStatus(db: Database, now = new Date()) {
     ...(shared.has(r.id) ? { artifacts: shared.get(r.id)!.map((a) => ({ file: a.file, url: a.url, kind: a.kind, at: a.published_at })) } : {}),
     ...(events.has(r.id) && !(["merged", "closed"].includes(r.state) && r.updated_at < settledBefore)
       ? { events: events.get(r.id)!.map((e) => ({ kind: e.kind, text: e.text, at: e.at })) } : {}),
+    ...(progressOf(r) ? { progress: progressOf(r) } : {}),
   }));
   const setup = lead ? setupField(db, lead.path) : null;
   const hold = lead ? startHold(db, lead.path, now) : null;
@@ -143,8 +164,8 @@ export function buildStatus(db: Database, now = new Date()) {
       budget: { input: perDay?.input ?? Number(getMeta(db, "budget_day_in") ?? 40e6), output: perDay?.output ?? Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
     away: digest(db, now.toISOString()),
-    // Which pages the mods draw (lib/model.js v2UI): V2_UI in factory.yaml, else config.yaml.
-    ui: { v2: v2UI(lead ? readFactory(lead.path) : {}) },
+    // Which pages the mods draw (lib/model.js v2UI/v2Sidebar): V2_UI and V2_SIDEBAR in factory.yaml, else config.yaml.
+    ui: { v2: v2UI(lead ? readFactory(lead.path) : {}), sidebar: v2Sidebar(lead ? readFactory(lead.path) : {}) },
     ...(auto.length ? { auto_gates: auto } : {}),
     // Each repo's last full-suite run (health.ts), for Home.
     ...(health.length ? { health } : {}),
