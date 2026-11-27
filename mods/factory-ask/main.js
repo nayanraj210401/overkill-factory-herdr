@@ -14,7 +14,7 @@ export default class FactoryAsk extends View {
   init(_props, cx) {
     this.busy = false;
     this.handle = cx.focus_handle();
-    const p = props();
+    const p = props() ?? {};
     // Several boxes (New ticket's goal + note) or the one box (a note for an answer).
     // `inputs` entries carry a `key`, which `args`' "@key" tokens stand for.
     const list = p.inputs ?? (p.input ? [{ ...p.input, key: "input", required: true }] : []);

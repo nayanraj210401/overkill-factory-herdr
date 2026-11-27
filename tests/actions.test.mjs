@@ -69,8 +69,8 @@ test("the talk dialog opens the terminal factory talk started", () => {
 
 test("n asks for an issue or goal and grooms it first", () => {
   const a = newAsk();
-  assert.deepEqual([a.args, a.inputs[0].value, a.confirm], [["new", "@goal", "--note", "@note"], "", "Create"]);
-  assert.equal(a.inputs[1].key, "note"); // the optional note (#179): dropped when left empty
+  assert.deepEqual([a.args, a.confirm], [["new", "@goal", "--note", "@note"], "Create"]);
+  assert.deepEqual(a.inputs.map((i) => [i.key, i.value, i.required]), [["goal", "", true], ["note", "", undefined]]);
 });
 
 test("Home's button moves every locally running ticket to the cloud", () => {

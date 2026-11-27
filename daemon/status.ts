@@ -8,6 +8,7 @@ import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateStatus } from "../lib/status.js";
 import { getMeta, leadRepo, listRepos, mergeOrder } from "./db.ts";
+import { reviewQueueCount } from "./reviews.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
 import { budgetCap, digest } from "./away.ts";
 import { budgetUse, dayCap, startHold } from "./budget.ts";
@@ -177,7 +178,7 @@ export function buildStatus(db: Database, now = new Date()) {
     overrides: overridesOf(db, lead?.path),
     // Open notes between agents (factory ask): to Overwatch they show in Needs you; all on Config's Pending changes.
     asks: openAsks(db).map((a) => ({ id: a.id, from: a.from, to: askTarget(a), text: a.text, why: a.why, ticket: a.about, at: a.at, delivered: !!a.delivered_at })),
-    to_review: 0,
+    to_review: reviewQueueCount(db),
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,
   };

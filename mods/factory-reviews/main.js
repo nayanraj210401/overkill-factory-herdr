@@ -134,7 +134,7 @@ export default class FactoryReviews extends View {
     return v_flex().id("reviews").size_full().p(16).gap(6).bg(t.background).rounded(10).text_size(13).overflow_y_scroll()
       .track_focus(this.handle).on_mouse_down("left", () => this.handle.focus()).on_key_down((e, cx) => this.key(e, all, cx))
       .when(!!error, (el) => el.child(empty(error)))
-      .when(!doc && !error, (el) => el.child(empty("No reviews.json yet: the daemon writes it once it prepares reviews (M6).")))
+      .when(!doc && !error, (el) => el.child(empty("No reviews.json yet: the daemon writes it once it has polled the PRs waiting on you.")))
       .when(!!doc && !all.length, (el) => el.child(empty("Nothing waiting on you.")))
       .when(!!doc && !!all.length, (el) => el
         .child(h_flex().gap(8).text_size(11.5).text_color(t.dim).child(div().flex_1()).child("j k · enter opens · a approve low-risk · o opens on GitHub"))

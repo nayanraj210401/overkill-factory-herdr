@@ -342,7 +342,16 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
   // The PR's CI checks (watch.ts's rollup): pass | fail | running | none, and the failing checks' names.
   addColumn("ticket_repos", "pr_ci", "TEXT"),
   addColumn("ticket_repos", "pr_ci_fail", "TEXT"),
-  // ticket_lead grows the two new columns: a view can't be altered, so it's rebuilt.
+  // Reviews (reviews.ts): teammates' PRs waiting on you, one row each, with the risk the
+  // intake poll scored, its reasons, and when it first saw the PR (requested_at). checks and
+  // reasons are JSON. Approved rows stay (approved_at set) but drop out of reviews.json.
+  `CREATE TABLE review_queue (
+     repo TEXT, number INTEGER, requested_at TEXT, low_risk INTEGER, risk INTEGER, reasons TEXT,
+     title TEXT, author TEXT, url TEXT, additions INTEGER, deletions INTEGER,
+     pending_review INTEGER, checks TEXT, approved_at TEXT, updated_at TEXT,
+     PRIMARY KEY (repo, number));
+   CREATE INDEX review_queue_open ON review_queue(approved_at);`,
+  // ticket_lead grows the CI columns: a view can't be altered, so it's rebuilt.
   `DROP VIEW ticket_lead;
    CREATE VIEW ticket_lead AS
      SELECT t.*, r.repo, r.worktree, r.branch, r.pr_number, COALESCE(r.pr_watched, 0) AS pr_watched, r.pr_checked_at, r.merged_at, r.pr_ci, r.pr_ci_fail
