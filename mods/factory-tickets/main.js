@@ -1,13 +1,14 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, setShared, shared, checking, notify, layout, exec } from "herdr";
-import { repoBadge, warnMark, v2UI } from "./lib/model.js";
+import { repoBadge, warnMark, v2UI, v2Sidebar } from "./lib/model.js";
 import { GLYPH, sidebarView, elapsed, tickMs, rowTitle, threadTarget, chatUnread, seenNext } from "./lib/sidebar.js";
 import { STACK, activePage } from "./lib/pages.js";
 import { VIEW_KEY, OPEN_KEY } from "./lib/ticketchat.js";
 import { status, liveAgents, pickTicket, pickedTicket } from "./lib/store.js";
 
 const FOLD = "factory.sidebar.settled"; // Settled unfolded: this viewer's choice, kept in shared.json
+const FOLD_WORK = "factory.sidebar.working"; // Working folded (v2 sidebar): the same, off by default
 const LIST_ASK = "factory.list-ask"; // what the Tickets page should show when it opens (factory-list reads it)
 const SEEN = "factory.chat.seen"; // the chat-unread marker: each row's transcript size when this viewer last saw it
 
@@ -77,9 +78,32 @@ export default class FactoryTickets extends View {
     return div().w(14).flex_none().text_size(12).font_semibold().text_color(color).child(GLYPH[r.kind] ?? "·");
   }
 
+  // The v2 Working row's stage bar (lib/sidebar.js stageBar): done segments, a breathing one for
+  // the stage in hand, dim ones to come, and the slice count when the stage builds slices.
+  bar(t, b) {
+    const seg = (bg, pulse) => div().w(14).h(3).flex_none().rounded(2).bg(bg).when(pulse, (el) => el.loop("opacity", { from: 1, to: 0.35, period: 1600 }));
+    return h_flex().gap(3).items_center()
+      .children(Array.from({ length: b.done }, () => seg(t.done, false)))
+      .child(seg(t.working, true))
+      .children(Array.from({ length: b.todo }, () => seg(t.border, false)))
+      .when(!!b.label, (el) => el.child(div().pl(2).text_size(10.5).text_color(t.dim).child(b.label)));
+  }
+
+  // The v2 row's CI dot (lib/sidebar.js ciDot), beside the stage: green pass, red fail with the
+  // failing checks named, amber running, purple merged.
+  ci(t, dot) {
+    const color = { pass: t.done, fail: t.ansi1, running: t.ansi3, merged: t.ansi5 }[dot.state] ?? t.dim;
+    const tip = dot.state === "fail" ? `CI failing: ${dot.fail}` : dot.state === "running" ? "CI running"
+      : dot.state === "pass" ? "CI passing" : "merged";
+    return div().w(7).h(7).flex_none().rounded_full().bg(color).tooltip(tip)
+      .when(dot.state === "running", (el) => el.loop("opacity", { from: 1, to: 0.35, period: 1600 }));
+  }
+
   row(t, s, r, tickets, now) {
     const ticket = r.ticket != null ? tickets.get(r.ticket) : null;
     const v2 = v2UI(s);
+    const bar = v2Sidebar(s) && r.bar ? this.bar(t, r.bar) : null;
+    const ci = v2Sidebar(s) && r.ci ? this.ci(t, r.ci) : null;
     const unread = v2 && ticket && r.kind !== "settled" && chatUnread(ticket, shared(SEEN), this.sizes?.[ticket.transcript]);
     const on = r.ticket != null && pickedTicket() === r.ticket;
     const badge = ticket ? repoBadge(s, ticket) : null;
@@ -97,10 +121,14 @@ export default class FactoryTickets extends View {
       .child(h_flex().min_w_0().gap(6).items_center().text_size(13).text_color(t.foreground)
         .child(this.glyph(t, r))
         .child(div().id(`tt-${r.key}`).flex_1().min_w_0().truncate().tooltip(title).child(title))
+        .when(!!ci, (el) => el.child(ci))
         .when(!!unread, (el) => el.child(div().id(`unread-${r.key}`).size(7).flex_none().rounded_full().bg(t.accent).tooltip("New in its chat since you last looked")))
         .when(!!warn, (el) => el.child(div().flex_none().px(5).rounded(7).text_size(10.5).border(1).border_color(t.blocked).text_color(t.blocked).child(warn)))
         .when(!!right, (el) => el.child(div().flex_none().text_size(11.5).text_color(r.kind === "work" ? t.working : t.dim).child(right))))
-      .when(!!sub, (el) => el.child(div().pl(20).text_size(11.5).text_color(r.kind === "ask" ? t.blocked : t.muted).truncate().child(sub)));
+      .when(!!sub, (el) => el.child(h_flex().pl(20).gap(6).items_center().min_w_0()
+        .child(div().flex_1().min_w_0().text_size(11.5).text_color(r.kind === "ask" ? t.blocked : t.muted).truncate().child(sub))
+        .when(!!r.note, (el) => el.child(div().flex_none().px(5).rounded(7).text_size(10.5).border(1).border_color(t.accent).text_color(t.accent).tooltip(`Your note outweighs the factory's prompts in every brief: ${r.note}`).child("✎ note")))))
+      .when(!!bar, (el) => el.child(h_flex().pl(20).pt(3).child(bar)));
   }
 
   render() {
@@ -111,31 +139,52 @@ export default class FactoryTickets extends View {
     const v = sidebarView(s, liveAgents(), now);
     this.tick = tickMs(v.working, now);
     const tickets = new Map(s.tickets.map((x) => [x.id, x]));
-    const open = !!shared(FOLD);
-    const head = (id, text, count, color) => h_flex().id(id).px(8).pt(12).pb(3).gap(6).items_center().text_size(12).font_semibold().text_color(color)
-      .child(div().flex_1().child(text)).child(div().text_color(t.dim).child(String(count)));
+    const v2bar = v2Sidebar(s);
+    const settledOpen = !!shared(FOLD);
+    const workingOpen = v2bar ? !!shared(FOLD_WORK) : true;
+    const rows = (list) => list.map((r) => this.row(t, s, r, tickets, now));
+    const empty = (text) => div().pl(28).py(4).text_size(12).text_color(t.dim).child(text);
+    // A group's header; a fold key makes it clickable, its chevron showing the state.
+    const head = (id, text, count, color, fold = null, open = false) => h_flex().id(id).px(8).pt(12).pb(3).gap(6).items_center().text_size(12).font_semibold().text_color(color)
+      .child(div().flex_1().child(text))
+      .child(div().text_color(t.dim).child(fold ? `${count} ${open ? "▾" : "›"}` : String(count)))
+      .when(!!fold, (el) => el.cursor_pointer().hover((st) => st.text_color(t.foreground)).on_click(() => setShared(fold, open ? null : true)));
+    const search = h_flex().id("search").mx(4).mt(2).px(8).py(5).gap(8).items_center().rounded(7).cursor_pointer().text_size(13).text_color(t.dim)
+      .hover((st) => st.bg(t.hover).text_color(t.muted))
+      .on_click(() => openList({ search: true }))
+      .child(svg("mods/workspace-chrome/search.svg").size(13).flex_none())
+      .child(div().flex_1().min_w_0().truncate().child("Search tickets"));
+    const waiting = [
+      head("waiting", "Waiting on you", v.waiting.length, t.blocked),
+      ...rows(v.waiting),
+    ];
+    const working = [
+      head("working", "Working", v.working.length, t.muted, v2bar ? FOLD_WORK : null, workingOpen),
+      ...(workingOpen ? (v.working.length ? rows(v.working) : [empty("Nothing running.")]) : []),
+    ];
+    const settled = [
+      head("settled", "Settled", v.settledCount, t.muted, FOLD, settledOpen),
+      ...(settledOpen ? (v.settled.length ? rows(v.settled) : [empty("Nothing settled this week.")]) : []),
+    ];
+    // The v2 sidebar: Waiting on you at the top, Working and Settled pinned to the bottom (a
+    // spacer fills the gap when the list is short), the queue line gone. Off keeps today's.
+    if (v2bar) return v_flex().id("tickets").size_full().bg(t.chrome).overflow_y_scroll()
+      .child(v_flex().flex_none().w_full().min_h_full().px(8)
+        .child(search)
+        .when(v.waiting.length > 0, (el) => el.children(waiting))
+        .child(div().flex_1().min_h(12))
+        .children([...working, ...settled])
+        .child(div().h(8)));
     // One column inside the scroll area: rows keep their height and scroll, never squeeze.
     return v_flex().id("tickets").size_full().bg(t.chrome).overflow_y_scroll().child(v_flex().flex_none().w_full().px(8)
-      .child(h_flex().id("search").mx(4).mt(2).px(8).py(5).gap(8).items_center().rounded(7).cursor_pointer().text_size(13).text_color(t.dim)
-        .hover((st) => st.bg(t.hover).text_color(t.muted))
-        .on_click(() => openList({ search: true }))
-        .child(svg("mods/workspace-chrome/search.svg").size(13).flex_none())
-        .child(div().flex_1().min_w_0().truncate().child("Search tickets")))
-      .when(v.waiting.length > 0, (el) => el
-        .child(head("waiting", "Waiting on you", v.waiting.length, t.blocked))
-        .children(v.waiting.map((r) => this.row(t, s, r, tickets, now))))
-      .child(head("working", "Working", v.working.length, t.muted))
-      .children(v.working.map((r) => this.row(t, s, r, tickets, now)))
-      .when(!v.working.length, (el) => el.child(div().pl(28).py(4).text_size(12).text_color(t.dim).child("Nothing running.")))
+      .child(search)
+      .when(v.waiting.length > 0, (el) => el.children(waiting))
+      .children(working)
       .when(!!v.quiet, (el) => el.child(div().id("quiet").mt(6).px(8).py(5).rounded(6).cursor_pointer().truncate().text_size(12).text_color(t.dim)
         .hover((st) => st.bg(t.hover).text_color(t.muted))
         .on_click(() => openList({ filter: "queue" }))
         .child(v.quiet.text)))
-      .child(head("settled", "Settled", `${v.settledCount} ${open ? "▾" : "›"}`, t.muted).cursor_pointer()
-        .hover((st) => st.text_color(t.foreground))
-        .on_click(() => setShared(FOLD, open ? null : true)))
-      .when(open, (el) => el.children(v.settled.map((r) => this.row(t, s, r, tickets, now))))
-      .when(open && !v.settled.length, (el) => el.child(div().pl(28).py(4).text_size(12).text_color(t.dim).child("Nothing settled this week.")))
+      .children(settled)
       .child(div().h(8)));
   }
 }

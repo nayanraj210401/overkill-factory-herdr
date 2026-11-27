@@ -50,6 +50,7 @@ export const KINDS: Record<string, Rule> = {
       verify: { object: { features: str } }, memory: { object: { chunk_days: num } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
       V2_UI: "boolean", // the V2 UI gate (account.ts v2UI), over the account's
+      V2_SIDEBAR: "boolean", // the v2 sidebar gate (account.ts v2Sidebar), over the account's
     },
   },
   blueprint: { required: ["name", "start", "stages"], object: { name: str, description: str, orchestrator: str, start: str, stages: { map: STAGE } } },
@@ -89,6 +90,7 @@ export const ACCOUNT: Rule = {
     profile: { object: { taste: strs, rules: strs } },
     claude: { object: { path: str } }, // which claude every session runs (claude-bin.ts)
     V2_UI: "boolean", // the V2 UI gate, for every factory unless its factory.yaml says otherwise
+    V2_SIDEBAR: "boolean", // the v2 sidebar gate, the same shape
   },
 };
 

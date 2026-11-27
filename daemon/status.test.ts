@@ -69,7 +69,7 @@ test("status.json says whether the V2 UI gate is on: off by default, on with V2_
   const { mkdirSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
   const { v2UI } = require("../lib/model.js");
   const db = open(join(mkdtempSync(join(tmpdir(), "status-")), "factory.db"));
-  expect(buildStatus(db).ui).toEqual({ v2: false }); // no lead repo yet
+  expect(buildStatus(db).ui).toEqual({ v2: false, sidebar: false }); // no lead repo yet
   const repo = mkdtempSync(join(tmpdir(), "status-repo-"));
   mkdirSync(join(repo, ".factory"));
   setRepo(db, { slug: "acme/api", path: repo, lead: true });
@@ -78,5 +78,5 @@ test("status.json says whether the V2 UI gate is on: off by default, on with V2_
   writeFileSync(join(repo, ".factory/factory.yaml"), "name: t\nV2_UI: true\n");
   const s = buildStatus(db);
   expect(validateStatus(s)).toEqual([]);
-  expect([s.ui, v2UI(s)]).toEqual([{ v2: true }, true]);
+  expect([s.ui, v2UI(s)]).toEqual([{ v2: true, sidebar: false }, true]);
 });
