@@ -336,6 +336,26 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
    ALTER TABLE tickets ADD COLUMN digest_edited_at TEXT;`,
   // A ticket's own chat session (chat.ts): 1 when opening it paused the ticket, so closing it resumes.
   addColumn("sessions", "paused_ticket", "INTEGER NOT NULL DEFAULT 0"),
+  // The owner's note (factory new --note, the New ticket dialog's second box): their own words,
+  // which outweigh the factory's prompts in every brief ({{ticket.notes}}).
+  addColumn("tickets", "notes", "TEXT"),
+  // The PR's CI checks (watch.ts's rollup): pass | fail | running | none, and the failing checks' names.
+  addColumn("ticket_repos", "pr_ci", "TEXT"),
+  addColumn("ticket_repos", "pr_ci_fail", "TEXT"),
+  // Reviews (reviews.ts): teammates' PRs waiting on you, one row each, with the risk the
+  // intake poll scored, its reasons, and when it first saw the PR (requested_at). checks and
+  // reasons are JSON. Approved rows stay (approved_at set) but drop out of reviews.json.
+  `CREATE TABLE review_queue (
+     repo TEXT, number INTEGER, requested_at TEXT, low_risk INTEGER, risk INTEGER, reasons TEXT,
+     title TEXT, author TEXT, url TEXT, additions INTEGER, deletions INTEGER,
+     pending_review INTEGER, checks TEXT, approved_at TEXT, updated_at TEXT,
+     PRIMARY KEY (repo, number));
+   CREATE INDEX review_queue_open ON review_queue(approved_at);`,
+  // ticket_lead grows the CI columns: a view can't be altered, so it's rebuilt.
+  `DROP VIEW ticket_lead;
+   CREATE VIEW ticket_lead AS
+     SELECT t.*, r.repo, r.worktree, r.branch, r.pr_number, COALESCE(r.pr_watched, 0) AS pr_watched, r.pr_checked_at, r.merged_at, r.pr_ci, r.pr_ci_fail
+     FROM tickets t LEFT JOIN ticket_repos r ON r.ticket = t.id AND r.lead = 1;`,
 ];
 
 export function open(path: string): Database {
@@ -403,7 +423,7 @@ export function setRepo(db: Database, r: Repo) {
 
 // A ticket's work in one repo: its worktree, branch and PR. Without `repo`, the lead
 // repo's, whose row is made on the first write, in the factory's lead repo.
-export type Work = { worktree: string | null; branch: string | null; pr_number: number | null; pr_watched: number; pr_checked_at: string | null; merged_at: string | null; merge_pos: number | null; pr_state: "open" | "draft" | "merged" | "closed" | null };
+export type Work = { worktree: string | null; branch: string | null; pr_number: number | null; pr_watched: number; pr_checked_at: string | null; merged_at: string | null; merge_pos: number | null; pr_state: "open" | "draft" | "merged" | "closed" | null; pr_ci: "pass" | "fail" | "running" | "none" | null; pr_ci_fail: string | null };
 export function setWork(db: Database, ticket: number, w: Partial<Work>, repo?: string) {
   const keys = Object.keys(w) as (keyof Work)[];
   if (!keys.length) return;

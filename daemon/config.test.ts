@@ -34,17 +34,17 @@ test("factory config set V2_UI edits config.yaml in place, flips status.json at 
   const ui = (n: string) => JSON.parse(readFileSync(paths(n).status, "utf8")).ui;
   const out: string[] = [];
   const run = (...a: string[]) => main([...a, "--name", "one"], (s) => out.push(s));
-  expect(ui("one")).toEqual({ v2: false });
+  expect(ui("one")).toEqual({ v2: false, sidebar: false });
 
   run("config", "set", "V2_UI", "true");
   expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe(yaml.replace("V2_UI: false", "V2_UI: true"));
-  expect([ui("one"), ui("two")]).toEqual([{ v2: true }, { v2: true }]); // every factory, not only --name's
+  expect([ui("one"), ui("two")]).toEqual([{ v2: true, sidebar: false }, { v2: true, sidebar: false }]); // every factory, not only --name's
   run("config", "get", "V2_UI", "--json");
   expect(JSON.parse(out.at(-1)!)).toEqual({ key: "V2_UI", account: true, factory: null, repo: "acme/one", effective: true });
 
   run("config", "set", "V2_UI", "false");
   expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe(yaml);
-  expect(ui("two")).toEqual({ v2: false });
+  expect(ui("two")).toEqual({ v2: false, sidebar: false });
 
   for (const bad of [["V2_UI", "yes"], ["V2_UI"], ["away", "true"]]) expect(() => run("config", "set", ...bad)).toThrow();
   expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe(yaml);

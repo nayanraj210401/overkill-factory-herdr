@@ -323,7 +323,8 @@ test("v2UI is on only when status.json says ui.v2: true; ui is optional but chec
   assert.equal(v2UI({ ...status, ui: { v2: "true" } }), false);
   assert.equal(v2UI({ ...status, ui: { v2: true } }), true);
   assert.deepEqual(validateStatus({ ...status, ui: { v2: true } }), []);
-  assert.deepEqual(validateStatus({ ...status, ui: { v2: "yes" } }), ["ui: needs {v2: boolean}"]);
+  assert.deepEqual(validateStatus({ ...status, ui: { v2: true, sidebar: true } }), []);
+  assert.deepEqual(validateStatus({ ...status, ui: { v2: "yes" } }), ["ui: needs {v2: boolean, sidebar?: boolean}"]);
 });
 
 test("planAge says how old Claude Code's plan reading is, once it's over an hour", async () => {

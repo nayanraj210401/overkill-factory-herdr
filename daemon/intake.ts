@@ -22,7 +22,7 @@ export function parseSource(text: string): Source {
 // `parent`: the ticket this one re-requests (factory new --parent). Its digest is where this one's
 // memory starts (digest.ts). A paused ticket can't be one: a paused ticket with parts is a split's,
 // which closes once its parts merge.
-export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string; groom?: boolean; parent?: number }) {
+export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string; groom?: boolean; parent?: number; note?: string }) {
   if (o.parent != null) {
     const p = db.query("SELECT state FROM tickets WHERE id = ?").get(o.parent) as { state: string } | null;
     if (!Number.isInteger(o.parent) || !p) throw new Error(`--parent: no ticket ${o.parent}`);
@@ -49,10 +49,13 @@ export function newTicket(db: Database, o: { text: string; repo: string; bluepri
     title = issue.title;
   }
   if (db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`#${id} is already a ticket`);
+  const note = o.note?.trim() || null;
   // Groomed first (plan: grooming is the one stop), unless the caller starts it right away.
-  db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, parent, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, title, o.groom ? "grooming" : "queued", o.blueprint, o.trigger ?? "manual", o.parent ?? null, o.now);
-  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, `added ${"goal" in src ? "a goal" : `issue #${id}`}`, o.now);
-  journal(db, { ticket: id, kind: "created", text: `you added ${"goal" in src ? "a goal" : `issue #${id}`}: ${title} (${o.blueprint} blueprint${o.groom ? ", grooming first" : ""}${o.parent != null ? `; it re-requests #${o.parent}` : ""})`, ref: "goal" in src ? null : `issue:${id}`, at: o.now });
+  db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, parent, notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(id, title, o.groom ? "grooming" : "queued", o.blueprint, o.trigger ?? "manual", o.parent ?? null, note, o.now);
+  const added = `${"goal" in src ? "a goal" : `issue #${id}`}: ${title}`;
+  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, "goal" in src ? "added a goal" : `added issue #${id}`, o.now);
+  journal(db, { ticket: id, kind: "created", text: `you added ${added} (${o.blueprint} blueprint${o.groom ? ", grooming first" : ""}${o.parent != null ? `; it re-requests #${o.parent}` : ""}${note ? "; with your note" : ""})`, ref: "goal" in src ? null : `issue:${id}`, at: o.now });
+  if (note) journal(db, { ticket: id, kind: "note", text: `your note, which outweighs the factory's prompts in every brief: ${note}`, at: o.now });
   return { id, title };
 }
 

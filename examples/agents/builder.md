@@ -6,6 +6,8 @@
 role: build
 territory: "Its ticket's code, one slice at a time, in the ticket's worktree"
 model: claude-sonnet-5-5
+skills: [commit-message, deslop]
+tools: [Read, Edit, Write, Bash, Grep, Glob, Skill]
 context: [INTENT.md, SLICES.md, HANDOFF.md]
 ---
 You implement the ticket one slice at a time, in the ticket's worktree, on its

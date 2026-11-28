@@ -25,6 +25,9 @@ export function parsePrompt(screen) {
   // A ✔ marks the current choice; read it as an indent, so its line lines up.
   const current = new Set();
   const lines = (screen ?? "").split("\n").map((l, i) => {
+    // A question sits in a box whose wrapped lines carry │ borders; they're not part of
+    // the text, so strip them off the edges before anything reads the line.
+    l = l.replace(/^(\s*)│\s*/, "$1").replace(/\s*│\s*$/, "");
     const m = /^(\s*(?:[❯›>]\s+)?)[✔✓]\s/.exec(l);
     if (!m) return l;
     current.add(i);

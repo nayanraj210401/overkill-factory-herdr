@@ -21,8 +21,9 @@ import { agentSkillErrors, validateAccount, validateDir, validateFile } from "./
 import { exampleStepFiles, exampleStepsDir, installExampleSteps, stepFiles } from "./steps.ts";
 import { exampleFiles, examplesDir, factoryAgentFiles, factoryAgentsDir, installExamples, installFactoryAgents } from "./agents.ts";
 import { installSkills, skillFiles, skillFileErrors, skillsDir } from "./skills.ts";
-import { accountFile, readAccount, setSwitch } from "./account.ts";
+import { accountFile, readAccount, setSwitch, SWITCHES, type Switch } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
+import { approvePr, pollReviews, writeReviews } from "./reviews.ts";
 import { backup, closeRetiredRequests, liveMaintainer, maintainer as startMaintainer, restore } from "./maintainer.ts";
 import { cleanupDir, cleanupPlan, performCleanup, planMarkdown, proposeCleanup } from "./cleanup.ts";
 import { learnerDigest, learnerDue, learnerHold, learningHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
@@ -74,7 +75,7 @@ import { checkUpdate, runUpdate } from "./update.ts";
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
-  new <issue link | #n | goal…> [--blueprint b] [--start] [--parent id]  add a ticket (goals get ids from 10000); --parent: it re-requests
+  new <issue link | #n | goal…> [--blueprint b] [--start] [--parent id] [--note text]  add a ticket (goals get ids from 10000); --parent: it re-requests; --note: your words, which outweigh the factory's prompts in every brief
                                      ticket <id>, and its digest starts from that one's
   ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request: typed into its terminal, which starts if it isn't running; takes --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run), or a repo agent as <owner/name>:<agent> (a bare <agent> is the asker's own repo's; a note typed into its live session there, else its next brief). A repo agent asks the factory agents and its own repo's; another repo's goes through overwatch
   asks [agent] [--json] | asks done <id>  the open notes (to one agent) / mark one handled
@@ -152,6 +153,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   comment <id> C<n> fix|pushback|escalate <reason…>  the fix agent's verdict on a reviewer's comment
   label <id> C<n> fix|pushback|escalate  your own verdict on a review comment, for the agreement benchmark
   agreement [--dry-run] [--json]     re-judge your past review comments with review.judge_model and record how often it matches you (--dry-run counts them)
+  review approve <owner/repo>#<n>    approve a PR waiting on you (gh pr review --approve) and take it out of reviews.json (#<n>: this factory's repos)
   verdict <id> holdout|review pass|fail [detail…] [--by voter]  a checker's or reviewer's verdict
   artifact <id> <file> <url>         record where an agent shared a ticket file on claude.ai (artifacts: in factory.yaml); --fail <why> logs a publish that failed
   decide <ticket> <who> <what> [why] log a decision
@@ -168,8 +170,8 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
   claude [--json]                    which claude every factory session runs (claude.path in config.yaml, else the newest), and the others found
   validate [dir] [--json]            check .factory/ files (default ./.factory)
-  config get V2_UI [--json]          the account's value (config.yaml), this factory's factory.yaml value, and which wins
-  config set V2_UI true|false        set it in ~/.factory/config.yaml in place (comments stay) and rewrite every factory's status.json
+  config get V2_UI|V2_SIDEBAR [--json]  the account's value (config.yaml), this factory's factory.yaml value, and which wins
+  config set V2_UI|V2_SIDEBAR true|false  set it in ~/.factory/config.yaml in place (comments stay) and rewrite every factory's status.json
   refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
   status                             write status.json and print a summary
   run [--interval seconds] [--all] [--force]  the daemon: keep status.json fresh (--all: every factory); refuses while the service runs it
@@ -278,6 +280,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const daysFlag = flag(args, "days");
   const searchFlag = flag(args, "search");
   const parentFlag = flag(args, "parent");
+  const noteFlag = flag(args, "note");
   const setFlag = flag(args, "set");
   const p = paths(name);
   const all = args.includes("--all");
@@ -353,18 +356,18 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       return log(`${key}: ${r.value} in ${r.file}${r.changed ? "" : " (already)"}${done.length ? `; status rewritten for ${done.join(", ")}` : ""}`);
     }
     if (sub === "get") {
-      if (key !== "V2_UI") throw new Error("usage: factory config get V2_UI [--json]");
-      const account = readAccount().V2_UI ?? null;
+      if (!(SWITCHES as readonly string[]).includes(key)) throw new Error(`usage: factory config get ${SWITCHES.join("|")} [--json]`);
+      const account = readAccount()[key as Switch] ?? null;
       let factory: boolean | null = null, repo: string | null = null;
       if (existsSync(p.db)) {
         const db = open(p.db);
-        try { const lead = leadRepo(db); if (lead) { repo = lead.slug; factory = readFactory(lead.path).V2_UI ?? null; } } finally { db.close(); }
+        try { const lead = leadRepo(db); if (lead) { repo = lead.slug; factory = readFactory(lead.path)[key as Switch] ?? null; } } finally { db.close(); }
       }
       const v = { key, account, factory, repo, effective: (factory ?? account) === true };
       if (json) return log(JSON.stringify(v));
       return log(`${key}: ${v.effective ? "on" : "off"} (config.yaml: ${account ?? "not set"}; ${repo ?? "this factory"}'s factory.yaml: ${factory ?? "not set"})`);
     }
-    throw new Error("usage: factory config get V2_UI [--json] | factory config set V2_UI true|false");
+    throw new Error(`usage: factory config get ${SWITCHES.join("|")} [--json] | factory config set ${SWITCHES.join("|")} true|false`);
   }
   if (cmd === "validate") {
     // An account config (~/.factory/config.yaml, or a copy of it) is checked as one.
@@ -653,7 +656,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       // A held start still adds the ticket; it waits in the queue.
       const held = start ? startHold(db, lead.path, new Date()) : null;
       change(db, () => {
-        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start, parent: parentFlag == null ? undefined : Number(parentFlag) });
+        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start, parent: parentFlag == null ? undefined : Number(parentFlag), note: noteFlag ?? undefined });
         if (start && !held) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
       });
       log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " added; the triage agent grooms it, and it starts once nothing is left to ask"}`);
@@ -1060,6 +1063,14 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let added: number[] = [];
       change(db, () => { added = pollQueue(db, { queue, repo: needLead(db).slug, run: sh, now: now() }); });
       log(added.length ? `added ${added.map((n) => `#${n}`).join(", ")} to grooming` : "no new issues in the queue");
+    } else if (cmd === "review") {
+      // Approve a PR waiting on you, from the Reviews page's a key or by hand.
+      const m = (sub === "approve" ? rest[0] ?? "" : "").match(/^(?:([^/\s#]+\/[^\s#]+))?#(\d+)$/);
+      if (!m) throw new Error("usage: factory review approve <owner/repo>#<n>, like factory review approve acme/api#88");
+      const slug = m[1] ?? needLead(db).slug;
+      approvePr(db, { slug, number: Number(m[2]), run: sh, now: now(), commit: (fn) => change(db, fn) });
+      log(`${slug}#${m[2]} approved; it leaves reviews.json on the next write`);
+      writeReviews(db, p.dir);
     } else if (cmd === "usage") {
       change(db, () => recordUsage(db, log));
     } else if (cmd === "decide") {
@@ -1312,6 +1323,17 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     try { change(db, () => { settleMemories(db, nowIso); }); }
     catch (e) { log(`factory: memory outcomes: ${(e as Error).message}`); }
   }
+  // PRs waiting on your review, every 10 minutes, for reviews.json. Same rhythm and stamp
+  // rule as the reverts: the clock is written first, so a failing gh waits its turn.
+  const repos = listRepos(db);
+  if (lead.slug !== "unknown" && repos.length) {
+    const lastIntake = getMeta(db, "review_intake_at");
+    if (!lastIntake || Date.now() - Date.parse(lastIntake) >= 600_000) {
+      setMeta(db, "review_intake_at", nowIso);
+      try { change(db, () => { pollReviews(db, { repos, run, now: nowIso, log }); }); }
+      catch (e) { log(`factory: the review queue: ${(e as Error).message}`); }
+    }
+  }
   // Split tickets: a part goes on once the one before it is done; a parent closes after its last part.
   try { change(db, () => followSplits(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log })); }
   catch (e) { log(`factory: following splits: ${(e as Error).message}`); }
@@ -1376,6 +1398,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
 // status.json plus every ticket's files, so "12m so far" keeps counting.
 function writeAll(db: Database, p: ReturnType<typeof paths>) {
   const s = writeStatus(db, p.status);
+  writeReviews(db, p.dir);
   const lead = leadRepo(db);
   if (lead) writeBlueprints(db, lead.path, p.blueprints);
   writeMetrics(db, p.metrics);

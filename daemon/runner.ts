@@ -84,12 +84,13 @@ export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").r
 // `share`: the claude.ai links and the publish step for the stage's output (artifacts.ts); "" when sharing is off.
 // `neighbours`: the map of the factory's agents (agents.ts), first in the brief.
 // `digest`: the ticket's memory (digest.ts digestBlock), with the pointer to `factory recall`.
-export function brief(t: { id: number; title: string }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "", memory = "", digest = "") {
+export function brief(t: { id: number; title: string; notes?: string | null }, stage: string, prompt: string | null, folder: string, role?: string, repos: { repo: string; worktree: string | null }[] = [], lessons: string[] = [], template = loadPrompt(null, "stage"), slice = "", share: { shared?: string; publish?: string } = {}, neighbours = "", memory = "", digest = "") {
   const verdict = role ? VERDICT_OF_ROLE[role] : undefined;
   return render(template, {
     neighbours,
     "ticket.id": String(t.id),
     "ticket.title": t.title,
+    "ticket.notes": t.notes,
     stage,
     folder,
     "agent.prompt": prompt,
@@ -248,7 +249,7 @@ export function startStage(db: Database, o: { dir: string; repo: string; id: num
   return terminal;
 }
 
-export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; arms?: Record<string, unknown[]>; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number; retire_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" }; memory?: { chunk_days?: number }; V2_UI?: boolean };
+export type Factory = { tickets?: string | { source?: string; split?: "human" | "auto" }; learn?: { target?: string; tunable?: string[]; arms?: Record<string, unknown[]>; warmup_tickets?: number; pause_above?: number | string; promote_after?: number; review_every?: number; retire_after?: number }; hard_stops?: string[]; repos?: string[]; cross_check?: string; review?: { pushbacks?: number; gate?: "human" | "auto"; queue?: string[]; never_low_risk?: string[] }; merge_method?: "squash" | "merge" | "rebase"; quality_floor?: string[]; ready?: string[]; max_running?: number; budget?: Record<string, unknown>; plan?: Record<string, unknown>; queue?: { github_project?: string; column?: string; assignee?: string }; grooming?: { agent?: string; blueprints?: string[]; questions?: string[]; product_owner?: string }; verify?: { features?: string }; cloud?: { on_sleep?: "move" | "off" }; memory?: { chunk_days?: number }; V2_UI?: boolean };
 const DEFAULT_READY = ["evidence", "holdout", "quality_floor", "review", "template", "budget"];
 export const readFactory = (repo: string): Factory => {
   const text = readYaml(repo, "factory.yaml");
