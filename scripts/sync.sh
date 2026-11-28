@@ -13,7 +13,9 @@ for a in "$@"; do case "$a" in --keys) keys=1 ;; *) home="$a" ;; esac; done
 node scripts/gen.mjs --check
 mkdir -p "$home/layouts" "$home/themes" "$home/mods" "$home/factory-data"
 cp layouts/factory.json layouts/factory.svg "$home/layouts/"
-cp themes/factory.json "$home/themes/"
+# The theme is Herdr's own (atom-one-dark); the layout's `theme` names it.
+# Clean up the factory theme this script used to install.
+rm -f "$home/themes/factory.json"
 for dir in mods/factory-*/; do
   name=$(basename "$dir")
   # Copies, not symlinks: Herdr refuses imports that resolve outside the mod folder.

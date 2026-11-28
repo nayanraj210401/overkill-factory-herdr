@@ -28,7 +28,9 @@ export function layout() {
     titlebar: "none",
     traffic_lights: [12, 16],
     background: "canvas",
-    theme: { light: "paper", dark: "factory" },
+    // Follow Herdr's own theme (atom-one-dark today) so factory pages match the app.
+    // If Herdr's active theme changes, update this name to match.
+    theme: { light: "paper", dark: "atom-one-dark" },
     divider: { width: 1, color: "border" },
     preview: "layouts/factory.svg",
     children: [
