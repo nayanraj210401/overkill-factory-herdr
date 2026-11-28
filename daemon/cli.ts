@@ -70,6 +70,7 @@ import { listMemories, memoryLine, pruneMemories, recall, remember, setOutcome, 
 import { eventLine, journal, ticketEvents } from "./journal.ts";
 import { CHUNK_DAYS, hitLine, indexTranscripts, pruneChunks, recallHits } from "./recall.ts";
 import { digestOf, runDigest, runDueDigest, setDigest } from "./digest.ts";
+import { checkUpdate, runUpdate } from "./update.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
@@ -83,6 +84,10 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   maintainer [--json]                start the maintainer agent, or print the live one's terminal
   backup <file…>                     copy each file into $FACTORY_HOME/backups/<when>/ before changing it; prints where
   restore <backup>                   put a backup back over its file (what is there now is backed up first)
+  update --check [--json]            the daemon's checkout vs origin/develop: N behind, with the commits it would take
+  update --run [--dry-run] [--json]  bring the daemon's checkout up: back up every factory database, then git merge
+                                     --ff-only origin/develop, scripts/sync.sh, and service install; --dry-run lists
+                                     the steps and runs nothing; a worktree with uncommitted changes refuses
   agents live [--json]               every agent running for every factory (repo, ticket, PR, stage, status, terminal, tokens) and every repo; the daemon writes it to ~/.factory/agents-live.json each tick
   cleanup [--dry-run|--propose|--run] [--days N] [--folders]  housekeeping (tickets finished N days ago, default 14): --dry-run lists what would go;
                                      --propose writes the list to <factory>/cleanup/ (narrow CLEANUP.json); --run removes what it lists, each re-checked;
@@ -320,6 +325,22 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     if (!sub) throw new Error("usage: factory restore <backup>");
     const r = restore(sub, now());
     return log(`${r.file} is back as it was in ${sub}${r.was ? `; what was there is in ${r.was}` : ""}`);
+  }
+  // The daemon's own updates (update.ts): no factory needed, the checkout the CLI runs from only.
+  if (cmd === "update") {
+    if (sub && sub !== "--check") throw new Error("usage: factory update --check [--json] | update --run [--dry-run] [--json]");
+    if (runFlag) {
+      const r = runUpdate({ dryRun, home: factoryHome(), now: now() });
+      if (json) return log(JSON.stringify(r));
+      if (r.refused) return log(`would refuse: ${r.refused}`);
+      for (const s of r.steps) log(r.dry ? `would: ${s}` : s);
+      return;
+    }
+    const c = checkUpdate({});
+    if (json) return log(JSON.stringify(c));
+    log(`factory ${c.commit ?? "?"} is ${c.upToDate ? "up to date with origin/develop" : `${c.behind} commit${c.behind === 1 ? "" : "s"} behind origin/develop`}`);
+    for (const k of c.commits) log(`  ${k.short} ${k.subject}`);
+    return;
   }
   // The account's on/off switches (account.ts SWITCHES), for the Config page's New UI row.
   if (cmd === "config") {

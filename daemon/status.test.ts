@@ -2,8 +2,8 @@ import { test, expect } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setRepo, setWork } from "./db.ts";
-import { buildStatus } from "./status.ts";
+import { open, setRepo, setWork, MIGRATIONS } from "./db.ts";
+import { buildStatus, appBuild } from "./status.ts";
 import { stageDetail } from "../lib/model.js";
 import { validateStatus } from "../lib/status.js";
 
@@ -79,4 +79,20 @@ test("status.json says whether the V2 UI gate is on: off by default, on with V2_
   const s = buildStatus(db);
   expect(validateStatus(s)).toEqual([]);
   expect([s.ui, v2UI(s)]).toEqual([{ v2: true, sidebar: false }, true]);
+});
+
+test("the factory section carries the daemon's own build and the schema version, and passes the contract", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "status-")), "factory.db"));
+  const s = buildStatus(db, new Date(), { commit: "abc1234", date: "2026-11-27T00:00:00Z" });
+  expect(s.factory.schema).toBe(MIGRATIONS.length);
+  expect(s.factory.build).toEqual({ commit: "abc1234", date: "2026-11-27T00:00:00Z" });
+  expect(validateStatus(s)).toEqual([]);
+  // No build to show (git failed): the field is left out rather than lied about.
+  const bare = buildStatus(db, new Date(), null);
+  expect(bare.factory.schema).toBe(MIGRATIONS.length);
+  expect("build" in bare.factory).toBe(false);
+  expect(validateStatus(bare)).toEqual([]);
+  // The daemon's real checkout has a commit (unless tests run from a tarball).
+  const own = appBuild();
+  expect(own === null || /^[0-9a-f]+$/.test(own!.commit)).toBe(true);
 });

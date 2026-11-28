@@ -7,7 +7,8 @@ import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateStatus } from "../lib/status.js";
-import { getMeta, leadRepo, listRepos, mergeOrder } from "./db.ts";
+import { getMeta, leadRepo, listRepos, mergeOrder, MIGRATIONS } from "./db.ts";
+import { appCheckout } from "./globals.ts";
 import { reviewQueueCount } from "./reviews.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
 import { budgetCap, digest } from "./away.ts";
@@ -82,6 +83,21 @@ const sliceOf = (detail: string | null | undefined) => {
   return m ? { slice: { n: Number(m[1]), of: Number(m[2]) } } : {};
 };
 
+// The daemon's own build, for the About popup: the checkout's commit and its date, read
+// once (git costs more than a status write should) and cached until the process restarts —
+// which is exactly when the build can change (daemon/update.ts fast-forwards and restarts).
+// Git that fails (a tarball checkout) leaves the build out rather than lie about it.
+let buildCache: { commit: string; date: string } | null | undefined;
+export function appBuild(root = appCheckout()) {
+  if (buildCache !== undefined) return buildCache;
+  try {
+    const r = Bun.spawnSync(["git", "-C", root, "show", "-s", "--format=%h %cI", "HEAD"], { env: process.env });
+    const [commit, date] = r.exitCode === 0 ? r.stdout.toString().trim().split(" ") : [];
+    buildCache = commit && date ? { commit, date } : null;
+  } catch { buildCache = null; }
+  return buildCache;
+}
+
 // Tuned settings, each beside the value the files give (null when it can't be read).
 function overridesOf(db: Database, repo: string | undefined) {
   return activeOverrides(db).map((o) => {
@@ -91,7 +107,7 @@ function overridesOf(db: Database, repo: string | undefined) {
   });
 }
 
-export function buildStatus(db: Database, now = new Date()) {
+export function buildStatus(db: Database, now = new Date(), build = appBuild()) {
   // A ticket's terminal: its latest session still open (the window's `e` opens it).
   // Each ticket's repos, lead first; one that hasn't started works in the factory's lead repo.
   const lead = leadRepo(db);
@@ -152,7 +168,7 @@ export function buildStatus(db: Database, now = new Date()) {
     version: 1,
     generated_at: now.toISOString(),
     source: "daemon",
-    factory: { name: getMeta(db, "name") ?? "factory", repo: lead?.slug ?? "unknown", ...(lead ? { path: lead.path } : {}), ...(lead ? { repos: listRepos(db).map((r) => r.slug) } : {}), daemon: now.getTime() - beat < HEARTBEAT_MS },
+    factory: { name: getMeta(db, "name") ?? "factory", repo: lead?.slug ?? "unknown", ...(lead ? { path: lead.path } : {}), ...(lead ? { repos: listRepos(db).map((r) => r.slug) } : {}), daemon: now.getTime() - beat < HEARTBEAT_MS, schema: MIGRATIONS.length, ...(build ? { build } : {}) },
     plan: { ...planMeters(db, now), hold },
     today: {
       time_to_pr_min: Math.round(avg(prs.filter((p) => p.began).map((p) => (Date.parse(p.at) - Date.parse(p.began!)) / 60000))),
