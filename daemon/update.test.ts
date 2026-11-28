@@ -131,6 +131,33 @@ test("a failed merge stops the run and says why; a failed sync leaves the servic
   expect(badSync.calls.some((a) => a.join(" ").includes("service install"))).toBe(false);
 });
 
+test("a flaky service install is retried, and the log says launchd needed another try", () => {
+  let calls = 0;
+  const flaky: Run = (argv) => {
+    if (argv.join(" ").includes("service install")) return ++calls < 3 ? { code: 1, out: "Bootstrap failed: 5: Input/output error" } : { code: 0, out: "" };
+    if (argv.join(" ").includes("fetch origin develop")) return { code: 0, out: "" };
+    if (argv.join(" ").includes("rev-list")) return { code: 0, out: "1" };
+    if (argv.join(" ").includes("rev-parse")) return { code: 0, out: "abc1234" };
+    if (argv.join(" ").includes("status --porcelain")) return { code: 0, out: "" };
+    if (argv.join(" ").includes("merge")) return { code: 0, out: "Fast-forward" };
+    if (argv[0] === "bash") return { code: 0, out: "" };
+    return { code: 1, out: `fake: ${argv.join(" ")}` };
+  };
+  const pauses: number[] = [];
+  const r = runUpdate({ root: "/repo", home: "/no-such-home-xyz", run: flaky, backupFile: () => null, pause: () => pauses.push(1) });
+  expect(calls).toBe(3);
+  expect(pauses).toEqual([1, 1]); // one pause between each pair of tries, none after the success
+  expect(r.steps.at(-1)).toContain("launchd took 3 tries");
+});
+
+test("a service install that fails every try is the error, and nothing claims success", () => {
+  const routes = { ...BEHIND, "service install": { code: 1, out: "Bootstrap failed: 5: Input/output error" } };
+  const { run, calls } = fakeSh(routes);
+  expect(() => runUpdate({ root: "/repo", home: "/no-such-home-xyz", run, backupFile: () => null, pause: () => {} }))
+    .toThrow(/service install failed after 3 tries/);
+  expect(calls.filter((a) => a.join(" ").includes("service install")).length).toBe(3);
+});
+
 test("factoryDbs lists every factory's database under the home, sorted, and none when there is no home", () => {
   expect(factoryDbs("/no-such-home-xyz")).toEqual([]);
   const home = mkdtempSync(join(tmpdir(), "dbs-"));
