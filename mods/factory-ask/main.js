@@ -96,10 +96,11 @@ export default class FactoryAsk extends View {
       .child(h_flex().items_center()
         .child(div().flex_1().text_size(15).font_semibold().text_color(t.foreground).child(p.title ?? "Are you sure?"))
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
-      // A long question scrolls on its own, so the answer box and the buttons stay in view. A max
-      // height, not flex_1: the dialog sizes to its content, where a flex_1 area collapses to nothing.
-      .child(div().id("ask-detail").max_h(320).overflow_y_scrollbar().pr(6).text_color(t.muted).child(p.detail ?? ""))
-      .when(Boolean(this.inputs.length), (el) => el.child(v_flex().gap(10).children(this.inputs.map(box))))
+      // A long question scrolls on its own with the boxes below it, so the buttons stay in view.
+      // A max height, not flex_1: the dialog sizes to its content, where a flex_1 area collapses.
+      .child(div().id("ask-body").max_h(420).overflow_y_scrollbar().pr(6)
+        .child(div().text_color(t.muted).child(p.detail ?? ""))
+        .when(Boolean(this.inputs.length), (el) => el.child(v_flex().gap(10).mt(12).children(this.inputs.map(box)))))
       .child(div().flex_1())
       .child(h_flex().justify_end().gap(8).text_size(12)
         .child(button("ask-no", "Cancel", false, () => this.no()))
