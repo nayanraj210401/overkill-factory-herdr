@@ -7,6 +7,7 @@
 // backup, so `factory restore` puts one back) before anything changes.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { sleepSync } from "bun";
 import { sh, type Run } from "./runner.ts";
 import { appCheckout, factoryHome } from "./globals.ts";
 import { backup } from "./maintainer.ts";
@@ -73,8 +74,11 @@ export function updateSteps(check: UpdateCheck, dbs: string[], root: string) {
 // `factory update --run`: the check's guard, then the steps for real. Dry-run reports the
 // same steps and runs nothing (not even the backups). `backupFile` and `run` are injected,
 // so tests fake the whole thing; the log lines are what a real run says as it goes.
+// `service install` is retried: launchd's bootstrap answers error 5 ("Input/output error")
+// now and then, and the same command a moment later succeeds — a manual step so far, and
+// the one thing that would make a one-click update report a failure that wasn't one.
 export function runUpdate(o: {
-  dryRun?: boolean; root?: string; home?: string; now?: string; run?: Run; backupFile?: typeof backup;
+  dryRun?: boolean; root?: string; home?: string; now?: string; run?: Run; backupFile?: typeof backup; pause?: () => void;
 }): { dry: boolean; refused: string | null; steps: string[] } {
   const root = o.root ?? appCheckout();
   const run = o.run ?? sh;
@@ -98,8 +102,16 @@ export function runUpdate(o: {
   const sync = run(["bash", join(root, "scripts", "sync.sh")]);
   if (sync.code !== 0) throw new Error(`scripts/sync.sh failed: ${sync.out.trim()}`);
   steps.push(`synced the mods (HERDR_APP_HOME: ${process.env.HERDR_APP_HOME ?? "~/.config/herdr-app"})`);
-  const install = run([process.execPath, join(root, "daemon", "cli.ts"), "service", "install"]);
-  if (install.code !== 0) throw new Error(`service install failed: ${install.out.trim()}`);
-  steps.push("reinstalled the factory service; the daemon restarts on the new code");
+  const pause = o.pause ?? (() => sleepSync(1500));
+  const installArgv = [process.execPath, join(root, "daemon", "cli.ts"), "service", "install"];
+  let install = run(installArgv);
+  let tries = 1;
+  while (install.code !== 0 && tries < 3) {
+    tries++;
+    pause();
+    install = run(installArgv);
+  }
+  if (install.code !== 0) throw new Error(`service install failed after ${tries} tries: ${install.out.trim()}`);
+  steps.push(`reinstalled the factory service${tries > 1 ? ` (launchd took ${tries} tries)` : ""}; the daemon restarts on the new code`);
   return { dry: false, refused: null, steps };
 }
