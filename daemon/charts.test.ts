@@ -95,7 +95,7 @@ test("light and dark: the palette and the axis ink each step for their appearanc
   expect(light).toContain(`fill="${ink("light").axis}"`);
   expect(dark).toContain(`fill="${ink("dark").axis}"`);
   expect(ink("light").axis).not.toBe(ink("dark").axis);
-  // dark text is light ink (from themes/factory.json's foreground), light text is dark ink
+  // dark text is light ink (Herdr's theme foreground), light text is dark ink
   const lum = (h: string) => parseInt(h.slice(1, 3), 16);
   expect(lum(ink("dark").axis)).toBeGreaterThan(lum(ink("light").axis));
 });

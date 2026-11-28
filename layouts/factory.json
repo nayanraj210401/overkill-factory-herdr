@@ -9,7 +9,7 @@
   "background": "canvas",
   "theme": {
     "light": "paper",
-    "dark": "factory"
+    "dark": "atom-one-dark"
   },
   "divider": {
     "width": 1,

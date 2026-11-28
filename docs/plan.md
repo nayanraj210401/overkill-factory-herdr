@@ -1006,7 +1006,7 @@ One repo, laid out like herdr-roundup so Herdr users recognise it, plus the daem
 | --- | --- |
 | `layouts/factory.json`, `layouts/factory.svg` | The window, and its preview picture for Herdr's settings |
 | `mods/factory-*/` | The mods above |
-| `themes/factory.json` | The layout's own theme, light and dark |
+| `themes/factory.json` | Gone. The layout names Herdr's own theme (`atom-one-dark` today, light `paper`); update `gen.mjs` if Herdr's theme changes |
 | `keys.json` | Only the `layout:factory` section, so the user's other keys stay theirs |
 | `daemon/` | TypeScript on Bun (decided 2026-11-21): SQLite via `bun:sqlite`, the blueprint runner, the babysitter, the benchmark runner; shares `lib/status.js` with the mods; `bun build --compile` makes the one binary |
 | `schemas/` | A JSON Schema per `.factory/` file |

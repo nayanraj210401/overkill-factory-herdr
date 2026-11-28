@@ -123,8 +123,10 @@ re-checks each entry and removes it. Report what it removed and what it kept.
 
 **Look:** the factory app's own code, not configuration, in its own checkout (this brief
 names it). Work on a local branch there (`git switch -c look/<name>`), and you may commit on
-that branch; never push it, and never touch any other repo for a look change. Colours are
-tokens in `themes/factory.json`; a mod uses the tokens, never a hex value. Each page is a mod in
+that branch; never push it, and never touch any other repo for a look change. The window's
+colours are Herdr's own theme: the layout's `theme` block (`scripts/gen.mjs`) names it, and the
+daemon's charts read that theme from the Herdr home. A mod uses the theme's tokens, never a
+hex value. Each page is a mod in
 `mods/factory-<page>/`; shared code is in `lib/`. The page stack, keys and menu come from
 `lib/pages.js`: run `node scripts/gen.mjs` after changing it. `scripts/check.sh` must pass.
 Never run scripts/sync.sh or copy anything into ~/.config/herdr-app: the person merges the

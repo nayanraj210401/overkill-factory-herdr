@@ -8,7 +8,6 @@ import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { CHART, PALETTE, chartsFor, minutes } from "../lib/metrics.js";
 import { compact } from "../lib/model.js";
-import factoryTheme from "../themes/factory.json";
 
 export type Mode = "light" | "dark";
 export const MODES: Mode[] = ["light", "dark"];
@@ -24,13 +23,31 @@ export type Chart = {
 const { w: W, h: H } = CHART;
 const PAD = { left: 46, right: 10, top: 10, bottom: 24 };
 
-// Axis ink from the factory theme: dark draws with its foreground over its background, light
-// with that background as ink over white. Grid and labels are the ink mixed toward the card.
+// Axis ink follows Herdr's own theme: the layout names it (scripts/gen.mjs), and the daemon
+// reads the installed theme file from the Herdr home, so charts match the app even when
+// Herdr's theme changes. Light draws with that theme's background as ink over white; grid
+// and labels are the ink mixed toward the card.
 const hex = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
 const mix = (a: string, b: string, t: number) => "#" + hex(a).map((x, i) => Math.round(x * t + hex(b)[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
+const FALLBACK_THEME = { background: "#21252b", foreground: "#abb2bf" }; // atom-one-dark, when the home has no theme file (tests, fresh homes)
+function loadDarkTheme(): { background: string; foreground: string } {
+  try {
+    const layout = JSON.parse(readFileSync(new URL("../layouts/factory.json", import.meta.url), "utf8"));
+    const home = process.env.HERDR_APP_HOME ?? join(homedir(), ".config", "herdr-app");
+    if (layout.theme?.dark) {
+      const file = join(home, "themes", `${layout.theme.dark}.json`);
+      if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8"));
+    }
+  } catch {} // a stale or missing layout falls back below
+  return FALLBACK_THEME;
+}
+const darkTheme = loadDarkTheme();
 export function ink(mode: Mode) {
-  const [fg, bg] = mode === "dark" ? [factoryTheme.foreground, factoryTheme.background] : [factoryTheme.background, "#ffffff"];
-  return { axis: mix(fg, bg, 0.6), grid: mix(fg, bg, 0.14), ref: mix(fg, bg, 0.75), series: PALETTE[mode] };
+  const [fg, bg] = mode === "dark" ? [darkTheme.foreground, darkTheme.background] : [darkTheme.background, "#ffffff"];
+  // Dark mode's ink is light text mixed toward the card; light mode's is dark ink over white,
+  // mixed less so it stays clearly darker than dark mode's text (the appearance test pins this).
+  const axis = mode === "dark" ? 0.6 : 0.8;
+  return { axis: mix(fg, bg, axis), grid: mix(fg, bg, 0.14), ref: mix(fg, bg, mode === "dark" ? 0.75 : 0.9), series: PALETTE[mode] };
 }
 
 // About four round steps from 0 up past the top value: 1, 2, 2.5 or 5 times a power of ten.
