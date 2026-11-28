@@ -32,12 +32,14 @@ export const DEFAULT_TRIGGERS: Trigger[] = [
 export const isHealth = (t: Trigger) => t.run === "health";
 const sameJob = (a: Trigger, b: Trigger) => a.name === b.name || (isHealth(a) ? isHealth(b) : !isHealth(b) && a.on === b.on);
 
-// How often each kind polls GitHub; a schedule trigger has its own `every`.
+// How often each kind polls GitHub by default. Any polling trigger may set its own `every`
+// (review-comments.yaml with every: 5m), so how often is config the maintainer can change.
 export const POLL_MS = { project_ready: 180_000, pr_review_comment: 120_000 } as const;
 
 export function intervalOf(t: Trigger): number | null {
+  if (t.on === "manual") return null;
   if (t.on === "schedule") return parseEvery(t.every);
-  return t.on === "manual" ? null : POLL_MS[t.on];
+  return parseEvery(t.every) ?? POLL_MS[t.on];
 }
 
 // The folder's triggers, plus each built-in whose job no file does: a folder holding only

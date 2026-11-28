@@ -1,56 +1,58 @@
-import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, EditorState, Editor } from "gpui-base";
-import { theme, exec, readTextFile, watchFolder, nextCommand, checking, notify } from "herdr";
-import { askedBy, configFiles, daemonView, pendingNotes, pendingRequests } from "./lib/model.js";
+import { View, div } from "gpui-kit";
+import { h_flex, v_flex } from "gpui-base";
+import { theme, exec, watchFolder, checking, notify, home, appHome } from "herdr";
+import { daemonView, pendingNotes } from "./lib/model.js";
+import { globalFiles, globalPrecedence, fileBadge, checkoutOf, maintainerAsk, newUIRow, GLOBAL_TOP } from "./lib/configfiles.js";
+import { FileView, listFiles, badgesFor, badgedRow, viewerLabels, viewerDetail, maintainerLine } from "./lib/fileview.js";
+import { cliCommand } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
-import { root, status, act } from "./lib/store.js";
+import { root, status, act, ask } from "./lib/store.js";
 import { keyAction, clamp } from "./lib/keys.js";
 
-// The Config page: the daemon's service controls, the .factory/ files, the selected
-// one read-only, ⌘O to edit it in your own editor (docs/layouts/07-config.png).
+// The Config page, the factory's global settings: the daemon's service controls, then the files in
+// ~/.factory every repo shares (factory agents, skills, shared steps, the account's files), the
+// selected one read-only, ⌘O to edit it in your own editor. Each repo's own .factory/ is on Repo config.
+// One setting is a switch here, not a file edit: New UI (V2_UI in config.yaml).
 export default class FactoryConfig extends View {
-  // The lead repo's checkout holds .factory/; the sample data keeps one beside its status.json.
+  // ~/.factory. `herdr-app check` has none: it shows the sample repo's folder, so the list draws rows.
   get dir() {
-    return `${status()?.factory?.path ?? root()}/.factory`;
+    return checking() ? `${appHome()}/factory-data/acme-api/.factory` : `${home()}/.factory`;
   }
 
   init(_props, cx) {
-    this.files = [];
-    this.selected = null;
+    this.view = new FileView("config");
     this.error = null;
-    this.editor = null;
-    this.editors = {}; // path → its read-only EditorState, made once
+    this.badges = {};
     this.checks = {};
     this.daemon = undefined; // undefined: not asked yet; null: the CLI didn't answer
     this.busy = null;
     this.loginWanted = true; // the box before install: Install passes it as --login
     this.at = 0; // the selected override
+    // `factory config get V2_UI --json`: undefined until asked; `herdr-app check` draws it off.
+    this.newUI = checking() ? { account: false, factory: null, repo: null } : undefined;
+    this.newSidebar = checking() ? { account: false, factory: null, repo: null } : undefined;
+    this.switchBusy = {};
     this.handle = cx.focus_handle();
     if (!checking()) {
       this.refreshDaemon(cx);
+      this.loadNewUI(cx);
       cx.timer.every(30000, (cx) => this.refreshDaemon(cx));
     }
     const wait = (ms) => new Promise((done) => cx.timer.after(ms, done));
     cx.spawn(async (cx) => {
       await this.list();
-      if (this.files.length) await this.select(this.files[0]);
       cx.notify();
       if (checking()) return;
       for (;;) {
         this.validate(cx); // the schema check fills in after the files show
-        // A missing folder has nothing to watch: look again soon rather than spin. (Before
-        // status.json loads, this.dir is the data folder's, which has no .factory.)
-        if (this.error) await wait(1000);
-        else await Promise.race([watchFolder(this.dir), wait(30000)]);
+        // ~/.factory itself changes every tick (agents-live.json, each factory's status.json), so
+        // watch the agents folder and look again every 15 s for the rest.
+        const watch = this.error ? null : watchFolder(`${this.dir}/agents`);
+        await Promise.race([watch?.catch(() => new Promise(() => {})) ?? new Promise(() => {}), wait(this.error ? 3000 : 15000)]);
+        watch?.cancel?.();
         await wait(300); // one reload for a burst of saves
         await this.list();
-        if (this.selected) await this.select(this.selected);
-        cx.notify();
-      }
-    });
-    if (!checking()) cx.spawn(async (cx) => {
-      for (;;) {
-        if ((await nextCommand()).endsWith("open") && this.selected) await exec("open", [`${this.dir}/${this.selected.path}`]);
+        this.loadNewUI(cx); // config.yaml or the shown factory may have changed
         cx.notify();
       }
     });
@@ -58,6 +60,83 @@ export default class FactoryConfig extends View {
 
   factory(args) {
     return exec(CLI[0], [...CLI.slice(1), ...args], { timeout: 20000 });
+  }
+
+  // The CLI against the shown factory's FACTORY_HOME (cliCommand), as validate runs it; with
+  // no factory shown, the CLI's own default.
+  account(args) {
+    const r = root();
+    const { command, args: argv } = r ? cliCommand(CLI, r, args) : { command: CLI[0], args: [...CLI.slice(1), ...args] };
+    return exec(command, argv, { timeout: 20000 });
+  }
+
+  loadNewUI(cx) {
+    cx.spawn(async (cx) => {
+      const one = async (key) => {
+        const r = await this.account(["config", "get", key, "--json"]).catch(() => null);
+        try { return r?.code === 0 ? JSON.parse(r.stdout.trim().split("\n").pop()) : null; } catch { return null; }
+      };
+      const [ui, sidebar] = await Promise.all([one("V2_UI"), one("V2_SIDEBAR")]);
+      this.newUI = ui;
+      this.newSidebar = sidebar;
+      cx.notify();
+    });
+  }
+
+  // A switch: `factory config set <key>`, which also rewrites every status.json, so every
+  // page that reads it follows at once.
+  setSwitch(key, on, cx) {
+    if (this.switchBusy[key]) return;
+    this.switchBusy[key] = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.account(["config", "set", key, String(on)]).catch((e) => ({ code: 1, stderr: String(e) }));
+      if (r.code !== 0) notify({ title: `${key}: the change failed`, body: (r.stderr || r.stdout).trim(), level: "error" });
+      this.switchBusy[key] = false;
+      this.loadNewUI(cx);
+    });
+  }
+
+  // The on/off pill a switch row ends with.
+  pill(t, id, on, busy, click) {
+    return h_flex().id(id).flex_none().w(34).h(20).p(2).rounded_full().cursor_pointer()
+      .bg(!busy && on ? t.accent : t.border).when(on, (el) => el.justify_end())
+      .on_click(click)
+      .child(div().size(16).rounded_full().bg(t.background));
+  }
+
+  // The New UI card and, nested under it, the New sidebar sub-section: its own switch
+  // (V2_SIDEBAR), which turns the v2 sidebar on without touching the pages.
+  newUICard(t) {
+    const ui = this.newUI;
+    const row = newUIRow(ui);
+    const known = ui != null;
+    const click = (_e, cx) => known && this.setSwitch("V2_UI", !row.on, cx);
+    const state = ui === undefined ? "checking…" : ui === null ? "couldn't read config.yaml" : this.switchBusy.V2_UI ? "saving…" : row.on ? "On" : "Off";
+    const side = this.newSidebar;
+    const sideRow = newUIRow(side);
+    const sideKnown = side != null;
+    const sideClick = (_e, cx) => sideKnown && this.setSwitch("V2_SIDEBAR", !sideRow.on, cx);
+    const sideState = side === undefined ? "checking…" : side === null ? "couldn't read config.yaml" : this.switchBusy.V2_SIDEBAR ? "saving…" : sideRow.on ? "On" : "Off";
+    return v_flex().id("new-ui").flex_none().gap(6).px(14).py(8).rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .child(h_flex().gap(12).items_center()
+        .child(v_flex().flex_1().min_w_0().gap(2)
+          .child(h_flex().gap(8).items_baseline()
+            .child(div().font_semibold().text_color(t.foreground).child("New UI"))
+            .child(div().text_size(11).text_color(t.dim).child("V2_UI in ~/.factory/config.yaml")))
+          .child(div().text_size(12).text_color(t.muted).child("The new Ticket, Blueprint and Chat pages. Off keeps the current pages."))
+          .when(Boolean(row.note), (el) => el.child(div().id("new-ui-note").text_size(12).text_color(t.blocked).child(row.note))))
+        .child(div().flex_none().text_size(12).text_color(row.on ? t.foreground : t.muted).child(state))
+        .child(this.pill(t, "new-ui-switch", known && row.on, this.switchBusy.V2_UI, click)))
+      .child(h_flex().id("new-sidebar").flex_none().gap(12).items_center().px(10).py(6).rounded(8).bg(t.background)
+        .child(v_flex().flex_1().min_w_0().gap(1)
+          .child(h_flex().gap(8).items_baseline()
+            .child(div().text_size(12.5).font_semibold().text_color(t.foreground).child("New sidebar"))
+            .child(div().text_size(11).text_color(t.dim).child("V2_SIDEBAR")))
+          .child(div().text_size(11.5).text_color(t.muted).child("The v2 sidebar: Working and Settled pinned to the bottom and foldable, stage bars, CI dots. Off keeps the current sidebar."))
+          .when(Boolean(sideRow.note), (el) => el.child(div().id("new-sidebar-note").text_size(11.5).text_color(t.blocked).child(sideRow.note))))
+        .child(div().flex_none().text_size(11.5).text_color(sideRow.on ? t.foreground : t.muted).child(sideState))
+        .child(this.pill(t, "new-sidebar-switch", sideKnown && sideRow.on, this.switchBusy.V2_SIDEBAR, sideClick)));
   }
 
   refreshDaemon(cx) {
@@ -94,7 +173,7 @@ export default class FactoryConfig extends View {
     return h_flex().id("daemon").h(40).flex_none().px(14).gap(10).items_center().rounded(10).bg(t.surface).border(1).border_color(t.border)
       .child(div().size(8).rounded_full().bg(t[v.tone]))
       .child(div().font_semibold().text_color(t.foreground).child("Daemon"))
-      .child(div().flex_1().truncate().text_color(t.muted).child(this.busy ? `${LABEL[this.busy]}…` : v.text))
+      .child(div().flex_1().min_w_0().truncate().text_color(t.muted).child(this.busy ? `${LABEL[this.busy]}…` : v.text))
       .when(v.atLogin != null || v.actions.includes("install"), (el) => {
         // Installed: the box is the service's setting, and a click changes it. Not yet: it's
         // what Install will do.
@@ -122,14 +201,9 @@ export default class FactoryConfig extends View {
 
   // Requests for the maintainer (each comes back as a PR) and the notes agents left each other,
   // each with who asked whom: "from the learner to the maintainer".
-  pendingCard(t, rows, notes) {
+  pendingCard(t, notes) {
     return v_flex().id("pending").flex_none().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border)
       .child(div().px(8).pb(4).text_size(11).text_color(t.dim).child("PENDING CHANGES"))
-      .children(rows.map((r) => h_flex().h(26).px(8).gap(10).items_center()
-        .child(div().w(56).flex_none().text_color(t.dim).child(`#${r.id}`))
-        .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(r.title))
-        .child(div().flex_none().text_size(12).text_color(t.dim).child(`from ${askedBy(r)} to the maintainer`))
-        .child(div().flex_none().text_size(12).text_color(t.muted).child(r.pr ? `PR #${r.pr} · ${r.state}` : r.stage ? `${r.stage} · ${r.state}` : r.state))))
       .children(notes.map((a) => h_flex().h(26).px(8).gap(10).items_center()
         .child(div().w(56).flex_none().text_color(t.dim).child(`note ${a.id}`))
         .child(div().flex_1().min_w_0().truncate().text_color(t.foreground).child(a.text))
@@ -175,84 +249,56 @@ export default class FactoryConfig extends View {
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(o.reason ?? ""))));
   }
 
-  schemaLabel(t) {
-    const errors = this.checks[this.selected?.path];
-    if (!errors) return div().text_size(12).text_color(t.dim).child("Schema check: not run");
-    return div().text_size(12).text_color(errors.length ? t.blocked : t.done)
-      .child(errors.length ? `Schema check: ${errors.length} ${errors.length === 1 ? "problem" : "problems"}` : "Schema check: passes");
-  }
-
+  // ~/.factory's config: its top files, then agents/, skills/ and steps/ (only those listed).
   async list() {
-    const r = await exec("find", [".", "-type", "f"], { cwd: this.dir }).catch((e) => ({ code: 1, stderr: String(e) }));
-    if (r.code !== 0) {
-      this.files = [];
-      this.error = `${this.dir}: no .factory folder`;
-      return;
+    const top = await listFiles(this.dir, [".", "-maxdepth", "1"]);
+    if (top == null) {
+      this.error = `${this.dir}: not there yet (factory setup makes it)`;
+      return this.view.show(this.dir, []);
     }
     this.error = null;
-    this.files = configFiles(r.stdout.split("\n").filter(Boolean).map((p) => p.replace(/^\.\//, "")));
+    const deep = (await listFiles(this.dir, ["agents", "skills", "steps"])) ?? [];
+    const files = globalFiles([...top.filter((p) => GLOBAL_TOP.includes(p)), ...deep]);
+    await this.view.show(this.dir, files);
+    const checkout = checkoutOf(CLI);
+    this.badges = await badgesFor(this.dir, files, (p) => globalPrecedence(p, { home: this.dir, checkout }), fileBadge);
   }
 
-  // The daemon's schema check, per file: path → errors (undefined while unknown).
+  // The daemon's schema check of the global files (factory validate's ~/.factory rows), per file:
+  // path → errors (undefined while unknown). Only a live factory has a CLI to ask.
   validate(cx) {
-    if (this.error) return;
+    if (this.error || status()?.source !== "daemon") return;
     cx.spawn(async (cx) => {
-      const v = await this.factory(["validate", this.dir, "--json"]).catch(() => null);
-      try { this.checks = Object.fromEntries(JSON.parse(v.stdout).map((x) => [x.path, x.errors])); } catch { this.checks = {}; }
+      const { command, args } = cliCommand(CLI, root(), ["validate", "--json"]);
+      const v = await exec(command, args, { timeout: 20000 }).catch(() => null);
+      try {
+        this.checks = Object.fromEntries(JSON.parse(v.stdout).filter((x) => x.path.startsWith("~/.factory/")).map((x) => [x.path.slice("~/.factory/".length), x.errors]));
+      } catch { this.checks = {}; }
       cx.notify();
     });
   }
 
-  // Shows a file. The caller repaints, with a cx of its own (see tests/mods.test.mjs).
-  async select(file) {
-    const t = theme();
-    const text = (await readTextFile(`${this.dir}/${file.path}`)) ?? "";
-    // A file's language is fixed when its editor is made: one editor per file, kept, so
-    // clicking between files doesn't rebuild and re-highlight each one.
-    const key = `${this.dir}/${file.path}`;
-    let editor = this.editors[key];
-    if (!editor) {
-      editor = this.editors[key] = EditorState.new({ language: file.language, value: text, readonly: true, soft_wrap: true,
-        syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, number: t.ansi3, constant: t.ansi4, boolean: t.ansi3 } });
-    } else if (editor.value() !== text) editor.set_value(text);
-    this.editor = editor;
-    this.selected = file;
-  }
-
   render() {
     const t = theme();
-    const row = (f) => {
-      const on = f.path === this.selected?.path;
-      return h_flex().id(`f-${f.path}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
-        .bg(on ? t.selected : t.surface).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover))
-        // select awaits the file; this click's cx is gone by then, so a spawned task repaints.
-        .on_click((_e, cx) => cx.spawn(async (cx) => { await this.select(f); cx.notify(); }))
-        .child(svg(`mods/workspace-chrome/${f.language === "markdown" ? "file-text" : "settings"}.svg`).size(13))
-        .child(div().flex_1().truncate().child(f.path))
-        .when(Boolean(this.checks[f.path]), (el) => el.child(div().text_size(11)
-          .text_color(this.checks[f.path].length ? t.blocked : t.done).child(this.checks[f.path].length ? `✗ ${this.checks[f.path].length}` : "✓")));
-    };
+    const v = this.view;
+    const sel = v.selected?.path;
     const overrides = this.overrides();
     this.at = clamp(this.at, overrides.length);
-    const pending = pendingRequests(status()?.tickets);
     const notes = pendingNotes(status()?.asks);
-    return v_flex().size_full().gap(8).text_size(13).child(this.daemonBar(t))
-      .when(Boolean(status()?.claude?.found?.length), (el) => el.child(this.claudeCard(t, status().claude)))
-      .when(pending.length + notes.length > 0, (el) => el.child(this.pendingCard(t, pending, notes)))
-      .when(overrides.length > 0, (el) => el.child(this.overridesCard(t, overrides))).child(h_flex().flex_1().w_full().gap(8)
-      .child(v_flex().id("files").w(240).flex_none().h_full().p(8).gap(2).rounded(10).bg(t.surface).border(1).border_color(t.border).overflow_y_scroll()
-        .child(div().px(8).pb(6).text_size(11).text_color(t.dim).child(".FACTORY"))
-        .children(this.files.map(row))
-        .when(Boolean(this.error), (el) => el.child(div().px(8).text_color(t.blocked).child(this.error))))
-      .child(v_flex().flex_1().min_w(0).h_full().rounded(10).bg(t.background).border(1).border_color(t.border)
-        .child(h_flex().h(36).px(14).gap(10).items_center().border_b(1).border_color(t.border)
-          .child(div().flex_1().font_semibold().text_color(t.foreground).truncate().child(this.selected?.path ?? "No file"))
-          .child(this.schemaLabel(t))
-          .child(div().id("open").px(8).py(2).rounded(6).border(1).border_color(t.border).text_size(12).text_color(t.muted).cursor_pointer()
-            .hover((s) => s.bg(t.hover)).on_click(() => this.selected && exec("open", [`${this.dir}/${this.selected.path}`]))
-            .child("Open in editor ⌘O")))
-        .when(Boolean(this.checks[this.selected?.path]?.length), (el) => el.child(v_flex().px(14).py(8).gap(2).border_b(1).border_color(t.border)
-          .text_size(12).text_color(t.blocked).children(this.checks[this.selected.path].map((e) => div().w_full().truncate().child(e)))))
-        .child(div().flex_1().p(4).when(Boolean(this.editor), (el) => el.child(Editor.new(this.editor).size_full())))));
+    const cards = [status()?.claude?.found?.length, notes.length, overrides.length].some(Boolean);
+    // The cards scroll in their own capped area and the files row takes what's left (min_h 0), so
+    // neither the file list nor the file view grows past the window. overflow_y_scroll, not
+    // _scrollbar: the scrollbar kind fills its max_h (or a parent's height) instead of its
+    // content, which left an empty band under a lone Claude card.
+    return v_flex().size_full().min_h(0).gap(8).text_size(13).child(this.daemonBar(t)).child(this.newUICard(t))
+      .when(cards, (el) => el.child(v_flex().id("config-cards").flex_none().max_h(260).gap(8).overflow_y_scroll()
+        .when(Boolean(status()?.claude?.found?.length), (c) => c.child(this.claudeCard(t, status().claude)))
+        .when(notes.length > 0, (c) => c.child(this.pendingCard(t, notes)))
+        .when(overrides.length > 0, (c) => c.child(this.overridesCard(t, overrides)))))
+      .child(maintainerLine(t, "Global: ~/.factory, shared by every factory and repo. The maintainer makes every change here; apart from the New UI switch, this view is read-only.", () => ask(maintainerAsk())))
+      .child(h_flex().flex_1().min_h(0).w_full().gap(8)
+        .child(v.list(t, "~/.FACTORY", v.files.map((f) => badgedRow(v, t, f, this.badges[f.path], this.checks[f.path])),
+          this.error ? div().px(8).text_color(t.blocked).child(this.error) : null))
+        .child(v.pane(t, viewerLabels(t, this.badges[sel], this.checks[sel]), viewerDetail(t, this.badges[sel], this.checks[sel]))));
   }
 }

@@ -13,6 +13,8 @@ import { loadAgent } from "./agents.ts";
 import { isAway } from "./away.ts";
 import { judge, VERDICTS, type Row } from "./comments.ts";
 import { judgeNotes, usedJudgeNotes, type Ask } from "./ask.ts";
+import { remember } from "./memory.ts";
+import { leadRepo } from "./db.ts";
 
 export type Proposal = { verdict: (typeof VERDICTS)[number]; why: string; clear: boolean };
 
@@ -128,6 +130,10 @@ export function prejudge(db: Database, o: { repo: string; ticket: number; rows: 
     db.query("UPDATE comments SET suggested = ?, suggested_why = ? WHERE ticket = ? AND n = ?").run(p.verdict, p.why || null, o.ticket, c.n);
     c.suggested = p.verdict;
     c.why = p.why;
+    // Into the babysitter's memory; its outcome (agreed or overruled) comes from your verdict (memory.ts settleMemories).
+    const at = db.query("SELECT pr, repo FROM comments WHERE ticket = ? AND n = ?").get(o.ticket, c.n) as { pr: number; repo: string | null } | null;
+    remember(db, { agent: "babysitter", repo: at?.repo ?? leadRepo(db)?.slug ?? "unknown", kind: "babysitter-verdict", ticket: o.ticket, pr: at?.pr ?? null, ref: `C${c.n}`,
+      input: `@${c.author}${c.place ? ` on ${c.place}` : ""}: ${c.body.trim()}${c.hunk ? `\n${c.hunk.slice(0, 1500)}` : ""}`, output: `${p.verdict}${p.clear ? " (clear)" : ""}: ${p.why}`, at: o.now });
     if (away && p.verdict === "fix" && p.clear) {
       judge(db, { ticket: o.ticket, n: c.n, verdict: "fix", reason: `auto: ${model} judged it a clear fix${p.why ? `; ${p.why}` : ""}`, now: o.now });
       c.verdict = "fix";

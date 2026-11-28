@@ -5,12 +5,13 @@
 #
 # The merge gate is human: you approve every maintenance PR. Once you trust it (Home shows
 # this blueprint's revert rate), let ready maintenance PRs merge themselves:
-#   merge:     { gate: auto, next: [end] }
+#   merge:    { step: merge, gate: auto, next: [end] }
 name: maintenance
+description: "Scheduled repo upkeep the maintenance agent files on its own."
 start: maintain
 stages:
   maintain: { agent: maintenance, next: [verify] }
-  verify:   { check: tests, next: [review], on_fail: maintain, max_retries: 2 }
-  review:   { agent: reviewer, next: [pr], on_fail: maintain }
-  pr:       { agent: pr-writer, requires: ready, output: PR.md, template: pr-readable, next: [merge] }
-  merge:    { gate: human, next: [end] }
+  verify:   { step: run-tests, next: [review], on_fail: maintain }
+  review:   { step: review, next: [pr], on_fail: maintain }
+  pr:       { step: write-pr, next: [merge] }
+  merge:    { step: merge, next: [end] }

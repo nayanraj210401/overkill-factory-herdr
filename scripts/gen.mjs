@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Writes layouts/factory.json and keys.json from lib/pages.js, so the stack,
-// the keys and the menu can't drift apart, and the sample repo's agents
-// (fixtures/acme-api/.factory/agents/) from the example library (examples/agents/),
+// the keys and the menu can't drift apart, and the sample repo's agents and steps
+// (fixtures/acme-api/.factory/{agents,steps}/) from the example library (examples/),
 // so the two never drift either. `--check` fails if any is stale.
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { PAGES, STACK } from "../lib/pages.js";
+import { TICKET_VIEWS } from "../lib/ticketchat.js";
 
 const root = new URL("..", import.meta.url);
 const block = (id, mod, props, extra = {}) => ({ id, type: "block", ...extra, content: props ? { mod, props } : { mod } });
@@ -27,7 +28,9 @@ export function layout() {
     titlebar: "none",
     traffic_lights: [12, 16],
     background: "canvas",
-    theme: { light: "paper", dark: "factory" },
+    // Follow Herdr's own theme (atom-one-dark today) so factory pages match the app.
+    // If Herdr's active theme changes, update this name to match.
+    theme: { light: "paper", dark: "atom-one-dark" },
     divider: { width: 1, color: "border" },
     preview: "layouts/factory.svg",
     children: [
@@ -40,7 +43,7 @@ export function layout() {
         background: "chrome",
         resizable: false,
         children: [
-          block("brand", "factory-chrome", null, { size: { px: 84 }, window_drag: true }),
+          block("brand", "factory-chrome", null, { size: { px: 80 }, window_drag: true }), // pill + room for the "⚠ <factory>: N needs you" line
           block("sidebar-tickets", "factory-tickets", null, { size: { weight: 1 }, min: 90 }),
           block("sidebar-menu", "factory-menu", null, { size: { px: 40 + 30 * PAGES.filter((p) => p.key).length } }),
           block("sidebar-budget", "factory-chrome", { footer: true }, { size: { px: 44 } }),
@@ -66,29 +69,43 @@ export function layout() {
   };
 }
 
+// Chords, not bare keys: a layout's bindings are matched before text input, so a bare key bound
+// here is taken from every text box on the factory pages (the chat, search, the answer box).
+export const FACTORY_KEYS = { "cmd-k": "mod.open:factory-picker", "cmd-j": "factory-chrome.needs-next", "cmd-shift-j": "factory-chrome.needs-prev" };
+
 export function keys() {
-  const factory = { "cmd-shift-f": "layout.switch:main", "cmd-o": "factory-config.open" };
-  for (const n of ["1", "2", "3", "4"]) factory[`cmd-alt-${n}`] = `factory-ticket.tab-${n}`;
+  // ⌘O opens the file the shown config page has selected. It goes to the header, which every page
+  // shows: a <mod>.<command> reaches shown copies only, and there are two config pages.
+  const factory = { "cmd-shift-f": "layout.switch:main", "cmd-o": "factory-header.open" };
+  for (const n of ["1", "2", "3", "4", "5", "6"]) factory[`cmd-alt-${n}`] = `factory-ticket.tab-${n}`;
+  // The V2 Ticket page's Overview · Chat · Diff switch (the page ignores them with V2_UI off).
+  for (const v of TICKET_VIEWS) factory[`cmd-alt-${v.key}`] = `factory-ticket.view-${v.id}`;
+  // The Chat view's Changes + ticket memory panel, open or closed.
+  factory["cmd-alt-0"] = "factory-ticket.chat-panel";
   for (const p of PAGES) if (p.key) factory[`cmd-${p.key}`] = { command: "layout.select", args: { stack: STACK, child: p.id } };
+  // The factory picker, and the next / previous other factory that needs you (factory-chrome).
+  Object.assign(factory, FACTORY_KEYS);
   return { global: { "cmd-shift-f": "layout.switch:factory" }, "layout:factory": factory };
 }
 
 const files = { "layouts/factory.json": layout(), "keys.json": keys() };
 
-// The sample repo's agents are the example library's, byte for byte.
-const EXAMPLES = new URL("examples/agents/", root), FIXTURE = new URL("fixtures/acme-api/.factory/agents/", root);
-const mds = (url) => { try { return readdirSync(url).filter((f) => f.endsWith(".md")).sort(); } catch { return []; } };
-const copies = Object.fromEntries(mds(EXAMPLES).map((f) => [`fixtures/acme-api/.factory/agents/${f}`, readFileSync(new URL(f, EXAMPLES), "utf8")]));
-const extra = mds(FIXTURE).filter((f) => !(`fixtures/acme-api/.factory/agents/${f}` in copies));
+// The sample repo's agents and steps are the example library's, byte for byte.
+const LIBRARIES = [["agents", /\.md$/], ["steps", /\.ya?ml$/]].map(([kind, ext]) => ({
+  kind, from: new URL(`examples/${kind}/`, root), to: new URL(`fixtures/acme-api/.factory/${kind}/`, root),
+  list: (url) => { try { return readdirSync(url).filter((f) => ext.test(f)).sort(); } catch { return []; } },
+}));
+const copies = Object.fromEntries(LIBRARIES.flatMap((l) => l.list(l.from).map((f) => [`fixtures/acme-api/.factory/${l.kind}/${f}`, readFileSync(new URL(f, l.from), "utf8")])));
+const extra = LIBRARIES.flatMap((l) => l.list(l.to).filter((f) => !(`fixtures/acme-api/.factory/${l.kind}/${f}` in copies)).map((f) => ({ l, f })));
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const check = process.argv.includes("--check");
   let stale = 0;
   const texts = { ...Object.fromEntries(Object.entries(files).map(([p, v]) => [p, JSON.stringify(v, null, 2) + "\n"])), ...copies };
-  if (!check) mkdirSync(FIXTURE, { recursive: true });
-  for (const f of extra) {
-    if (!check) rmSync(new URL(f, FIXTURE));
-    else { console.error(`fixtures/acme-api/.factory/agents/${f} isn't in examples/agents/: run scripts/gen.mjs`); stale++; }
+  if (!check) for (const l of LIBRARIES) mkdirSync(l.to, { recursive: true });
+  for (const { l, f } of extra) {
+    if (!check) rmSync(new URL(f, l.to));
+    else { console.error(`fixtures/acme-api/.factory/${l.kind}/${f} isn't in examples/${l.kind}/: run scripts/gen.mjs`); stale++; }
   }
   for (const [path, text] of Object.entries(texts)) {
     const url = new URL(path, root);

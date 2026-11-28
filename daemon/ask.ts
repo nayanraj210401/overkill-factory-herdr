@@ -1,7 +1,8 @@
 // Agents are neighbours (plan: The agents): any agent, or you, asks another with
 // `factory ask <agent> "<text>" [--why "<evidence>"]`. The daemon routes it by the target's
 // territory and records every hand-off in `asks`, with its origin and target:
-//   maintainer          a maintainer request (maintainer.ts), as `factory request` files it
+//   maintainer          a request: a note typed into the live maintainer's terminal, else given
+//                       in its brief when it next starts (maintainer.ts); `factory request` too
 //   overwatch           a note in Needs you, typed into the live Overwatch terminal when one runs
 //   learner, babysitter a note queued for the agent's next run
 //   a repo agent        a note typed into its live session in that repo, else given to its next brief there
@@ -13,8 +14,9 @@
 import type { Database } from "bun:sqlite";
 import { FACTORY_AGENTS, isFactoryAgent, repoAgents } from "./agents.ts";
 import { leadRepo, listRepos } from "./db.ts";
-import { request, type Kind } from "./maintainer.ts";
 import type { Run } from "./runner.ts";
+import type { Session } from "./globals.ts";
+import { journal } from "./journal.ts";
 
 // `to` is the agent's name; `toRepo` the repo of a repo agent, null for a global one.
 export type Ask = { id: number; from: string; to: string; toRepo: string | null; text: string; why: string | null; about: number | null; request: number | null; at: string; delivered_at: string | null; done_at: string | null };
@@ -68,34 +70,40 @@ export function resolveTarget(db: Database, from: Who, raw: string): Who {
   return { agent, repo: has[0].slug };
 }
 
-export type AskResult = { kind: "request"; ask: Ask; id: number; title: string; requestKind: Kind; repo: string } | { kind: "note"; ask: Ask; delivered: boolean };
+export type AskResult = { ask: Ask; delivered: boolean };
+// A global agent's live terminal, or null (globals.ts).
+export type Live = (agent: Session) => string | null;
 
 // `fromRepo`: the repo a repo agent's session works in (FACTORY_REPO); the factory's lead when unset.
+// `target`: for the maintainer, the repo the change is in, when it isn't the lead (`--repo`).
 export function ask(db: Database, o: {
   to: string; text: string; why?: string | null; from: string; fromRepo?: string | null; about?: number | null;
-  slug: string; dir: string; run: Run; now: string; overwatch?: () => string | null; name?: string;
-  requestKind?: Kind; target?: string; // for the maintainer: the request's kind and repo (maintainer.ts)
+  slug: string; run: Run; now: string; live?: Live; name?: string; target?: string;
 }): AskResult {
-  const text = o.text.trim().replace(/\s+/g, " ");
+  let text = o.text.trim().replace(/\s+/g, " ");
   const from: Who = { agent: o.from, repo: isFactoryAgent(o.from) || o.from === "you" ? null : o.fromRepo || leadRepo(db)?.slug || o.slug };
   const to = resolveTarget(db, from, o.to);
   const name = askTarget({ to: to.agent, toRepo: to.repo });
   if (!text) throw new Error(`say what you need: factory ask ${name} "<text>" [--why "<evidence>"]`);
   if (from.agent === to.agent && from.repo === to.repo) throw new Error(`${to.agent} can't ask itself`);
-  if (to.agent === "maintainer") {
-    const r = request(db, { text, repo: o.slug, run: o.run, now: o.now, from: o.from, evidence: o.why ?? undefined, dir: o.dir, about: o.about, kind: o.requestKind, target: o.target });
-    return { kind: "request", ask: row(db.query("SELECT * FROM asks WHERE request = ?").get(r.id)), id: r.id, title: r.title, requestKind: r.kind, repo: r.repo };
+  if (o.target) {
+    if (to.agent !== "maintainer") throw new Error("--repo names the repo of a change for the maintainer; a repo agent is asked as <owner/name>:<agent>");
+    const r = listRepos(db).find((x) => x.slug.toLowerCase() === o.target!.toLowerCase());
+    if (!r) throw new Error(`${o.target} isn't one of this factory's repos (${listRepos(db).map((x) => x.slug).join(", ") || "none"}); add it with factory repo add`);
+    text = `In ${r.slug} (${r.path}): ${text}`;
   }
   const id = Number(db.query("INSERT INTO asks (from_agent, to_agent, to_repo, text, why, about, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run(o.from, to.agent, to.repo, text, o.why ?? null, o.about ?? null, o.now).lastInsertRowid);
   db.query("INSERT INTO decisions (ticket, who, what, why, at) VALUES (?, ?, ?, ?, ?)").run(o.about ?? null, o.from, `asked ${name}: ${text}`.slice(0, 200), o.why ?? null, o.now);
+  journal(db, { ticket: o.about, kind: "ask", text: `${o.from} asked ${name}: ${text}${o.why ? ` (${o.why})` : ""}`, ref: `ask:${id}`, at: o.now });
   if (to.repo) deliverToRepoAgents(db, { run: o.run, now: o.now, name: o.name });
-  else if (to.agent === "overwatch" && o.overwatch) deliverToOverwatch(db, { run: o.run, now: o.now, terminal: o.overwatch, name: o.name });
+  else if ((to.agent === "overwatch" || to.agent === "maintainer") && o.live) deliverToGlobal(db, to.agent, { run: o.run, now: o.now, terminal: () => o.live!(to.agent as Session), name: o.name });
   const ask = row(db.query("SELECT * FROM asks WHERE id = ?").get(id));
-  return { kind: "note", ask, delivered: !!ask.delivered_at };
+  return { ask, delivered: !!ask.delivered_at };
 }
 
-// Open notes (not maintainer requests, which are tickets), oldest first; to one agent (in any repo), or all.
+// Open notes, oldest first; to one agent (in any repo), or all. (A row with `request` set was a
+// maintainer request when those were tickets: it isn't a note.)
 export function openAsks(db: Database, to?: string): Ask[] {
   return (db.query(`SELECT * FROM asks WHERE done_at IS NULL AND request IS NULL ${to ? "AND to_agent = ?" : ""} ORDER BY id`).all(...(to ? [to] : [])) as any[]).map(row);
 }
@@ -146,10 +154,11 @@ export const notesSection = (notes: Ask[]) => notes.length
   ? ["Notes other agents left you (answer one with a proposal when the digest supports it; otherwise leave it):", ...notes.map((a) => `- Note #${a.id} from ${a.from === "you" ? "the person" : a.from}: ${a.text}${a.why ? ` (evidence: ${a.why})` : ""}`)].join("\n")
   : "";
 
-// Notes to Overwatch: typed into its live terminal, once each. A terminal that's gone, or a
-// send that fails, leaves the note for the next tick; it is in Needs you either way.
-export function deliverToOverwatch(db: Database, o: { run: Run; now: string; terminal: () => string | null; name?: string }) {
-  const waiting = openAsks(db, "overwatch").filter((a) => !a.delivered_at);
+// Notes to a global agent's live session (Overwatch, the maintainer): typed into its terminal,
+// once each. A terminal that's gone, or a send that fails, leaves the note for the next tick
+// (or, for the maintainer, its next start's brief); a note to Overwatch is in Needs you either way.
+export function deliverToGlobal(db: Database, agent: Session, o: { run: Run; now: string; terminal: () => string | null; name?: string }) {
+  const waiting = openAsks(db, agent).filter((a) => !a.delivered_at);
   if (!waiting.length) return 0;
   const terminal = o.terminal();
   if (!terminal) return 0;
@@ -174,7 +183,7 @@ export function deliverToRepoAgents(db: Database, o: { run: Run; now: string; na
     const live = db.query(`SELECT s.terminal FROM sessions s JOIN ticket_lead t ON t.id = s.ticket
       WHERE s.agent = ? AND s.ended_at IS NULL AND s.terminal IS NOT NULL AND COALESCE(t.repo, ?) = ? ${a.about != null ? "AND s.ticket = ?" : ""}
       ORDER BY s.id DESC`).all(a.to, lead, a.toRepo, ...(a.about != null ? [a.about] : [])) as { terminal: string }[];
-    const terminal = live.map((s) => s.terminal).find((t) => alive(o.run, t));
+    const terminal = live.map((s) => s.terminal).find((t) => takesNotes(o.run, t));
     if (!terminal || o.run(["hc", "send", terminal, noteText(a, o.name)]).code !== 0) continue;
     db.query("UPDATE asks SET delivered_at = ? WHERE id = ?").run(o.now, a.id);
     n++;
@@ -182,9 +191,11 @@ export function deliverToRepoAgents(db: Database, o: { run: Run; now: string; na
   return n;
 }
 
-const alive = (run: Run, terminal: string) => {
+// Alive, and not waiting on the person: typed text would land in its question prompt as an answer.
+// A note for a session that's waiting is typed in once it moves on (the next tick).
+const takesNotes = (run: Run, terminal: string) => {
   const r = run(["hc", "get", terminal, "--json"]);
-  try { return r.code === 0 && JSON.parse(r.out).exit_code == null; } catch { return false; }
+  try { const t = JSON.parse(r.out); return r.code === 0 && t.exit_code == null && t.status?.state !== "blocked"; } catch { return false; }
 };
 
 // The notes waiting for `agent` in `repo` that a new session of it on `ticket` takes in its

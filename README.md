@@ -36,7 +36,7 @@ Then, in the repo you want the factory to work on:
 ```sh
 factory init && factory setup && factory setup trust
 factory setup write --budget 2M/100k --budget-day 10M/1M --merge human --max-running 1
-git merge factory/setup && factory validate
+factory validate              # .factory/ stays in this checkout, never committed
 factory service install       # the daemon, as a login item; retry once if launchctl says error 5
 factory setup                 # repeat until every line shows ✓
 ```
@@ -50,14 +50,14 @@ Start small: one ticket at a time, a low daily budget, and a human merge gate. A
 | Key | Does |
 | --- | --- |
 | ⌘⇧F | factory mode on and off |
-| ⌘1–⌘7 | Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Config |
+| ⌘1–⌘8 | Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Repo config, Config |
 | `n` | new ticket from an issue, `#number` or a one-line goal |
 | `e` | peek at the ticket's live agent terminal |
 | `m` | merge a ready PR |
-| `x` / `u` | send a PR back with a note / answer a parked ticket |
+| `x` / `u` | send a PR back with a note / answer a waiting ticket (an agent asking now: its terminal; a parked question: talk it through in a fresh session) |
 | `p` / `b` / `d` | pause or resume / change the budget / diff |
 
-You change the factory by asking Overwatch ("add a blueprint for migrations", "turn on the maintenance agent"). The maintainer agent does the work as a reviewable PR against `.factory/`.
+You change the factory by asking Overwatch ("add a blueprint for migrations", "turn on the maintenance agent"). The maintainer agent makes the change in place, in your local `.factory/` and `~/.factory/`, backs up each file first, and tells you what it changed: there is nothing to merge.
 
 ## Status
 

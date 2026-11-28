@@ -6,7 +6,7 @@ import { open, setRepo } from "./db.ts";
 import { runTriggers } from "./cli.ts";
 import { pollQueue } from "./intake.ts";
 import { sh, type Run } from "./runner.ts";
-import { DEFAULT_TRIGGERS, capsOf, isDue, matchesFilter, readTriggers, withinCaps } from "./triggers.ts";
+import { DEFAULT_TRIGGERS, POLL_MS, capsOf, intervalOf, isDue, matchesFilter, readTriggers, withinCaps } from "./triggers.ts";
 import { parseEvery, validateFile } from "./validate.ts";
 
 test("every reads 30m, 6h and 1d; anything else is no schedule", () => {
@@ -16,11 +16,28 @@ test("every reads 30m, 6h and 1d; anything else is no schedule", () => {
   for (const bad of ["", "0m", "soon", "5", "1w", 30, undefined]) expect(parseEvery(bad)).toBeNull();
 });
 
-test("a schedule trigger needs a valid every, and no other trigger has one", () => {
+test("a schedule trigger needs a valid every; a polling trigger may set one; a manual trigger has none", () => {
   expect(validateFile("triggers/n.yaml", "on: schedule\nblueprint: chore\nevery: 6h\n")).toEqual([]);
   expect(validateFile("triggers/n.yaml", "on: schedule\nblueprint: chore\n")[0]).toContain("needs every");
   expect(validateFile("triggers/n.yaml", "on: schedule\nblueprint: chore\nevery: often\n")[0]).toContain("needs every");
-  expect(validateFile("triggers/n.yaml", "on: manual\nblueprint: chore\nevery: 6h\n")[0]).toContain("only a schedule trigger");
+  expect(validateFile("triggers/n.yaml", "on: manual\nblueprint: chore\nevery: 6h\n")[0]).toContain("a manual trigger doesn't poll");
+  expect(validateFile("triggers/review-comments.yaml", "on: pr_review_comment\nblueprint: feature\nevery: 5m\n")).toEqual([]);
+  expect(validateFile("triggers/queue.yaml", "on: project_ready\nblueprint: feature\nevery: 30s\n")[0]).toContain("how often it polls GitHub");
+});
+
+test("a polling trigger's every sets how often it polls; without one it keeps the built-in rate", () => {
+  expect(intervalOf({ name: "review-comments", on: "pr_review_comment", blueprint: "feature", every: "5m" })).toBe(300_000);
+  expect(intervalOf({ name: "review-comments", on: "pr_review_comment", blueprint: "feature" })).toBe(POLL_MS.pr_review_comment);
+  expect(intervalOf({ name: "queue", on: "project_ready", blueprint: "feature", every: "10m" })).toBe(600_000);
+  expect(intervalOf({ name: "go", on: "manual", blueprint: "feature" })).toBeNull();
+  // A factory's review-comments.yaml replaces the built-in one, and the other built-ins stay.
+  const repo = mkdtempSync(join(tmpdir(), "repo-"));
+  mkdirSync(join(repo, ".factory", "triggers"), { recursive: true });
+  writeFileSync(join(repo, ".factory", "triggers", "review-comments.yaml"), "on: pr_review_comment\nblueprint: feature\nevery: 5m\n");
+  const { triggers, skipped } = readTriggers(repo);
+  expect(skipped).toEqual([]);
+  expect(triggers.filter((t) => t.on === "pr_review_comment").map(intervalOf)).toEqual([300_000]);
+  expect(triggers.map((t) => t.name).sort()).toEqual(["health", "queue", "review-comments"]);
 });
 
 test("a trigger is due when it never ran, or its interval has passed", () => {

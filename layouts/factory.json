@@ -9,7 +9,7 @@
   "background": "canvas",
   "theme": {
     "light": "paper",
-    "dark": "factory"
+    "dark": "atom-one-dark"
   },
   "divider": {
     "width": 1,
@@ -32,7 +32,7 @@
           "id": "brand",
           "type": "block",
           "size": {
-            "px": 84
+            "px": 80
           },
           "window_drag": true,
           "content": {
@@ -54,7 +54,7 @@
           "id": "sidebar-menu",
           "type": "block",
           "size": {
-            "px": 250
+            "px": 280
           },
           "content": {
             "mod": "factory-menu"
@@ -157,6 +157,13 @@
               "type": "block",
               "content": {
                 "mod": "factory-metrics"
+              }
+            },
+            {
+              "id": "repo-config",
+              "type": "block",
+              "content": {
+                "mod": "factory-repo-config"
               }
             },
             {

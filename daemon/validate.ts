@@ -7,6 +7,7 @@ import { PLACEHOLDERS, templateErrors } from "./prompts.ts";
 import { featureErrors } from "./features.ts";
 import { exampleFile, FACTORY_AGENTS, isFactoryAgent } from "./agents.ts";
 import { skillErrors, skillFileErrors } from "./skills.ts";
+import { applySteps } from "./steps.ts";
 
 type Rule =
   | "string" | "number" | "boolean" | "strings" | "any"
@@ -29,12 +30,13 @@ const ARTIFACTS: Rule = { object: { as: { enum: ["artifact", "doc", "off"] }, pu
 const TICKET_SOURCE = { enum: ["github", "linear", "local"] };
 const LEARN_TARGETS = ["cost_per_pr", "time_to_pr", "interactions_per_pr", "review_rounds_per_pr"];
 
-const STAGE: Rule = {
-  object: {
-    agent: str, prompt: str, check: { enum: ["evidence", "tests", "lint", "factory"] }, output: str, next: strs, on_fail: str,
-    max_retries: num, per: { enum: ["ticket", "slice"] }, requires: str, template: str, gate, stages: "any",
-  },
-};
+// What a stage runs. A shared step (steps/<name>.yaml, daemon/steps.ts) holds the same fields
+// and a description; a stage naming it with `step:` keeps the graph and may override any field.
+const WORK = {
+  agent: str, prompt: str, check: { enum: ["evidence", "tests", "lint", "factory"] }, output: str,
+  max_retries: num, per: { enum: ["ticket", "slice"] }, requires: str, template: str, gate,
+} satisfies Record<string, Rule>;
+const STAGE: Rule = { object: { step: str, ...WORK, next: strs, on_fail: str, stages: "any" } };
 
 export const KINDS: Record<string, Rule> = {
   factory: {
@@ -44,12 +46,15 @@ export const KINDS: Record<string, Rule> = {
       queue: { object: { github_project: str, column: str, assignee: str } },
       grooming: { object: { agent: str, blueprints: strs, questions: strs, product_owner: str } },
       max_running: num, defaults: { object: { harness: str, model: str, effort: str } },
-      budget: { object: { per_ticket: open, per_day: open, headroom: num, floor: "any", learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, arms: open, warmup_tickets: num, pause_above: "any", promote_after: num, review_every: num, retire_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any" }, open: true }, away: AWAY, cloud: CLOUD, artifacts: ARTIFACTS, maintainer: { object: { gate } },
-      verify: { object: { features: str } },
+      budget: { object: { per_ticket: open, per_day: open, headroom: num, floor: "any", learning: "any", show_cost: str } }, plan: { object: { pause_at: "any" } }, learn: { object: { target: { enum: LEARN_TARGETS }, tunable: strs, arms: open, warmup_tickets: num, pause_above: "any", promote_after: num, review_every: num, retire_after: num } }, review: { object: { pushbacks: num, judge_model: str, round_budget: "any", gate, queue: strs, never_low_risk: strs }, open: true }, away: AWAY, cloud: CLOUD, artifacts: ARTIFACTS, maintainer: { object: { gate } },
+      verify: { object: { features: str } }, memory: { object: { chunk_days: num } },
       ready: strs, quality_floor: strs, hard_stops: strs, merge: gate, merge_method: { enum: ["squash", "merge", "rebase"] }, secrets: { map: "any" }, mcp: "any",
+      V2_UI: "boolean", // the V2 UI gate (account.ts v2UI), over the account's
+      V2_SIDEBAR: "boolean", // the v2 sidebar gate (account.ts v2Sidebar), over the account's
     },
   },
-  blueprint: { required: ["name", "start", "stages"], object: { name: str, orchestrator: str, start: str, stages: { map: STAGE } } },
+  blueprint: { required: ["name", "start", "stages"], object: { name: str, description: str, orchestrator: str, start: str, stages: { map: STAGE } } },
+  step: { required: ["description"], object: { description: str, ...WORK } },
   agent: {
     object: {
       // overwatch, babysit, maintain and learn are the factory agents' roles (agents.ts).
@@ -84,6 +89,8 @@ export const ACCOUNT: Rule = {
     artifacts: ARTIFACTS,
     profile: { object: { taste: strs, rules: strs } },
     claude: { object: { path: str } }, // which claude every session runs (claude-bin.ts)
+    V2_UI: "boolean", // the V2 UI gate, for every factory unless its factory.yaml says otherwise
+    V2_SIDEBAR: "boolean", // the v2 sidebar gate, the same shape
   },
 };
 
@@ -121,6 +128,7 @@ const AGENT_KEYS = Object.keys((KINDS.agent as { object: object }).object);
 const kindOf = (path: string) =>
   path === "factory.yaml" ? "factory"
   : path === "blueprint.yaml" || /^blueprints\/[^/]+\.ya?ml$/.test(path) ? "blueprint"
+  : /^steps\/[^/]+\.ya?ml$/.test(path) ? "step"
   : /^agents\/[^/]+\.md$/.test(path) ? "agent"
   : /^prompts\/[^/]+\.md$/.test(path) ? "prompt"
   : /^triggers\/[^/]+\.ya?ml$/.test(path) ? "trigger"
@@ -184,7 +192,7 @@ export function duplicateKeys(text: string): string[] {
 
 export function validateFile(path: string, text: string): string[] {
   const kind = kindOf(path);
-  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, agents/, prompts/, triggers/, benchmarks/, features/, skills/<name>/SKILL.md)`];
+  if (!kind) return [`not a .factory file kind (factory.yaml, blueprints/, steps/, agents/, prompts/, triggers/, benchmarks/, features/, skills/<name>/SKILL.md)`];
   if (kind === "skill") return skillFileErrors(text);
   if (kind === "skill-file") return [];
   // flow-stack's feature map, copied by the migration (daemon/features.ts).
@@ -232,7 +240,8 @@ export function validateFile(path: string, text: string): string[] {
   if (kind === "trigger") {
     const t = doc as any;
     if (t?.on === "schedule" && parseEvery(t.every) === null) errors.push("every: a schedule trigger needs every: 30m, 6h or 1d");
-    if (t?.on !== "schedule" && t?.every !== undefined) errors.push("every: only a schedule trigger has it");
+    if (t?.on === "manual" && t?.every !== undefined) errors.push("every: a manual trigger doesn't poll");
+    if (t?.on !== "schedule" && t?.on !== "manual" && t?.every !== undefined && parseEvery(t.every) === null) errors.push("every: how often it polls GitHub, in whole minutes or more: 2m, 5m or 1h");
     if (t?.run === "health" && !["schedule", "manual"].includes(t?.on)) errors.push("run: health runs on: schedule (or on: manual, by factory health only)");
     if (t?.run !== "health" && t?.setup !== undefined) errors.push("setup: only a run: health trigger has it");
   }
@@ -286,12 +295,16 @@ function danglingNames(dir: string, paths: string[]): Record<string, string[]> {
     if (kindOf(p) === "blueprint") {
       const b = parse(p);
       if (typeof b?.orchestrator === "string" && !agents.has(b.orchestrator)) add(p, `orchestrator: ${noAgent(b.orchestrator)}`);
-      for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
-        if (typeof s?.agent === "string" && !agents.has(s.agent)) add(p, `stages.${id}.agent: ${noAgent(s.agent)}`);
-      for (const [id, s] of Object.entries<any>(b?.stages && typeof b.stages === "object" ? b.stages : {}))
+      // A stage's shared step: the repo's steps/, then the account's (steps.ts). Its fields count as the stage's.
+      const raw = b?.stages && typeof b.stages === "object" ? b.stages : {};
+      const stages = applySteps(raw, dirname(dir), (id, e) => add(p, `stages.${id}.step: ${e}`));
+      const from = (id: string, k: string) => typeof raw[id]?.step === "string" && raw[id]?.[k] === undefined ? ` (from step ${raw[id].step})` : "";
+      for (const [id, s] of Object.entries<any>(stages))
+        if (typeof s?.agent === "string" && !agents.has(s.agent)) add(p, `stages.${id}.agent: ${noAgent(s.agent)}${from(id, "agent")}`);
+      for (const [id, s] of Object.entries<any>(stages))
         if (typeof s?.prompt !== "string") continue;
-        else if (s.prompt !== "stage" && s.prompt in PLACEHOLDERS) add(p, `stages.${id}.prompt: ${s.prompt} is not a stage template (it is for ${s.prompt === "groom" ? "grooming" : s.prompt === "handoff" ? "handoffs" : "overwatch"})`);
-        else if (!prompts.has(s.prompt)) add(p, `stages.${id}.prompt: no file prompts/${s.prompt}.md`);
+        else if (s.prompt !== "stage" && s.prompt in PLACEHOLDERS) add(p, `stages.${id}.prompt: ${s.prompt} is not a stage template (it is for ${s.prompt === "groom" ? "grooming" : s.prompt === "handoff" ? "handoffs" : "overwatch"})${from(id, "prompt")}`);
+        else if (!prompts.has(s.prompt)) add(p, `stages.${id}.prompt: no file prompts/${s.prompt}.md${from(id, "prompt")}`);
     } else if (p === "factory.yaml") {
       const g = parse(p)?.grooming;
       if (typeof g?.agent === "string" && !agents.has(g.agent)) add(p, `grooming.agent: ${noAgent(g.agent)}`);
@@ -342,15 +355,18 @@ export function gateWarnings(path: string, file: string): string[] {
   if (kind !== "blueprint" && kind !== "factory") return [];
   let doc: any;
   try { doc = Bun.YAML.parse(readFileSync(file, "utf8")); } catch { return []; }
-  if (kind === "factory") return doc?.maintainer?.gate === "auto" ? ["maintainer.gate is auto: the maintainer's PRs merge themselves, and the account config and factory agents change on that merge, with nobody looking. Check the revert rate on Home"] : [];
-  const stages = doc?.stages && typeof doc.stages === "object" ? doc.stages : {};
+  if (kind === "factory") return doc?.maintainer?.gate != null ? ["maintainer.gate is ignored: the maintainer edits the factory's files in place, with backups, and has no PR to gate. Remove it"] : [];
+  // A gate set by a shared step counts too; the repo is the folder above .factory/ (steps.ts).
+  const stages = applySteps(doc?.stages && typeof doc.stages === "object" ? doc.stages : {}, dirname(file.endsWith(path) ? file.slice(0, -path.length - 1) : dirname(file)), () => {});
   return Object.entries<any>(stages).filter(([, s]) => s?.gate === "auto")
     .map(([id]) => `stages.${id}.gate is auto: this stage passes without you${(stages[id].next ?? []).every((n: string) => n === "end") ? ", and ready PRs of this blueprint merge themselves" : ""}. Check this blueprint's revert rate on Home`);
 }
 
-// Files that pass but do nothing: a repo's copy of a factory agent, or of Overwatch's template, is never read.
+// Files that pass but do nothing: a repo's copy of a factory agent, of a global agent's template, or of the retired maintainer blueprint.
 function warningOf(path: string) {
-  if (path === "prompts/overwatch.md") return "ignored: Overwatch is one for every repo and uses the built-in template; change ~/.factory/agents/overwatch.md instead (through the maintainer)";
+  if (path === "blueprints/factory.yaml") return "ignored: requests to the maintainer no longer run as tickets on this blueprint; delete the file";
+  const global = path.match(/^prompts\/(overwatch|maintainer)\.md$/)?.[1];
+  if (global) return `ignored: ${global === "overwatch" ? "Overwatch" : "the maintainer"} is one for every repo and uses the built-in template; change ~/.factory/agents/${global}.md instead (through the maintainer)`;
   const name = path.match(/^agents\/([^/]+)\.md$/)?.[1];
   return name && isFactoryAgent(name) ? `ignored: ${name} is a factory agent, one for every repo; change ~/.factory/agents/${name}.md instead (through the maintainer)` : null;
 }

@@ -18,12 +18,14 @@ import { parseTokens } from "../lib/model.js";
 import { service, servicePid } from "./service.ts";
 import { enterStage, writeTicketFiles } from "./ticket.ts";
 import { agentSkillErrors, validateAccount, validateDir, validateFile } from "./validate.ts";
+import { exampleStepFiles, exampleStepsDir, installExampleSteps, stepFiles } from "./steps.ts";
 import { exampleFiles, examplesDir, factoryAgentFiles, factoryAgentsDir, installExamples, installFactoryAgents } from "./agents.ts";
 import { installSkills, skillFiles, skillFileErrors, skillsDir } from "./skills.ts";
-import { accountFile } from "./account.ts";
+import { accountFile, readAccount, setSwitch, SWITCHES, type Switch } from "./account.ts";
 import { login, newTicket, pollQueue } from "./intake.ts";
-import { applyMerged, isKind, proposeAccount, proposeExample, proposeFactoryAgent, request, REQUEST_KINDS, requestKind } from "./maintainer.ts";
-import { cleanupPlan, planMarkdown, proposeCleanup } from "./cleanup.ts";
+import { approvePr, pollReviews, writeReviews } from "./reviews.ts";
+import { backup, closeRetiredRequests, liveMaintainer, maintainer as startMaintainer, restore } from "./maintainer.ts";
+import { cleanupDir, cleanupPlan, performCleanup, planMarkdown, proposeCleanup } from "./cleanup.ts";
 import { learnerDigest, learnerDue, learnerHold, learningHold, learnerSuggest, promoteOverrides, runLearner } from "./learner.ts";
 import { noteAttention, waiting } from "./attention.ts";
 import { watchPrs } from "./watch.ts";
@@ -49,44 +51,58 @@ import { renameSync, writeFileSync } from "node:fs";
 import { writeBlueprints } from "./blueprints.ts";
 import { draftSource, dryRun as replayDraft, dryRunMarkdown, loadDraft } from "./dryrun.ts";
 import { liveOverwatch, overwatch } from "./overwatch.ts";
+import { closeChat, liveChat, startChat } from "./chat.ts";
+import { liveSession, SESSIONS } from "./globals.ts";
 import { liveRoster, rosterText, writeLive } from "./live.ts";
-import { ask as askAgent, askerOf, askTarget, deliverToOverwatch, deliverToRepoAgents, doneAsk, doneAsks, noteText, openAsks, type AskResult } from "./ask.ts";
+import { ask as askAgent, askerOf, askTarget, deliverToGlobal, deliverToRepoAgents, doneAsk, doneAsks, noteText, openAsks, type AskResult, type Live } from "./ask.ts";
 import { activeOverrides, addLesson, exportPatch, listLessons, parseValue, restoreLesson, retireLesson, setOverride, undoOverride, UPKEEP_EVERY, upkeepLessons } from "./learn.ts";
-import { ask, askMidRun, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
+import { ask, chooseRepos, pick, readIssueAnswers, startGroomed, startGrooming, startPendingGrooming } from "./groom.ts";
 import { hardStopLog, hasHardStop } from "./guard.ts";
 import { describePlan, hcAgent, holdSuite, planSuite, runSuite, scheduledSuites, writeBenchmarks } from "./bench.ts";
-import { advance, answer, autoMerge, checkReady, readFactory, mergeOnGithub, recordMerge, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
+import { advance, answer, talk, autoMerge, checkReady, readFactory, mergeOnGithub, recordMerge, notePublishGap, setMergeOrder, pause, ticketDiff, resume, sendBack, sh, startTicket, tryPr } from "./runner.ts";
 import { publishFailed, recordArtifact } from "./artifacts.ts";
 import { migrateFlowStack } from "./migrate.ts";
 import { claudeConfig, MIGRATION_META, MIGRATION_REQUEST, migrationRequest, realProbe, skipStep, setupSteps, skippedSteps, showSteps, trust, writeSetup } from "./setup.ts";
 import { decideSplit, followSplits, pendingParts, proposePart } from "./split.ts";
 import { getMeta, leadRepo, listRepos, needLead, setRepo, setWork } from "./db.ts";
+import { EXCLUDE_LINE, MEMORY_FILE, keepLocal, trackedFactory, trackedWarning } from "./local.ts";
+import { listMemories, memoryLine, pruneMemories, recall, remember, setOutcome, settleMemories, type Memory } from "./memory.ts";
+import { eventLine, journal, ticketEvents } from "./journal.ts";
+import { CHUNK_DAYS, hitLine, indexTranscripts, pruneChunks, recallHits } from "./recall.ts";
+import { digestOf, runDigest, runDueDigest, setDigest } from "./digest.ts";
+import { checkUpdate, runUpdate } from "./update.ts";
 
 const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else this folder's name)
   init [--repo owner/name] [--path dir]  create the factory's database for its lead repo (path: the checkout, default .; repo: its GitHub origin)
   repo [add owner/name --path dir]   the factory's repos; add records a checkout of one factory.yaml's repos: lists
-  new <issue link | #n | goal…> [--blueprint b] [--start]  add a ticket (goals get ids from 10000)
-  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request, back as a change you merge; takes --kind and --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run), or a repo agent as <owner/name>:<agent> (a bare <agent> is the asker's own repo's; a note typed into its live session there, else its next brief). A repo agent asks the factory agents and its own repo's; another repo's goes through overwatch
+  new <issue link | #n | goal…> [--blueprint b] [--start] [--parent id] [--note text]  add a ticket (goals get ids from 10000); --parent: it re-requests; --note: your words, which outweigh the factory's prompts in every brief
+                                     ticket <id>, and its digest starts from that one's
+  ask <agent> <text…> [--why evidence] [--ticket id] [--from agent]  ask another agent: maintainer (a request: typed into its terminal, which starts if it isn't running; takes --repo), overwatch (a note in Needs you and its terminal), learner or babysitter (a note for its next run), or a repo agent as <owner/name>:<agent> (a bare <agent> is the asker's own repo's; a note typed into its live session there, else its next brief). A repo agent asks the factory agents and its own repo's; another repo's goes through overwatch
   asks [agent] [--json] | asks done <id>  the open notes (to one agent) / mark one handled
-  request [--kind k] [--repo owner/name] <the change…>  ask the maintainer, for you, for a change to the factory itself; it comes back as a change you merge.
-                                     kinds: config (.factory/, the account config), blueprint, agents (repo or factory agents),
-                                     cleanup (housekeeping), look (the factory app's pages and colours, a PR to its develop); guessed from the words
-  account propose <id>               the maintainer's copy of ~/.factory/config.yaml to edit, in the request's folder (applied when the request merges)
+  request [--repo owner/name] <the change…>  ask the maintainer, for you, for a change to the factory itself (config, a blueprint, an agent,
+                                     a cleanup, a migration, the look); it edits the local files in place, with backups, and says what it changed
+  maintainer [--json]                start the maintainer agent, or print the live one's terminal
+  backup <file…>                     copy each file into $FACTORY_HOME/backups/<when>/ before changing it; prints where
+  restore <backup>                   put a backup back over its file (what is there now is backed up first)
+  update --check [--json]            the daemon's checkout vs origin/develop: N behind, with the commits it would take
+  update --run [--dry-run] [--json]  bring the daemon's checkout up: back up every factory database, then git merge
+                                     --ff-only origin/develop, scripts/sync.sh, and service install; --dry-run lists
+                                     the steps and runs nothing; a worktree with uncommitted changes refuses
   agents live [--json]               every agent running for every factory (repo, ticket, PR, stage, status, terminal, tokens) and every repo; the daemon writes it to ~/.factory/agents-live.json each tick
-  agents propose <id> <name>         the maintainer's copy of a factory agent (~/.factory/agents/<name>.md) to edit, in the request's folder (applied when it merges)
-  examples propose <id> <name> [--from <example>]  the maintainer's copy of an example agent (~/.factory/examples/agents/<name>.md) to edit; a new one starts
-                                     from --from; emptied, it removes the example (applied when it merges)
-  cleanup [--dry-run] [--days N] [--folders] [--propose <id>]  housekeeping: --dry-run lists what would go (tickets finished N days ago, default 14);
-                                     --propose writes CLEANUP.md into a cleanup request; with neither, it files the request ("clean up")
+  cleanup [--dry-run|--propose|--run] [--days N] [--folders]  housekeeping (tickets finished N days ago, default 14): --dry-run lists what would go;
+                                     --propose writes the list to <factory>/cleanup/ (narrow CLEANUP.json); --run removes what it lists, each re-checked;
+                                     alone, it asks the maintainer to clean up
   groom <id>                         the triage agent grooms a ticket that hasn't started
   pick <id> <blueprint>              the blueprint a ticket in grooming runs (triage's pick, or yours)
   repos <id> owner/name…             the repos a ticket that hasn't started works in (the lead is always one)
-  question <id> product|engineering <text…>  a grooming question (product ones go to the PO on the issue)
+  question <id> product|engineering <text…>  a grooming question (product ones go to the PO on the issue); a running ticket's agent asks in its terminal instead
   start <id>                         worktree + first stage + its agent in a herdr-core terminal
   stage-done <id> [--fail reason]    the stage's work is over: follow the blueprint
   budget <id> <in>[/<out>]           set a ticket's token budget: 3M, or 3M/200k
   send-back <id> <note…>             a ready PR goes back to its fix stage with your note (REVIEW.md)
-  answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one)
+  answer <id> <text…>                answer a parked ticket, or a grooming question ("A2: …" picks one), for scripts
+  talk <id> [--json]                 a parked ticket's stage (or a grooming one's triage) starts fresh and asks you in its terminal first
+  chat <id> [--close] [--json]       your own session on a ticket, outside its blueprint, in its worktree; a running ticket pauses until --close (or resume)
   pause <id> | resume <id>           stop a running ticket's agent / rerun the stage it paused in
   split <id> add <title…> [--scope text] [--keeps-work]  propose one part of a ticket that is really several, in order
   split <id> [approve|reject]        list a ticket's proposed parts / make them sub-issues / go on as one ticket
@@ -96,7 +112,14 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   merge <id>                         merge a ready ticket's PR by merge_method, squash by default (marks it ready first)
   merge-order <id> owner/name…       the order a cross-repo ticket's PRs merge in (default: the others, then the lead)
   ready <id>                         the ready rules for a ticket, as the pr stage sees them
-  sessions <id>                      the agent sessions started for a ticket, with their tokens
+  sessions <id> [--json]             the agent sessions started for a ticket, with their tokens and transcripts
+  journal <id> [--search "<words>"] [--json]  the ticket's history in order: created, stages, sessions (with their transcripts), questions
+                                     and answers, checks, verdicts, send-backs, the PR, the merge; --search ranks its events by full text
+  recall [<id>] "<words>" [--json] [--limit n]  search a ticket's journal and its sessions' transcripts together (every ticket's without an
+                                     id), best match first; each hit says its ticket, kind or role, a snippet, and where it came from
+  digest <id> [--print|--rebuild|--set <file|->]  the ticket's digest, the memory every brief carries (or its parent's, until it has
+                                     one); --rebuild has Haiku write it again from the whole journal and every transcript chunk, now;
+                                     --set stores your own version (from the file, or stdin with -), which later rewrites keep
   cloud <id> | all                   hand a running ticket (or every one) to a Claude Code cloud session; skips what can't move, with a reason
   local <id> | all                   bring a ticket (or every one in the cloud) back and resume it here
   routine [brief]                    write ROUTINE.md, the prompt for a Claude Code scheduled task that watches PRs while you sleep, and print how to set it up
@@ -104,14 +127,20 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   away on|off                        you're away, in every factory: away: (config.yaml, then factory.yaml) applies; Home shows a digest when you're back
   learn set <key> <value> [--why reason]  tune a setting learn.tunable lists, for tickets that start from now on
   learn undo <key> | learn list      drop an override / show the active ones beside the file's value
-  learn export                       print the edits that make the overrides permanent, as a patch (never writes .factory/)
-  learn suggest <the change…> --why <evidence>  the learner files a change outside learn.tunable as a maintainer request, with its evidence
+  learn export                       print the edits that make the overrides permanent, as a patch (never writes .factory/; the maintainer applies it)
+  learn suggest <the change…> --why <evidence>  the learner asks the maintainer for a change outside learn.tunable, with its evidence
   learn digest [--json]              what the learner agent reads: outcomes by setting, the target's trend, lessons, repeated comments
   learn run                          run the learner agent now (budget.learning, warmup and learn.pause_above still apply)
   learn restore <id>                 undo the daily lesson upkeep (or lesson retire): a merged lesson takes its hits back, a retired one goes back into briefs
   lesson add <area> <text…> [--source s]  a lesson for code matching the area glob (src/auth/**); loaded when a ticket touches it
   lesson list [words…] | lesson retire <id>  the store (--json), searched by words / take one out of briefs
-  overwatch [--json]                 start the overwatch agent, or print the live one's terminal
+  memory add --kind k [--ticket id] [--pr n] [--ref r] [--input file|-] [--output file|-] [--tokens n] [words…]
+                                     keep one thing this agent did (FACTORY_AGENT, else --agent) in its repo (the ticket's, else --repo, else the lead);
+                                     the output is --output's file (- is stdin), else the words; input and output keep 4000 characters each
+  memory outcome <id> <outcome> [--source who]  how it went: kept, edited, deleted, accepted, pushed-back, missed, merged, reverted, …
+  memory search <words…> [--agent a] [--kind k,…] [--limit n] [--json]  the closest past rows, those with an outcome first (good and bad)
+  memory list [--agent a] [--kind k,…] [--limit n] [--json]  the newest rows; the daemon fills stage and babysitter outcomes and keeps 5000 rows per agent and repo
+  overwatch [--find] [--json]        start the overwatch agent, or print the live one's terminal (--find: never start one)
   blueprints                         write blueprints.json (stages, runs in 7 days) for the Blueprint page
   dry-run <file|name> [--tickets N] [--json]  replay the last N (default 5) finished tickets through a draft blueprint, no agents; writes DRYRUN.md here
   plan <5h tokens> <week tokens>     your plan's limits, for the 5h and week meters: plan 20M 400M
@@ -124,6 +153,7 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   comment <id> C<n> fix|pushback|escalate <reason…>  the fix agent's verdict on a reviewer's comment
   label <id> C<n> fix|pushback|escalate  your own verdict on a review comment, for the agreement benchmark
   agreement [--dry-run] [--json]     re-judge your past review comments with review.judge_model and record how often it matches you (--dry-run counts them)
+  review approve <owner/repo>#<n>    approve a PR waiting on you (gh pr review --approve) and take it out of reviews.json (#<n>: this factory's repos)
   verdict <id> holdout|review pass|fail [detail…] [--by voter]  a checker's or reviewer's verdict
   artifact <id> <file> <url>         record where an agent shared a ticket file on claude.ai (artifacts: in factory.yaml); --fail <why> logs a publish that failed
   decide <ticket> <who> <what> [why] log a decision
@@ -131,13 +161,17 @@ const USAGE = `factory <command>   (factory: --name, else $FACTORY_NAME, else th
   setup skip|unskip <step>           set a step aside (it stays on the list; rerun setup any time)
   setup trust                        mark the factory's folders trusted in Claude Code, so its agents never stop at that prompt
   setup write [--budget 3M/150k] [--budget-day 40M/2M] [--merge human|auto] [--max-running n] [--queue owner/project]
-                                     write .factory/ on branch factory/setup (a temporary worktree; your checkout is untouched)
-  migrate flow-stack [--dry-run] [--propose <id>]  import past tasks, decisions and lessons from ~/.flow-stack and .flow/ (once each); --propose writes the profile, calibration and feature map into a maintainer request
-  setup migrate                      accept setup's flow-stack offer: a maintainer request that migrates it, as a PR
+                                     write .factory/ into the lead repo's checkout, never committed (it stays local: /.factory/
+                                     goes in .git/info/exclude); a file already there is kept
+  migrate flow-stack [--dry-run]     import past tasks, decisions and lessons from ~/.flow-stack and .flow/ (once each), and write the profile, calibration
+                                     and feature map into the account config and .factory/factory.yaml in place, with backups (MIGRATION.md says what)
+  setup migrate                      accept setup's flow-stack offer: asks the maintainer to migrate it
   health [trigger]                   run the full suite on each repo's default branch now, in a throwaway worktree; a failure files one bugfix ticket, a pass closes it
   bench <name> [--dry-run]           replay a .factory/benchmarks/<name>.yaml suite; --dry-run lists its tasks and variants and runs nothing
   claude [--json]                    which claude every factory session runs (claude.path in config.yaml, else the newest), and the others found
   validate [dir] [--json]            check .factory/ files (default ./.factory)
+  config get V2_UI|V2_SIDEBAR [--json]  the account's value (config.yaml), this factory's factory.yaml value, and which wins
+  config set V2_UI|V2_SIDEBAR true|false  set it in ~/.factory/config.yaml in place (comments stay) and rewrite every factory's status.json
   refresh [id]                       read usage, check agents and watched PRs now, rewrite status and ticket files
   status                             write status.json and print a summary
   run [--interval seconds] [--all] [--force]  the daemon: keep status.json fresh (--all: every factory); refuses while the service runs it
@@ -170,6 +204,35 @@ function closeFinished(terminal: string, ticket: number) {
 }
 
 const factoryHome = () => process.env.FACTORY_HOME ?? join(homedir(), ".factory");
+
+// A global agent's live terminal (globals.ts).
+const live: Live = (agent) => liveSession(sh, agent);
+
+// A request just asked of the maintainer: typed into its live terminal, else it starts with the
+// request in its brief. Run inside the request's change. Says where the request went.
+function handTo(db: Database, r: AskResult, name?: string) {
+  if (r.delivered) return "typed into the maintainer's terminal";
+  try {
+    const m = startMaintainer({ db, run: sh, now: new Date().toISOString(), name });
+    return m.started ? `the maintainer started in ${m.terminal} with it` : `the maintainer runs in ${m.terminal}; it gets it on the next tick`;
+  } catch (e) {
+    return `the maintainer isn't running and didn't start (${(e as Error).message.split("\n")[0].slice(0, 120)}); it gets it when it next starts (factory maintainer)`;
+  }
+}
+
+// Every tick: requests waiting (from the learner, say) while no maintainer runs start one, at
+// most every 10 minutes, so a start that fails isn't retried on every tick.
+function wakeMaintainer(db: Database, name: string, log: (s: string) => void) {
+  if (!openAsks(db, "maintainer").some((a) => !a.delivered_at) || liveMaintainer(sh)) return;
+  const last = getMeta(db, "maintainer_woken_at");
+  if (last && Date.now() - Date.parse(last) < 600_000) return;
+  setMeta(db, "maintainer_woken_at", new Date().toISOString());
+  try {
+    let m!: { terminal: string };
+    change(db, () => { m = startMaintainer({ db, run: sh, now: new Date().toISOString(), name }); });
+    log(`factory ${name}: the maintainer started in ${m.terminal} for the requests waiting`);
+  } catch (e) { log(`factory ${name}: starting the maintainer: ${(e as Error).message}`); }
+}
 
 export function paths(name: string, home = factoryHome()) {
   const dir = join(home, name);
@@ -212,11 +275,13 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const why = flag(args, "why");
   const source = flag(args, "source");
   const scope = flag(args, "scope");
-  const propose = flag(args, "propose");
   const fromFlag = flag(args, "from");
   const aboutFlag = flag(args, "ticket");
-  const kindFlag = flag(args, "kind");
   const daysFlag = flag(args, "days");
+  const searchFlag = flag(args, "search");
+  const parentFlag = flag(args, "parent");
+  const noteFlag = flag(args, "note");
+  const setFlag = flag(args, "set");
   const p = paths(name);
   const all = args.includes("--all");
   const json = args.includes("--json");
@@ -224,7 +289,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
   const dryRun = args.includes("--dry-run");
   const keepsWork = args.includes("--keeps-work");
   const folders = args.includes("--folders");
-  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work", "--folders"].includes(a));
+  const propose = args.includes("--propose");
+  const runFlag = args.includes("--run");
+  const rebuild = args.includes("--rebuild");
+  const [cmd, sub, ...rest] = args.filter((a) => !["--all", "--json", "--start", "--dry-run", "--keeps-work", "--folders", "--propose", "--run", "--rebuild", "--print"].includes(a));
   const now = () => new Date().toISOString();
   if (!cmd || cmd === "help" || cmd === "--help") return log(USAGE.replace('"FIELDS"', Object.keys(FIELDS).join(" ")));
   if (cmd === "service") return service(sub ?? "", { factoryHome: factoryHome(), log, json, arg: rest[0], login: loginFlag ?? undefined });
@@ -243,14 +311,73 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     const r = liveRoster({ run: sh, now: now() });
     return log(json ? JSON.stringify(r, null, 2) : rosterText(r));
   }
+  // Backups of what the maintainer changes (maintainer.ts): no factory needed, files only.
+  if (cmd === "backup") {
+    const files = [sub, ...rest].filter(Boolean);
+    if (!files.length) throw new Error("usage: factory backup <file…>");
+    for (const f of files) {
+      const b = backup(f, now());
+      log(b ? `${resolve(f)} → ${b} (factory restore ${b} puts it back)` : `${resolve(f)}: no file yet, nothing to back up (undo is deleting it)`);
+    }
+    return;
+  }
+  if (cmd === "restore") {
+    if (!sub) throw new Error("usage: factory restore <backup>");
+    const r = restore(sub, now());
+    return log(`${r.file} is back as it was in ${sub}${r.was ? `; what was there is in ${r.was}` : ""}`);
+  }
+  // The daemon's own updates (update.ts): no factory needed, the checkout the CLI runs from only.
+  if (cmd === "update") {
+    if (sub && sub !== "--check") throw new Error("usage: factory update --check [--json] | update --run [--dry-run] [--json]");
+    if (runFlag) {
+      const r = runUpdate({ dryRun, home: factoryHome(), now: now() });
+      if (json) return log(JSON.stringify(r));
+      if (r.refused) return log(`would refuse: ${r.refused}`);
+      for (const s of r.steps) log(r.dry ? `would: ${s}` : s);
+      return;
+    }
+    const c = checkUpdate({});
+    if (json) return log(JSON.stringify(c));
+    log(`factory ${c.commit ?? "?"} is ${c.upToDate ? "up to date with origin/develop" : `${c.behind} commit${c.behind === 1 ? "" : "s"} behind origin/develop`}`);
+    for (const k of c.commits) log(`  ${k.short} ${k.subject}`);
+    return;
+  }
+  // The account's on/off switches (account.ts SWITCHES), for the Config page's New UI row.
+  if (cmd === "config") {
+    const key = rest[0];
+    if (sub === "set") {
+      const r = setSwitch(key, rest[1]);
+      // Every factory reads the account file: rewrite each status.json now, so a window switches at once.
+      const done: string[] = [];
+      for (const n of factories()) {
+        const db = open(paths(n).db);
+        try { writeStatus(db, paths(n).status); done.push(n); } catch (e) { log(`factory ${n}: ${(e as Error).message}`); } finally { db.close(); }
+      }
+      return log(`${key}: ${r.value} in ${r.file}${r.changed ? "" : " (already)"}${done.length ? `; status rewritten for ${done.join(", ")}` : ""}`);
+    }
+    if (sub === "get") {
+      if (!(SWITCHES as readonly string[]).includes(key)) throw new Error(`usage: factory config get ${SWITCHES.join("|")} [--json]`);
+      const account = readAccount()[key as Switch] ?? null;
+      let factory: boolean | null = null, repo: string | null = null;
+      if (existsSync(p.db)) {
+        const db = open(p.db);
+        try { const lead = leadRepo(db); if (lead) { repo = lead.slug; factory = readFactory(lead.path)[key as Switch] ?? null; } } finally { db.close(); }
+      }
+      const v = { key, account, factory, repo, effective: (factory ?? account) === true };
+      if (json) return log(JSON.stringify(v));
+      return log(`${key}: ${v.effective ? "on" : "off"} (config.yaml: ${account ?? "not set"}; ${repo ?? "this factory"}'s factory.yaml: ${factory ?? "not set"})`);
+    }
+    throw new Error(`usage: factory config get ${SWITCHES.join("|")} [--json] | factory config set ${SWITCHES.join("|")} true|false`);
+  }
   if (cmd === "validate") {
-    // An account config (the maintainer's ACCOUNT-CONFIG.yaml proposal) is checked as one.
-    const accountLike = sub && /(^|\/)(ACCOUNT-CONFIG|config)\.yaml$/.test(sub) && existsSync(sub) && statSync(sub).isFile();
-    // A single agent file (a factory agent's FACTORY-AGENTS/<name>.md copy, say) is checked as an agent.
+    // An account config (~/.factory/config.yaml, or a copy of it) is checked as one.
+    const accountLike = sub && /(^|\/)config\.yaml$/.test(sub) && existsSync(sub) && statSync(sub).isFile();
+    // A single agent file (a factory agent's ~/.factory/agents/<name>.md, say) is checked as an agent.
     const agentLike = sub && !accountLike && sub.endsWith(".md") && existsSync(sub) && statSync(sub).isFile();
+    const own = sub ?? ownFactory(p.db);
     const results = accountLike ? [{ path: sub, errors: validateAccount(readFileSync(sub, "utf8")) }]
       : agentLike ? [{ path: sub, errors: validateFile(`agents/${basename(sub)}`, readFileSync(sub, "utf8")) }]
-      : validateDir(sub ?? ".factory");
+      : validateDir(own);
     if (!sub && existsSync(accountFile())) results.push({ path: accountFile().replace(homedir(), "~"), errors: validateAccount(readFileSync(accountFile(), "utf8")) });
     // The factory agents, one set for every repo, are checked with the account config.
     // Their skills: ~/.factory/skills/ only, since a factory agent is one for every repo.
@@ -258,19 +385,24 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     if (!sub) for (const f of factoryAgentFiles()) results.push({ path: f.replace(homedir(), "~"), errors: agentErrors(f) });
     // So is the example library (yours and the shipped ones): never run, but copied into repos.
     if (!sub) for (const f of exampleFiles()) results.push({ path: f.replace(homedir(), "~"), errors: agentErrors(f) });
+    // The shared steps every repo's blueprints may name, and the example steps (steps.ts).
+    if (!sub) for (const f of [...stepFiles(), ...exampleStepFiles()]) results.push({ path: f.replace(homedir(), "~"), errors: validateFile(`steps/${basename(f)}`, readFileSync(f, "utf8")) });
     // And the factory skills (yours and the shipped ones), which agents list by name (skills.ts).
     if (!sub) for (const f of skillFiles()) results.push({ path: f.replace(homedir(), "~"), errors: skillFileErrors(readFileSync(f, "utf8")) });
     // Every other repo of the factory: its own repo agents, which its tickets' stages run (agents.ts).
+    // .factory/ stays local (local.ts): a repo that tracks it is told how to stop, never changed for you.
+    const tracked = (slug: string, path: string) => { const n = trackedFactory(path).length; if (n) results.push({ path: `${slug} .factory/`, errors: [], warnings: [trackedWarning(slug, n)] } as any); };
     if (!sub && existsSync(p.db)) {
       const db = open(p.db);
       try {
         for (const r of listRepos(db)) {
+          tracked(r.slug, r.path);
           const dir = join(r.path, ".factory");
-          if (!existsSync(join(dir, "agents")) || (existsSync(".factory") && realpathSync(dir) === realpathSync(".factory"))) continue;
+          if (!existsSync(join(dir, "agents")) || (existsSync(own) && realpathSync(dir) === realpathSync(own))) continue;
           for (const x of validateDir(dir)) if (x.path.startsWith("agents/")) results.push({ ...x, path: `${r.slug} .factory/${x.path}` });
         }
       } finally { db.close(); }
-    }
+    } else if (!sub && existsSync(".factory")) tracked(".", ".");
     if (json) return log(JSON.stringify(results));
     for (const r of results as { path: string; errors: string[]; warnings?: string[]; off?: true }[])
       log((r.errors.length ? `✗ ${r.path}\n${r.errors.map((e) => `    ${e}`).join("\n")}` : `${r.warnings?.length ? "!" : "✓"} ${r.path}${r.off ? " (off)" : ""}`) + (r.warnings ?? []).map((w) => `\n    ${w}`).join(""));
@@ -295,10 +427,13 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
     if (cmd === "init") {
       const path = resolve(repoPath ?? ".");
       change(db, () => { setMeta(db, "name", name); setRepo(db, { slug: repo !== "unknown" ? repo : originSlug(path) ?? repo, path, lead: true }); });
+      adopt(path, leadRepo(db)!.slug, log);
       const agents = installFactoryAgents();
       if (agents.length) log(`the factory agents (${agents.join(", ")}) are in ${factoryAgentsDir().replace(homedir(), "~")}/, one set for every repo`);
       const examples = installExamples();
       if (examples.length) log(`the example agents (${examples.join(", ")}) are in ${examplesDir().replace(homedir(), "~")}/, for new repo agents to start from`);
+      const steps = installExampleSteps();
+      if (steps.length) log(`the example steps (${steps.join(", ")}) are in ${exampleStepsDir().replace(homedir(), "~")}/, for blueprints to share`);
       const skills = installSkills();
       if (skills.length) log(`the factory skills (${skills.join(", ")}) are in ${skillsDir().replace(homedir(), "~")}/, for an agent to list in skills:`);
     } else if (cmd === "setup") {
@@ -313,22 +448,24 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       } else if (sub === "write") {
         const r = writeSetup({ repo: lead.path, name: getMeta(db, "name") ?? name, slug: lead.slug,
           basics: { budget: budgetFlag ?? undefined, budgetDay: budgetDayFlag ?? undefined, merge: mergeFlag ?? undefined, maxRunning: maxRunningFlag === null ? undefined : Number(maxRunningFlag), queue: queueFlag ?? undefined } });
-        log(`${r.committed ? `committed ${r.sha} on` : "already up to date on"} ${r.branch}: ${r.files.join(", ")}\nyour checkout (${r.from}) is untouched; review the branch, then merge it: git merge ${r.branch}`);
+        log(`${r.written.length ? `wrote ${r.written.join(", ")}` : "nothing to write"} in ${r.dir}${r.kept.length ? `; kept your ${r.kept.length} file${r.kept.length === 1 ? "" : "s"} already there` : ""}`);
+        log(r.tracked.length ? trackedWarning(lead.slug, r.tracked.length) : ".factory/ stays on this machine: it's in .git/info/exclude, never committed or pushed");
         return;
       } else if (sub === "migrate") {
-        // You accepted the offer: the maintainer migrates flow-stack, and it comes back as a PR.
+        // You accepted the offer: the maintainer migrates flow-stack, in place.
         const open = migrationRequest(db);
-        if (open && !["merged", "closed"].includes(open.state)) return log(`#${open.id} already asks the maintainer to migrate flow-stack (${open.state})`);
+        if (open?.state === "migrated") return log(`flow-stack is migrated already (${open.at}); factory migrate flow-stack runs it again`);
+        if (open) return log(`note #${open.id} already asks the maintainer to migrate flow-stack`);
         const found = realProbe().flowStack?.(lead.path) ?? [];
         if (!found.length) throw new Error("no flow-stack here to migrate: no ~/.flow-stack/profile.md, no .flow/ in the repo, no flow-stack plugin");
-        let r: any = null;
+        let r!: AskResult, where = "";
         change(db, () => {
-          r = request(db, { text: MIGRATION_REQUEST, kind: "config", repo: lead.slug, run: sh, now: now(), dir: p.dir, evidence: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --propose <this ticket's id>\`, then review what it wrote and finish what MIGRATION.md lists.` });
-          setMeta(db, MIGRATION_META, String(r.id));
+          r = askAgent(db, { to: "maintainer", text: MIGRATION_REQUEST, from: "you", slug: lead.slug, run: sh, now: now(), name, live, why: `Setup found ${found.join(", ")}. Run \`factory migrate flow-stack --name ${name}\`, then read what it wrote and finish what MIGRATION.md lists.` });
+          setMeta(db, MIGRATION_META, String(r.ask.id));
+          where = handTo(db, r, name);
         });
-        log(`#${r.id}: the maintainer migrates flow-stack (found ${found.join(", ")}); it comes back as a PR for you`);
+        log(`note #${r.ask.id}: the maintainer migrates flow-stack (found ${found.join(", ")}); ${where}`);
         writeStatus(db, p.status);
-        writeTicketFiles(db, p.dir, r.id);
         return;
       } else if (sub) throw new Error("usage: factory setup [skip|unskip <step> | trust | migrate | write [--budget …]]");
       else {
@@ -337,6 +474,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (agents.length && !json) log(`wrote the factory agents (${agents.join(", ")}) to ${factoryAgentsDir().replace(homedir(), "~")}/`);
         const examples = installExamples();
         if (examples.length && !json) log(`wrote the example agents (${examples.join(", ")}) to ${examplesDir().replace(homedir(), "~")}/`);
+        const exampleSteps = installExampleSteps();
+        if (exampleSteps.length && !json) log(`wrote the example steps (${exampleSteps.join(", ")}) to ${exampleStepsDir().replace(homedir(), "~")}/`);
         const skills = installSkills();
         if (skills.length && !json) log(`wrote the factory skills (${skills.join(", ")}) to ${skillsDir().replace(homedir(), "~")}/`);
         const steps = setupSteps({ repo: lead.path, skipped: skippedSteps(db), migration: migrationRequest(db) });
@@ -344,11 +483,10 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         return;
       }
     } else if (cmd === "migrate") {
-      if (sub !== "flow-stack") throw new Error("usage: factory migrate flow-stack [--dry-run] [--propose <request id>]");
-      if (propose !== null && !Number.isInteger(Number(propose))) throw new Error("--propose needs the maintainer request's ticket id");
+      if (sub !== "flow-stack") throw new Error("usage: factory migrate flow-stack [--dry-run]");
       const lead = needLead(db);
       const listed = existsSync(join(lead.path, ".factory", "blueprints")) ? readdirSync(join(lead.path, ".factory", "blueprints")).map((f) => f.replace(/\.yaml$/, "")) : [];
-      change(db, () => { migrateFlowStack(db, { home: process.env.HOME ?? homedir(), repo: lead.path, dir: p.dir, blueprints: listed, dryRun, now: now(), log, propose: propose === null ? undefined : Number(propose), run: sh }); });
+      change(db, () => { migrateFlowStack(db, { home: process.env.HOME ?? homedir(), repo: lead.path, dir: p.dir, blueprints: listed, dryRun, now: now(), log, run: sh }); });
     } else if (cmd === "repo") {
       if (sub === "add") {
         const [slug] = rest;
@@ -358,13 +496,17 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (!existsSync(join(resolve(repoPath), ".git"))) throw new Error(`${resolve(repoPath)} isn't a git checkout`);
         if (leadRepo(db)?.slug === slug) throw new Error(`${slug} is the lead repo; factory init --path moves its checkout`);
         change(db, () => setRepo(db, { slug, path: resolve(repoPath), lead: false }));
+        adopt(resolve(repoPath), slug, log);
       } else if (sub) throw new Error("usage: factory repo [add owner/name --path <dir>]");
       for (const r of listRepos(db)) log(`${r.lead ? "*" : " "} ${r.slug}  ${r.path}`);
       return;
     } else if (cmd === "ticket" && sub === "add") {
       const [id, ...title] = rest;
       if (!Number.isInteger(Number(id)) || !title.length) throw new Error("usage: factory ticket add <id> <title…>");
-      change(db, () => db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (?, ?, ?, ?)").run(Number(id), title.join(" "), blueprint, now()));
+      change(db, () => {
+        db.query("INSERT INTO tickets (id, title, blueprint, updated_at) VALUES (?, ?, ?, ?)").run(Number(id), title.join(" "), blueprint, now());
+        journal(db, { ticket: Number(id), kind: "created", text: `${title.join(" ")} (${blueprint} blueprint)`, at: now() });
+      });
     } else if (cmd === "ticket" && sub === "set") {
       const [id, ...pairs] = rest;
       const sets = pairs.map((pair) => {
@@ -396,7 +538,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (!Number.isInteger(Number(sub)) || !check || (r !== "PASS" && r !== "FAIL")) throw new Error("usage: factory evidence <id> <check> pass|fail [detail…]");
       change(db, () => {
         if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(Number(sub))) throw new Error(`no ticket ${sub}`);
-        db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now());
+        const e = db.query("INSERT INTO evidence (ticket, check_name, result, detail, at) VALUES (?, ?, ?, ?, ?)").run(Number(sub), check, r, detail.join(" ") || null, now()).lastInsertRowid;
+        journal(db, { ticket: Number(sub), kind: "check", text: `${check} ${r}${detail.length ? `: ${detail.join(" ")}` : ""}`, ref: `evidence:${e}`, at: now() });
       });
     } else if (cmd === "comment") {
       const [c = "", verdict = "", ...why] = rest;
@@ -448,22 +591,19 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       writeStatus(db, p.status);
     } else if (cmd === "ask" || cmd === "request") {
       // One agent asks another (ask.ts). `factory request` is asking the maintainer for the
-      // person: Overwatch runs it once they agree, so it is from you unless --from says otherwise.
+      // person (Overwatch runs it when they tell it to), so it is from you unless --from says otherwise.
       const lead = needLead(db);
       const [to, words] = cmd === "request" ? ["maintainer", [sub, ...rest]] : [sub ?? "", rest];
       const about = aboutFlag ?? process.env.FACTORY_TICKET ?? null;
       if (about !== null && !Number.isInteger(Number(about))) throw new Error("--ticket takes the ticket's id");
-      if (kindFlag !== null && !isKind(kindFlag)) throw new Error(`--kind is one of ${REQUEST_KINDS.join(", ")}`);
-      let r!: AskResult;
+      let r!: AskResult, toMaintainer = "";
       change(db, () => {
         r = askAgent(db, { to, text: words.filter(Boolean).join(" "), why, from: cmd === "request" ? fromFlag ?? "you" : askerOf(fromFlag), fromRepo: process.env.FACTORY_REPO ?? null, about: about === null ? null : Number(about),
-          slug: lead.slug, dir: p.dir, run: sh, now: now(), name, overwatch: () => liveOverwatch(sh), requestKind: kindFlag ?? undefined, target: repo !== "unknown" ? repo : undefined });
+          slug: lead.slug, run: sh, now: now(), name, live, target: repo !== "unknown" ? repo : undefined });
+        if (r.ask.to === "maintainer") toMaintainer = handTo(db, r, name);
       });
       writeStatus(db, p.status);
-      if (r.kind === "request") {
-        writeTicketFiles(db, p.dir, r.id);
-        return log(`#${r.id} ${r.title}: a ${r.requestKind} request for the maintainer from ${r.ask.from}, in ${r.repo}; it starts when a slot is free, and the change comes back for you to merge`);
-      }
+      if (toMaintainer) return log(`note #${r.ask.id} for the maintainer, from ${r.ask.from}: ${toMaintainer}`);
       const where = r.ask.toRepo ? (r.delivered ? "typed into its live session" : `no session of it is live in ${r.ask.toRepo}: its next one there gets it`)
         : r.ask.to === "overwatch" ? (r.delivered ? "typed into Overwatch's terminal, and in Needs you" : "in Needs you; Overwatch gets it when its terminal is live") : `waits for the ${r.ask.to}'s next run`;
       return log(`note #${r.ask.id} for ${askTarget(r.ask)}, from ${r.ask.from}: ${where}`);
@@ -481,47 +621,31 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (!list.length) log(`no open notes${sub ? ` for ${sub}` : ""}`);
       for (const a of done) log(`Note #${a.id} from ${a.from === "you" ? "the person" : a.from}${a.about ? ` about #${a.about}` : ""}: ${a.text} [done]`);
       return;
-    } else if (cmd === "account") {
-      // The account config isn't in any repo: the maintainer edits a copy in the request's folder.
-      if (sub !== "propose" || !Number.isInteger(Number(rest[0]))) throw new Error("usage: factory account propose <request id>");
-      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
-      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
-      log(`${proposeAccount(p.dir, Number(rest[0]))}: edit this copy; the factory check validates it and the PR shows the diff. It applies when the request merges.`);
-      return;
-    } else if (cmd === "agents") {
-      // The factory agents aren't in any repo: the maintainer edits a copy in the request's folder.
-      if (sub !== "propose" || !Number.isInteger(Number(rest[0])) || !rest[1]) throw new Error("usage: factory agents propose <request id> <agent name>");
-      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
-      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
-      log(`${proposeFactoryAgent(p.dir, Number(rest[0]), rest[1])}: edit this copy; the factory check validates it and the PR shows the diff. It applies when the request merges.`);
-      return;
-    } else if (cmd === "examples") {
-      // The example library isn't in any repo either: the same, in EXAMPLES/ in the request's folder.
-      if (sub !== "propose" || !Number.isInteger(Number(rest[0])) || !rest[1]) throw new Error("usage: factory examples propose <request id> <example name> [--from <example>]");
-      const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(Number(rest[0])) as { blueprint: string } | null;
-      if (t?.blueprint !== "factory") throw new Error(`#${rest[0]} isn't a request for the maintainer`);
-      log(`${proposeExample(p.dir, Number(rest[0]), rest[1], fromFlag ?? undefined)}: edit this copy (empty it to remove the example); the factory check validates it and the PR shows the diff. It applies when the request merges.`);
-      return;
     } else if (cmd === "cleanup") {
       const days = daysFlag === null ? undefined : Number(daysFlag);
       if (days !== undefined && !(Number.isFinite(days) && days >= 0)) throw new Error("--days takes a number of days, like --days 14");
       if (dryRun) return log(planMarkdown(cleanupPlan(db, { dir: p.dir, run: sh, now: now(), days, folders }), "Cleanup (dry run: nothing removed)"));
-      if (propose !== null) {
-        // The maintainer's step in a cleanup request: the list goes into its ticket, removed only once you merge it.
-        const id = Number(propose);
-        const t = db.query("SELECT blueprint FROM tickets WHERE id = ?").get(id) as { blueprint: string } | null;
-        if (t?.blueprint !== "factory" || requestKind(db, id) !== "cleanup") throw new Error(`#${propose} isn't a cleanup request for the maintainer`);
-        const plan = proposeCleanup(db, { dir: p.dir, id, run: sh, now: now(), days, folders });
-        return log(`${plan.items.length} to remove, ${plan.kept.length} kept → ${join(p.dir, "tickets", String(id), "CLEANUP.md")}; nothing is removed until the request merges`);
+      if (propose) {
+        const plan = proposeCleanup(db, { dir: p.dir, run: sh, now: now(), days, folders });
+        return log(`${plan.items.length} to remove, ${plan.kept.length} kept → ${join(cleanupDir(p.dir), "CLEANUP.md")}; narrow ${join(cleanupDir(p.dir), "CLEANUP.json")} to what was asked, then factory cleanup --run`);
       }
-      // `factory cleanup` alone: a cleanup request, like asking Overwatch to clean up.
+      if (runFlag) {
+        let c!: ReturnType<typeof performCleanup>;
+        change(db, () => { c = performCleanup(db, { dir: p.dir, run: sh, now: now(), who: askerOf(fromFlag) }); });
+        if (c.vacuum) db.exec("VACUUM"); // never inside a transaction
+        log(`cleanup: ${c.summary} (${join(cleanupDir(p.dir), "CLEANUP.md")})`);
+        for (const d of c.done) log(`  removed ${d}`);
+        for (const k of c.skipped) log(`  ${k}`);
+        writeStatus(db, p.status);
+        return;
+      }
+      // `factory cleanup` alone: asks the maintainer, like telling Overwatch to clean up.
       const lead = needLead(db);
-      let r: any = null;
+      let r!: AskResult, where = "";
       const text = `Clean up tickets closed or merged more than ${days ?? 14} days ago${folders ? ", their ticket folders too" : ""}`;
-      change(db, () => { r = request(db, { text, repo: lead.slug, run: sh, now: now(), dir: p.dir, kind: "cleanup" }); });
-      log(`#${r.id}: a cleanup request for the maintainer; its list waits for you to merge before anything is removed`);
+      change(db, () => { r = askAgent(db, { to: "maintainer", text, from: "you", slug: lead.slug, run: sh, now: now(), name, live }); where = handTo(db, r, name); });
+      log(`note #${r.ask.id}: a cleanup for the maintainer; ${where}`);
       writeStatus(db, p.status);
-      writeTicketFiles(db, p.dir, r.id);
     } else if (cmd === "new") {
       const text = [sub, ...rest].filter(Boolean).join(" ");
       const lead = needLead(db);
@@ -532,7 +656,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       // A held start still adds the ticket; it waits in the queue.
       const held = start ? startHold(db, lead.path, new Date()) : null;
       change(db, () => {
-        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start });
+        r = newTicket(db, { text, repo: lead.slug, blueprint, run: sh, now: now(), groom: !start, parent: parentFlag == null ? undefined : Number(parentFlag), note: noteFlag ?? undefined });
         if (start && !held) terminal = startTicket(db, { dir: p.dir, repo: lead.path, id: r.id });
       });
       log(`#${r.id} ${r.title}${start && !held ? ` started${terminal ? `: agent in ${terminal}` : ""}` : held ? ` queued; not started: ${held}` : " added; the triage agent grooms it, and it starts once nothing is left to ask"}`);
@@ -550,19 +674,12 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const id = Number(sub);
       if (!Number.isInteger(id)) throw new Error(`usage: factory ${cmd} <id>…`);
       let out = "";
-      const closing: string[] = [];
       change(db, () => {
         if (cmd === "groom") out = `#${id}: triage agent in ${startGrooming(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() })}`;
         else if (cmd === "pick") { pick(db, { repo: repoDir, id, blueprint: rest[0] ?? "", now: now() }); out = `#${id} runs the ${rest[0]} blueprint`; }
-        else if ((db.query("SELECT state FROM tickets WHERE id = ?").get(id) as { state: string } | null)?.state === "running") {
-          const q = askMidRun(db, { repo: repoDir, id, kind: rest[0] ?? "", text: rest.slice(1).join(" "), run: sh, now: now() });
-          out = `#${id}: Q${q.n} asked; the ticket is parked until it's answered. Stop work now.`;
-          closing.push(...q.terminals);
-        }
         else out = `#${id}: Q${ask(db, { id, kind: rest[0] ?? "", text: rest.slice(1).join(" "), now: now() })} asked`;
       });
       log(out);
-      for (const t of closing) closeFinished(t, id);
     } else if (cmd === "start") {
       const repoDir = needLead(db).path;
       let terminal: string | null = null;
@@ -603,6 +720,32 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       });
       log(r.children ? `#${sub}: split into ${r.children.map((c: number) => `#${c}`).join(", ")}` : r.rejected ? `#${sub}: kept as one ticket` : r.answered ? `#${sub}: answered ${r.answered.map((n: number) => `Q${n}`).join(", ")}; ${r.left ? `${r.left} open` : r.started ? "groomed and started" : "groomed, queued"}`
         : `#${sub}: back to ${r.stage}${r.terminal ? `, agent in ${r.terminal}` : ""}`);
+    } else if (cmd === "talk") {
+      // `u` on a ticket waiting on a question with no live session: a fresh session asks you in its terminal.
+      const repoDir = needLead(db).path;
+      const id = Number(sub);
+      if (!Number.isInteger(id)) throw new Error("usage: factory talk <id> [--json]");
+      let r: { stage: string; terminal: string | null } | null = null;
+      change(db, () => {
+        const t = db.query("SELECT state FROM tickets WHERE id = ?").get(id) as { state: string } | null;
+        r = t?.state === "grooming" ? { stage: "groom", terminal: startGrooming(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }) }
+          : talk(db, { dir: p.dir, repo: repoDir, id });
+      });
+      const { stage, terminal } = r!;
+      return log(json ? JSON.stringify({ stage, terminal }) : `#${id}: the ${stage} agent asks you in ${terminal}`);
+    } else if (cmd === "chat") {
+      // The ticket's own session, outside the blueprint (chat.ts); --close ends it and resumes a ticket it paused.
+      const repoDir = needLead(db).path;
+      const id = Number(sub);
+      if (!Number.isInteger(id)) throw new Error("usage: factory chat <id> [--close] [--json]");
+      if (args.includes("--close")) {
+        let r: any = null;
+        change(db, () => { r = closeChat(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); });
+        return log(json ? JSON.stringify(r) : !r.closed ? `#${id}: no chat session open` : `#${id}: chat session closed${r.resumed ? `; resumed at ${r.resumed.stage}` : ""}`);
+      }
+      let r: any = null;
+      change(db, () => { r = startChat(db, { dir: p.dir, repo: repoDir, id, run: sh, now: now() }); });
+      return log(json ? JSON.stringify(r) : `#${id}: chat session ${r.started ? "started" : "open"} in ${r.terminal}${r.paused ? "; the ticket is paused until you close it" : ""}`);
     } else if (cmd === "diff") {
       const repoDir = needLead(db).path;
       return log(ticketDiff(db, { repo: repoDir, id: Number(sub) }));
@@ -647,11 +790,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       const repoDir = needLead(db).path;
       let r: any = null;
       // gh runs outside the transaction (#110); the record of it is the short one.
-      const gh = mergeOnGithub(db, { repo: repoDir, id: Number(sub), dir: p.dir });
+      const gh = mergeOnGithub(db, { repo: repoDir, id: Number(sub) });
       change(db, () => { r = recordMerge(db, { repo: repoDir, id: Number(sub), r: gh }); });
-      let merged = { vacuum: false };
-      change(db, () => { merged = applyMerged(db, { dir: p.dir, now: now(), run: sh, log }); });
-      if (merged.vacuum) db.exec("VACUUM"); // a merged cleanup's; never inside a transaction
       if (r.failed) {
         // The merges that went through are recorded; the ticket stays ready for `m` again.
         writeStatus(db, p.status);
@@ -670,8 +810,63 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       for (const r of rules) log(`${RULE_MARK[r.result]} ${r.rule}: ${r.detail}`);
       return;
     } else if (cmd === "sessions") {
-      for (const r of db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[])
-        log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}`);
+      const rows = db.query("SELECT s.*, (SELECT SUM(usd) FROM usage u WHERE u.session = s.id) AS usd FROM sessions s WHERE ticket = ? ORDER BY id").all(Number(sub)) as any[];
+      // --json: what the V2 Chat view reads (lib/ticketchat.js): each session's transcript and terminal.
+      if (json) return log(JSON.stringify(rows.map((r) => ({ id: r.id, stage: r.stage, agent: r.agent ?? null, terminal: r.terminal ?? null,
+        started_at: r.started_at, ended_at: r.ended_at ?? null, claude_session: r.claude_session ?? null, transcript: r.transcript ?? null,
+        tokens_in: r.tokens_in, tokens_out: r.tokens_out, usd: r.usd ?? 0, paused_ticket: r.paused_ticket ?? 0 }))));
+      for (const r of rows)
+        log(`${r.started_at.slice(0, 16)}  ${r.stage.padEnd(10)} ${r.terminal ?? "-"}  ${r.ended_at ? "ended" : "open "}  ${JSON.parse(r.argv)[0]}  ${r.tokens_in} in, ${r.tokens_out} out, $${(r.usd ?? 0).toFixed(2)}${r.transcript ? `  ${r.transcript}` : ""}`);
+      return;
+    } else if (cmd === "journal") {
+      // The ticket's journal (journal.ts): every event in order, or the closest to --search.
+      const id = Number(sub);
+      if (!Number.isInteger(id) || !sub) throw new Error('usage: factory journal <id> [--search "<words>"] [--json]');
+      if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`no ticket ${id}`);
+      const events = ticketEvents(db, id, searchFlag != null ? { query: searchFlag } : {});
+      if (json) return log(JSON.stringify(events));
+      for (const e of events) log(eventLine(e));
+      if (!events.length) log(searchFlag != null ? `#${id}: nothing in its journal matches "${searchFlag}"` : `#${id}: its journal is empty`);
+      return;
+    } else if (cmd === "recall") {
+      // A ticket's journal and transcript chunks searched together, or every ticket's (recall.ts).
+      const m = [sub, ...rest].filter((a): a is string => a != null);
+      const limitArg = flag(m, "limit");
+      const limit = limitArg == null ? undefined : Number(limitArg);
+      if (limit != null && !(Number.isInteger(limit) && limit > 0)) throw new Error("--limit takes a number");
+      const ticket = m.length > 1 && /^\d+$/.test(m[0]) ? Number(m.shift()) : undefined;
+      const words = m.join(" ");
+      if (!words.trim()) throw new Error('usage: factory recall [<id>] "<words>" [--json] [--limit n]');
+      if (ticket != null && !db.query("SELECT 1 FROM tickets WHERE id = ?").get(ticket)) throw new Error(`no ticket ${ticket}`);
+      const hits = recallHits(db, { query: words, ticket, limit });
+      if (json) return log(JSON.stringify(hits));
+      for (const h of hits) log(hitLine(h));
+      if (!hits.length) log(`${ticket != null ? `#${ticket}: ` : ""}nothing in the journal${ticket != null ? "" : "s"} or transcripts matches "${words}"`);
+      return;
+    } else if (cmd === "digest") {
+      // The ticket's digest (digest.ts): printed, or written again now from everything (--rebuild).
+      const id = Number(sub);
+      if (!Number.isInteger(id) || !sub) throw new Error("usage: factory digest <id> [--print|--rebuild|--set <file|->]");
+      if (!db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`no ticket ${id}`);
+      if (setFlag != null && rebuild) throw new Error("--set and --rebuild: pick one");
+      if (setFlag != null) {
+        // Your own version, fixed by hand: the Ticket page's Memory tab writes a file and runs this.
+        const text = readFileSync(setFlag === "-" ? 0 : setFlag, "utf8");
+        const r = setDigest(db, { id, text, now: now(), commit: (fn) => change(db, fn) });
+        writeStatus(db, p.status);
+        if (!json) return log(`#${id}: digest saved as you wrote it (${r.chars} characters); later rewrites keep your corrections${r.files.length ? `; wrote ${r.files.join(", ")}` : ""}`);
+      }
+      if (rebuild) {
+        const r = runDigest(db, { id, repo: needLead(db).path, run: sh, now: now(), cwd: p.dir, rebuild: true, commit: (fn) => change(db, fn) });
+        if (!r.ok) throw new Error(`#${id}: the digest wasn't rebuilt: ${r.why}`);
+        writeStatus(db, p.status);
+        if (!json) log(`#${id}: digest rebuilt (${r.chars} characters, $${r.usd.toFixed(4)})${r.files.length ? `; wrote ${r.files.join(", ")}` : ""}`);
+      }
+      const d = digestOf(db, id);
+      if (json) return log(JSON.stringify(d));
+      if (!d) return log(`#${id} has no digest yet: it is written after the ticket's next session ends (or now: factory digest ${id} --rebuild)`);
+      log(`# #${id}'s digest${d.from !== id ? `: none of its own yet, so #${d.from}'s, which it starts from` : ""} · ${d.at.slice(0, 16).replace("T", " ")}${d.event != null ? ` · the journal up to event ${d.event}` : ""}\n`);
+      log(d.text);
       return;
     } else if (cmd === "cloud" || cmd === "local") {
       const repoDir = needLead(db).path;
@@ -750,9 +945,8 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         if (!patch && !notes.length) log("# no overrides to export");
       } else if (sub === "suggest") {
         let r: any = null;
-        change(db, () => { r = learnerSuggest(db, { dir: p.dir, repo: lead.path, slug: lead.slug, text: rest.join(" "), evidence: why ?? "", run: sh, now: now() }); });
-        log(r ? `#${r.id}: a request for the maintainer, from the learner` : "an open request already asks for this");
-        if (r) writeTicketFiles(db, p.dir, r.id);
+        change(db, () => { r = learnerSuggest(db, { repo: lead.path, slug: lead.slug, text: rest.join(" "), evidence: why ?? "", run: sh, now: now() }); });
+        log(r ? `note #${r.id}: a request for the maintainer, from the learner` : "an open request already asks for this");
       } else if (sub === "digest") {
         const d = learnerDigest(db, lead.path);
         if (json) return log(JSON.stringify(d));
@@ -765,7 +959,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         const r = runLearner(db, { dir: p.dir, repo: lead.path, slug: lead.slug, run: sh, now: now(), force: true, commit: (fn) => change(db, fn) });
         if (!r.ran) throw new Error(`the learner didn't run: ${r.why}`);
         log(`learner run: ${r.status}${r.status === "done" ? "" : ` (${r.why})`}`);
-        for (const f of r.filed) { log(`#${f.id}: ${f.title}`); writeTicketFiles(db, p.dir, f.id); }
+        for (const f of r.filed) log(`note #${f.id} for the maintainer: ${f.title}`);
         for (const x of r.skipped) log(`already asked: ${x}`);
       } else if (sub === "restore") {
         if (!Number.isInteger(Number(rest[0])) || !rest[0]) throw new Error("usage: factory learn restore <id>");
@@ -773,6 +967,41 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         change(db, () => { l = restoreLesson(db, Number(rest[0]), now()); });
         log(l.dup_of != null ? `lesson ${l.id} restored: no longer merged into ${l.dup_of}; ${l.moved_hits} hit${l.moved_hits === 1 ? "" : "s"} back` : `lesson ${l.id} restored: back in briefs`);
       } else throw new Error("usage: factory learn set|undo|list|export|suggest|digest|run|restore");
+    } else if (cmd === "memory") {
+      // An agent's memory (memory.ts): it is the agent this session runs as, in the ticket's repo.
+      const m = [...rest];
+      const text = (v: string | null) => (v == null ? undefined : readFileSync(v === "-" ? 0 : v, "utf8"));
+      const num = (v: string | null, what: string) => { if (v == null) return null; if (!Number.isInteger(Number(v))) throw new Error(`${what} takes a number`); return Number(v); };
+      const agentFlag = flag(m, "agent"), inputFlag = flag(m, "input"), outputFlag = flag(m, "output"), kindFlag = flag(m, "kind");
+      const pr = num(flag(m, "pr"), "--pr"), tokens = num(flag(m, "tokens"), "--tokens"), limit = num(flag(m, "limit"), "--limit") ?? undefined, ref = flag(m, "ref");
+      const ticket = num(aboutFlag ?? process.env.FACTORY_TICKET ?? null, "--ticket");
+      const agent = agentFlag ?? process.env.FACTORY_AGENT ?? null;
+      const ticketRepo = ticket != null ? (db.query("SELECT repo FROM ticket_lead WHERE id = ?").get(ticket) as { repo: string | null } | null)?.repo : null;
+      const where = repo !== "unknown" ? repo : ticketRepo ?? needLead(db).slug;
+      const kinds = kindFlag ? kindFlag.split(",") : undefined;
+      const show = (rows: Memory[]) => {
+        if (json) return log(JSON.stringify(rows));
+        for (const r of rows) log(`${r.id}  ${r.agent}  ${r.at.slice(0, 10)}  ${memoryLine(r).slice(2)}`);
+        if (!rows.length) log("no memories");
+      };
+      if (sub === "add") {
+        if (!agent) throw new Error("whose memory? run it from an agent's session (FACTORY_AGENT), or pass --agent <name>");
+        if (!kindFlag) throw new Error("usage: factory memory add --kind <review-comment|verdict|stage-output|…> [--input file|-] [--output file|-] [output words…]");
+        const output = text(outputFlag) ?? m.join(" ");
+        let id = 0;
+        change(db, () => { id = remember(db, { agent, repo: where, kind: kindFlag, ticket, pr, ref, input: text(inputFlag), output, tokens, at: now() }); });
+        log(`memory ${id} for ${agent} in ${where}; factory memory outcome ${id} <outcome> once you know how it went`);
+      } else if (sub === "outcome") {
+        const [id, outcome] = m;
+        if (!Number.isInteger(Number(id)) || !outcome) throw new Error("usage: factory memory outcome <id> <kept|edited|deleted|accepted|pushed-back|missed|merged|reverted|…> [--source who]");
+        change(db, () => setOutcome(db, Number(id), outcome, source ?? agent ?? "you", now()));
+        log(`memory ${id}: ${outcome}`);
+      } else if (sub === "search") {
+        if (!m.length) throw new Error("usage: factory memory search <words…> [--agent a] [--kind k] [--limit n]");
+        show(recall(db, { agent, repo: repo !== "unknown" || ticketRepo ? where : null, query: m.join(" "), kinds, limit: limit ?? 10, open: limit ?? 10 }));
+      } else if (sub === "list") {
+        show(listMemories(db, { agent, repo: repo !== "unknown" || ticketRepo ? where : null, kinds, limit: limit ?? 20 }));
+      } else throw new Error("usage: factory memory add|outcome|search|list");
     } else if (cmd === "lesson") {
       if (sub === "add") {
         const [area, ...text] = rest;
@@ -790,10 +1019,23 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
         change(db, () => retireLesson(db, Number(rest[0]), now()));
         log(`lesson ${rest[0]} retired`);
       } else throw new Error("usage: factory lesson add|list|retire");
+    } else if (cmd === "maintainer") {
+      // One for every factory, like Overwatch; it starts with this factory's waiting requests (maintainer.ts).
+      let r!: { terminal: string; started: boolean };
+      change(db, () => {
+        r = startMaintainer({ db, run: sh, now: now(), name });
+        if (r.started) db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (NULL, ?, 'started the maintainer agent', ?)").run(askerOf(fromFlag), now());
+      });
+      writeStatus(db, p.status);
+      return log(json ? JSON.stringify(r) : `maintainer ${r.started ? "started" : "running"} in ${r.terminal}`);
     } else if (cmd === "overwatch") {
-      let r: any = null;
+      // --find: the live one's terminal or null, never a start; the Overwatch page offers a Start button instead.
+      if (args.includes("--find")) {
+        const terminal = liveOverwatch(sh);
+        return log(json ? JSON.stringify({ terminal }) : terminal ? `overwatch running in ${terminal}` : "overwatch isn't running");
+      }
       // One for every factory: found or started from any of them (overwatch.ts).
-      r = overwatch({ run: sh, now: now() });
+      const r = overwatch({ run: sh, now: now() });
       if (r.started) change(db, () => { db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (NULL, 'you', 'started the overwatch agent', ?)").run(now()); });
       return log(json ? JSON.stringify(r) : `overwatch ${r.started ? "started" : "running"} in ${r.terminal}`);
     } else if (cmd === "blueprints") {
@@ -805,7 +1047,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       if (!sub) throw new Error("usage: factory dry-run <blueprint file or name> [--tickets N] [--json]");
       const n = ticketsFlag === null ? 5 : Number(ticketsFlag);
       if (!Number.isInteger(n) || n < 1) throw new Error("--tickets takes a whole number of tickets, like --tickets 5");
-      const d = replayDraft(db, loadDraft(draftSource(needLead(db).path, sub)), n);
+      const d = replayDraft(db, loadDraft(draftSource(needLead(db).path, sub), undefined, needLead(db).path), n);
       writeFileSync("DRYRUN.md", dryRunMarkdown(d));
       log(json ? JSON.stringify(d) : `${dryRunMarkdown(d)}\n→ DRYRUN.md`);
       return;
@@ -821,6 +1063,14 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       let added: number[] = [];
       change(db, () => { added = pollQueue(db, { queue, repo: needLead(db).slug, run: sh, now: now() }); });
       log(added.length ? `added ${added.map((n) => `#${n}`).join(", ")} to grooming` : "no new issues in the queue");
+    } else if (cmd === "review") {
+      // Approve a PR waiting on you, from the Reviews page's a key or by hand.
+      const m = (sub === "approve" ? rest[0] ?? "" : "").match(/^(?:([^/\s#]+\/[^\s#]+))?#(\d+)$/);
+      if (!m) throw new Error("usage: factory review approve <owner/repo>#<n>, like factory review approve acme/api#88");
+      const slug = m[1] ?? needLead(db).slug;
+      approvePr(db, { slug, number: Number(m[2]), run: sh, now: now(), commit: (fn) => change(db, fn) });
+      log(`${slug}#${m[2]} approved; it leaves reviews.json on the next write`);
+      writeReviews(db, p.dir);
     } else if (cmd === "usage") {
       change(db, () => recordUsage(db, log));
     } else if (cmd === "decide") {
@@ -845,6 +1095,7 @@ export function main(argv: string[], log = console.log): void | Promise<void> {
       log(`${s.factory.name}: ${s.tickets.length} tickets, daemon ${s.factory.daemon ? "on" : "off"} → ${p.status}`);
       return;
     } else if (cmd === "run") {
+      for (const r of listRepos(db)) adopt(r.path, r.slug, log, true);
       // A tick that fails (a locked database, a gh hiccup) is logged; the next one tries again.
       const tick = () => {
         try { setMeta(db, "heartbeat", now()); recordUsage(db, log); watchSessions(db, p); writeAll(db, p); writeLive(liveRoster({ run: sh, now: now(), db: (n) => (n === name ? db : undefined) })); }
@@ -973,9 +1224,9 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   // Sessions near their context limit: asked to hand off, or replaced by the next one. Before the exits below see them.
   change(db, () => watchContext(db, { dir: p.dir, repo: repoDir, run, now: new Date().toISOString(), log }));
   // A ticket in the cloud is out of sight until ⇧L brings it back: its sessions aren't watched.
-  const open_ = db.query(`SELECT s.id, s.ticket, s.terminal, s.argv, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
+  const open_ = db.query(`SELECT s.id, s.ticket, s.stage, s.terminal, s.argv, s.in_space, s.agent_seen, s.started_at FROM sessions s JOIN tickets t ON t.id = s.ticket
     WHERE s.ended_at IS NULL AND s.terminal IS NOT NULL AND t.location != 'cloud'`).all() as
-    { id: number; ticket: number; terminal: string; argv: string; in_space: number; agent_seen: number; started_at: string }[];
+    { id: number; ticket: number; stage: string | null; terminal: string; argv: string; in_space: number; agent_seen: number; started_at: string }[];
   // Tickets waiting at the pr stage: their rules may pass now (a new PR.md, new evidence).
   // A pr stage whose agent is still writing PR.md waits for it.
   for (const { id } of db.query(`SELECT id FROM tickets t WHERE state = 'running' AND stage = 'pr' AND location != 'cloud' AND resume_at IS NULL
@@ -996,6 +1247,21 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     try { change(db, () => { readIssueAnswers(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log }); }); }
     catch (e) { log(`factory: reading issue answers: ${(e as Error).message}`); }
   }
+  // Transcript chunks (recall.ts), once a minute: sessions not indexed yet (from before layer 2,
+  // or ended while Claude was still writing), then chunks of tickets settled memory.chunk_days ago.
+  const lastChunks = getMeta(db, "chunks_at");
+  if (!lastChunks || Date.now() - Date.parse(lastChunks) >= 60_000) {
+    setMeta(db, "chunks_at", nowIso);
+    try {
+      const days = readFactory(repoDir).memory?.chunk_days ?? CHUNK_DAYS;
+      indexTranscripts(db, { now: nowIso, days });
+      pruneChunks(db, { now: nowIso, days });
+    } catch (e) { log(`factory: indexing transcripts: ${(e as Error).message}`); }
+  }
+  // The ticket digest (digest.ts): after a session ended or handed off, Haiku rewrites the ticket's
+  // memory, one ticket a tick, after its chunks above. A failure is journaled and waits for the next end.
+  try { runDueDigest(db, { repo: repoDir, run, now: nowIso, cwd: p.dir, commit: (fn) => change(db, fn), log }); }
+  catch (e) { log(`factory: the ticket digest: ${(e as Error).message}`); }
   // What the cloud PR watch did while the laptop slept, before the watcher sees the same comments.
   if (routineDue(db, Date.now())) {
     try {
@@ -1018,24 +1284,20 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
   // A ready ticket whose last gate is auto merges itself (the same code `m` runs), if its safety holds.
   try { autoMerge(db, { dir: p.dir, repo: repoDir, run, commit: (fn) => change(db, fn), log }); }
   catch (e) { log(`factory: auto merge: ${(e as Error).message}`); }
-  // A merged request's changes outside its repo apply (the account config, factory agents, a
-  // cleanup); an override that held files its request.
-  try {
-    let merged = { vacuum: false };
-    change(db, () => { merged = applyMerged(db, { dir: p.dir, now: nowIso, run, log }); });
-    if (merged.vacuum) { db.exec("VACUUM"); log("factory: the database is compacted (VACUUM)"); }
-  } catch (e) { log(`factory: applying a merged request: ${(e as Error).message}`); }
+  // Requests that were tickets on the retired `factory` blueprint close, once each (maintainer.ts).
+  try { change(db, () => { for (const id of closeRetiredRequests(db, { run, now: nowIso })) log(`factory: #${id}: closed; requests go to the live maintainer now, not a ticket`); }); }
+  catch (e) { log(`factory: closing old maintainer requests: ${(e as Error).message}`); }
   const lastLearn = getMeta(db, "learner_checked_at");
   if (!lastLearn || Date.now() - Date.parse(lastLearn) >= 600_000) {
     setMeta(db, "learner_checked_at", nowIso);
-    try { change(db, () => { for (const r of promoteOverrides(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso })) log(`factory: #${r.id}: the learner asks the maintainer to ${r.title}`); }); }
+    try { change(db, () => { for (const r of promoteOverrides(db, { repo: repoDir, slug: lead.slug, run, now: nowIso })) log(`factory: note #${r.id}: the learner asks the maintainer to ${r.title}`); }); }
     catch (e) { log(`factory: the learner: ${(e as Error).message}`); }
   }
   // The learner agent, on its schedule (after learn.review_every merged tickets, or daily).
   try {
     const r = runLearner(db, { dir: p.dir, repo: repoDir, slug: lead.slug, run, now: nowIso, commit: (fn) => change(db, fn) });
     if (r.ran) log(`factory: learner run ${r.status}${r.status === "done" ? `: ${r.filed.length} request${r.filed.length === 1 ? "" : "s"} for the maintainer` : ` (${r.why})`}`);
-    for (const f of r.filed) log(`factory: #${f.id}: the learner asks the maintainer to ${f.title}`);
+    for (const f of r.filed) log(`factory: note #${f.id}: the learner asks the maintainer to ${f.title}`);
   } catch (e) { log(`factory: the learner agent: ${(e as Error).message}`); }
   // Lesson upkeep, daily: near-duplicates merge, lessons unused for learn.retire_after days retire.
   const lastUpkeep = getMeta(db, "lessons_upkeep_at");
@@ -1046,6 +1308,8 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
         const u = upkeepLessons(db, { now: nowIso, retireAfter: readFactory(repoDir).learn?.retire_after });
         setMeta(db, "lessons_upkeep", JSON.stringify({ at: u.at, merged: u.merged.length, retired: u.retired.length }));
         if (u.merged.length || u.retired.length) log(`factory: lesson upkeep: ${u.merged.length} merged, ${u.retired.length} retired`);
+        const dropped = pruneMemories(db);
+        if (dropped) log(`factory: memory upkeep: ${dropped} old rows dropped`);
       });
     } catch (e) { log(`factory: lesson upkeep: ${(e as Error).message}`); }
   }
@@ -1055,6 +1319,20 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     setMeta(db, "reverts_checked_at", nowIso);
     try { change(db, () => { for (const id of findReverts(db, { repo: lead.slug, run, now: nowIso })) log(`factory: #${id}'s PR was reverted`); }); }
     catch (e) { log(`factory: checking reverts: ${(e as Error).message}`); }
+    // Agent memory: the outcomes the factory knows now (merged, reverted, your verdict on a comment).
+    try { change(db, () => { settleMemories(db, nowIso); }); }
+    catch (e) { log(`factory: memory outcomes: ${(e as Error).message}`); }
+  }
+  // PRs waiting on your review, every 10 minutes, for reviews.json. Same rhythm and stamp
+  // rule as the reverts: the clock is written first, so a failing gh waits its turn.
+  const repos = listRepos(db);
+  if (lead.slug !== "unknown" && repos.length) {
+    const lastIntake = getMeta(db, "review_intake_at");
+    if (!lastIntake || Date.now() - Date.parse(lastIntake) >= 600_000) {
+      setMeta(db, "review_intake_at", nowIso);
+      try { change(db, () => { pollReviews(db, { repos, run, now: nowIso, log }); }); }
+      catch (e) { log(`factory: the review queue: ${(e as Error).message}`); }
+    }
   }
   // Split tickets: a part goes on once the one before it is done; a parent closes after its last part.
   try { change(db, () => followSplits(db, { dir: p.dir, repo: repoDir, run, now: nowIso, log })); }
@@ -1071,6 +1349,16 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     log(`factory: starting groomed tickets: ${(e as Error).message}`);
   }
   for (const s of open_) {
+    // Your chat session isn't a stage: it never advances the ticket, and you're in it already, so it
+    // never flags Needs you. Its terminal gone, it ends, and a ticket it paused resumes (chat.ts).
+    if (s.stage === "chat") {
+      try {
+        let open: string | null = null;
+        change(db, () => { open = liveChat(db, { dir: p.dir, repo: repoDir, id: s.ticket, run, now: nowIso }); });
+        if (!open) log(`factory: #${s.ticket}'s chat session in ${s.terminal} ended`);
+      } catch (e) { log(`factory: #${s.ticket}: chat session: ${(e as Error).message}`); }
+      continue;
+    }
     const r = run(["hc", "get", s.terminal, "--json"]);
     let state = "exited";
     let info: any = null;
@@ -1094,7 +1382,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
     // Waiting on you in its terminal (a question, a prompt): Needs you says so until it moves on.
     try {
       let noted: string | null = null;
-      change(db, () => { noted = noteAttention(db, { ticket: s.ticket, terminal: s.terminal, waiting: !gone && waiting(info, { startedAt: s.started_at, now: Date.now() }), now: nowIso }); });
+      change(db, () => { noted = noteAttention(db, { ticket: s.ticket, terminal: s.terminal, stage: s.stage, waiting: !gone && waiting(info, { startedAt: s.started_at, now: Date.now() }), now: nowIso }); });
       if (noted === "waiting") log(`factory: #${s.ticket}'s agent in ${s.terminal} is waiting on you`);
     } catch (e) { log(`factory: #${s.ticket}: ${(e as Error).message}`); }
     if (!gone) continue;
@@ -1110,6 +1398,7 @@ export function watchSessions(db: Database, p: ReturnType<typeof paths>, run = s
 // status.json plus every ticket's files, so "12m so far" keeps counting.
 function writeAll(db: Database, p: ReturnType<typeof paths>) {
   const s = writeStatus(db, p.status);
+  writeReviews(db, p.dir);
   const lead = leadRepo(db);
   if (lead) writeBlueprints(db, lead.path, p.blueprints);
   writeMetrics(db, p.metrics);
@@ -1179,8 +1468,27 @@ function sleepWake(open_: Record<string, Database>, factoryHome_: string, interv
   };
 }
 
+// `factory validate` with no folder: ./.factory, else the lead repo's checkout's. A ticket's
+// worktree has no .factory/ of its own: it stays local, in the checkout (local.ts).
+function ownFactory(db: string) {
+  if (existsSync(".factory") || !existsSync(db)) return ".factory";
+  const d = open(db);
+  try { const lead = leadRepo(d); return lead && existsSync(join(lead.path, ".factory")) ? join(lead.path, ".factory") : ".factory"; } finally { d.close(); }
+}
+
+// Adopting a repo: /.factory/ in its .git/info/exclude, its tracked .factory/ files skip-worktree
+// (local.ts). `quiet`: the daemon's start, which says only what it changed or warns about.
+function adopt(path: string, slug: string, log: (s: string) => void, quiet = false) {
+  try {
+    const r = keepLocal(path);
+    if (r.excluded) log(`${slug}: .factory/ and ${MEMORY_FILE} stay on this machine (in its .git/info/exclude: ${EXCLUDE_LINE}, /${MEMORY_FILE})`);
+    if (r.tracked.length) log(trackedWarning(slug, r.tracked.length));
+  } catch (e) { if (!quiet) throw e; log(`${slug}: couldn't keep .factory/ local: ${(e as Error).message}`); }
+}
+
 function runAll(interval: number, log: (s: string) => void) {
   const open_: Record<string, Database> = {};
+  const adopted = new Set<string>();
   const power = sleepWake(open_, factoryHome(), interval, log);
   const tick = () => {
     for (const name of factories()) {
@@ -1188,12 +1496,15 @@ function runAll(interval: number, log: (s: string) => void) {
       const db = (open_[name] ??= open(p.db));
       try {
         setMeta(db, "heartbeat", new Date().toISOString());
+        // Once per start, for repos adopted before .factory/ stayed local (local.ts).
+        if (!adopted.has(name)) { adopted.add(name); for (const r of listRepos(db)) adopt(r.path, r.slug, log, true); }
         const lead0 = leadRepo(db);
         if (lead0) power(db, p, lead0.path);
         recordUsage(db, log);
         watchSessions(db, p, sh, log);
-        // Notes for Overwatch that its terminal hasn't had yet (it was busy, or not running).
-        deliverToOverwatch(db, { run: sh, now: new Date().toISOString(), terminal: () => liveOverwatch(sh), name });
+        // Notes for Overwatch and the maintainer that their terminals haven't had yet (busy, or not running).
+        for (const agent of SESSIONS) deliverToGlobal(db, agent, { run: sh, now: new Date().toISOString(), terminal: () => live(agent), name });
+        wakeMaintainer(db, name, log);
         // Notes for repo agents whose session wasn't live (or busy) when they were asked.
         deliverToRepoAgents(db, { run: sh, now: new Date().toISOString(), name });
         const lead = leadRepo(db);

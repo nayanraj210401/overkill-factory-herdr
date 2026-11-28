@@ -10,6 +10,7 @@ import { migrateFlowStack, errRatio, parseProfile } from "./migrate.ts";
 import { validateStatus } from "../lib/status.js";
 import { validateDir } from "./validate.ts";
 import { neededAgents, SHIPPED_EXAMPLES } from "./agents.ts";
+import { neededSteps, SHIPPED_STEPS } from "./steps.ts";
 
 const git = (cwd: string, ...a: string[]) => {
   const r = Bun.spawnSync(["git", "-C", cwd, ...a]);
@@ -60,23 +61,23 @@ test("queue and basics read factory.yaml; an ok step has no fix", () => {
   expect(s.every((x) => x.status !== "ok" || x.fix === null)).toBe(true);
 });
 
-test("setup write commits .factory/ on factory/setup and leaves the checkout alone", () => {
+test("setup write puts .factory/ in the checkout, never in git, and keeps a file you already have", () => {
   const repo = repoWithCommit();
-  const before = git(repo, "status", "--porcelain");
+  const head = git(repo, "rev-parse", "HEAD");
   const r = writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { budget: "2M/100k", merge: "auto", maxRunning: 2 } });
-  expect(r).toMatchObject({ branch: "factory/setup", committed: true, from: "main" });
-  // The working tree and branch you were on never changed.
-  expect(git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
-  expect(git(repo, "status", "--porcelain")).toBe(before);
-  expect(existsSync(join(repo, ".factory"))).toBe(false);
-  expect(git(repo, "worktree", "list").split("\n")).toHaveLength(1); // the temporary worktree is gone
-  // The branch holds the files, committed.
-  const files = git(repo, "ls-tree", "-r", "--name-only", "factory/setup").split("\n");
+  expect(r).toMatchObject({ dir: join(repo, ".factory"), kept: [], excluded: true, tracked: [] });
+  // Nothing committed, no branch, no .gitignore: .factory/ is in .git/info/exclude, so git doesn't see it.
+  expect(git(repo, "rev-parse", "HEAD")).toBe(head);
+  expect(git(repo, "branch", "--list")).toBe("* main");
+  expect(git(repo, "status", "--porcelain")).toBe("");
+  expect(existsSync(join(repo, ".gitignore"))).toBe(false);
+  expect(readFileSync(join(repo, ".git/info/exclude"), "utf8")).toContain("/.factory/\n");
+  const files = r.written.map((f) => `.factory/${f}`);
   expect(files).toContain(".factory/factory.yaml");
   expect(files.some((f) => f.startsWith(".factory/blueprints/"))).toBe(true);
   expect(files.some((f) => f.startsWith(".factory/agents/"))).toBe(true);
-  expect(files.filter((f) => f.startsWith(".factory/prompts/")).sort()).toEqual([".factory/prompts/groom.md", ".factory/prompts/handoff.md", ".factory/prompts/overwatch.md", ".factory/prompts/stage.md"]);
-  const yaml = git(repo, "show", "factory/setup:.factory/factory.yaml");
+  expect(files.filter((f) => f.startsWith(".factory/prompts/")).sort()).toEqual([".factory/prompts/groom.md", ".factory/prompts/handoff.md", ".factory/prompts/stage.md"]);
+  const yaml = readFileSync(join(repo, ".factory/factory.yaml"), "utf8");
   expect(yaml).toContain("per_ticket: { input: 2M, output: 100k }");
   expect(yaml).toContain("merge: auto");
   expect(yaml).toContain("max_running: 2");
@@ -88,12 +89,16 @@ test("setup write commits .factory/ on factory/setup and leaves the checkout alo
   expect(files.filter((f) => f.startsWith(".factory/triggers/"))).toEqual([".factory/triggers/maintenance.yaml"]);
   expect(yaml).not.toMatch(/blueprints: \[[^\]]*maintenance/);
   // It lands off: a new factory opens no maintenance PR until you turn it on.
-  expect(git(repo, "show", "factory/setup:.factory/triggers/maintenance.yaml")).toMatch(/^enabled: false$/m);
-  expect(git(repo, "log", "-1", "--format=%s", "factory/setup")).toContain("factory setup write");
-  // Again with the same answers: nothing new to commit. With another: one more commit.
-  expect(writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { budget: "2M/100k", merge: "auto", maxRunning: 2 } }).committed).toBe(false);
-  expect(writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { maxRunning: 5 } }).committed).toBe(true);
-  expect(git(repo, "rev-list", "--count", "factory/setup")).toBe("3");
+  expect(readFileSync(join(repo, ".factory/triggers/maintenance.yaml"), "utf8")).toMatch(/^enabled: false$/m);
+  // Again, with other answers: your files stay as they are; only a missing one is written.
+  writeFileSync(join(repo, ".factory/factory.yaml"), yaml.replace("max_running: 2", "max_running: 4"));
+  const { rmSync } = require("node:fs");
+  rmSync(join(repo, ".factory/prompts/stage.md"));
+  const again = writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: { maxRunning: 5 } });
+  expect(again.written).toEqual(["prompts/stage.md"]);
+  expect(again.kept).toContain("factory.yaml");
+  expect(readFileSync(join(repo, ".factory/factory.yaml"), "utf8")).toContain("max_running: 4");
+  expect(readFileSync(join(repo, ".git/info/exclude"), "utf8").match(/\/\.factory\//g)).toHaveLength(1);
 });
 
 test("setup write copies only the agents the blueprints name, from your examples first, then the shipped ones", () => {
@@ -106,28 +111,43 @@ test("setup write copies only the agents the blueprints name, from your examples
     writeFileSync(join(lib, "reviewer.md"), "---\nrole: review\nterritory: \"Our diffs\"\n---\nReview our way.\n");
     writeFileSync(join(lib, "migrator.md"), "---\nrole: build\n---\nMigrate.\n"); // no blueprint names it
     writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: {} });
-    const agents = git(repo, "ls-tree", "-r", "--name-only", "factory/setup", ".factory/agents/").split("\n").map((f) => f.slice(".factory/agents/".length, -3)).sort();
+    const agents = readdirSync(join(repo, ".factory/agents")).map((f) => f.slice(0, -3)).sort();
     expect(agents).toEqual(neededAgents(join(import.meta.dir, "../fixtures/acme-api/.factory")));
     expect(agents).not.toContain("migrator");
-    expect(git(repo, "show", "factory/setup:.factory/agents/reviewer.md")).toContain("Review our way.");
-    expect(git(repo, "show", "factory/setup:.factory/agents/builder.md")).toBe(readFileSync(join(SHIPPED_EXAMPLES, "builder.md"), "utf8").trim());
+    expect(readFileSync(join(repo, ".factory/agents/reviewer.md"), "utf8")).toContain("Review our way.");
+    expect(readFileSync(join(repo, ".factory/agents/builder.md"), "utf8")).toBe(readFileSync(join(SHIPPED_EXAMPLES, "builder.md"), "utf8"));
   } finally { process.env.FACTORY_HOME = before; }
 });
 
-test("setup write refuses bad answers before touching git", () => {
+test("setup write copies the steps the blueprints name from the example library; one in your account's steps/ stays shared", () => {
+  const repo = repoWithCommit();
+  const before = process.env.FACTORY_HOME;
+  const home = (process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "setup-home-")));
+  try {
+    mkdirSync(join(home, "examples", "steps"), { recursive: true });
+    writeFileSync(join(home, "examples", "steps", "review.yaml"), "description: Our review.\nagent: reviewer\n");
+    mkdirSync(join(home, "steps"), { recursive: true });
+    writeFileSync(join(home, "steps", "merge.yaml"), "description: Ours.\ngate: human\n");
+    writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: {} });
+    const steps = readdirSync(join(repo, ".factory/steps")).map((f) => f.slice(0, -5)).sort();
+    expect(steps).toEqual(neededSteps(join(import.meta.dir, "../fixtures/acme-api/.factory")).filter((n) => n !== "merge"));
+    expect(readFileSync(join(repo, ".factory/steps/review.yaml"), "utf8")).toContain("Our review.");
+    expect(readFileSync(join(repo, ".factory/steps/write-spec.yaml"), "utf8")).toBe(readFileSync(join(SHIPPED_STEPS, "write-spec.yaml"), "utf8"));
+  } finally { process.env.FACTORY_HOME = before; }
+});
+
+test("setup write refuses bad answers before writing anything", () => {
   const repo = repoWithCommit();
   expect(() => writeSetup({ repo, name: "x", slug: "a/b", basics: { merge: "maybe" } })).toThrow("human or auto");
   expect(() => writeSetup({ repo, name: "x", slug: "a/b", basics: { budget: "lots" } })).toThrow("isn't tokens");
   expect(() => writeSetup({ repo, name: "x", slug: "a/b", basics: { maxRunning: 0 } })).toThrow("whole number");
-  expect(git(repo, "branch", "--list", "factory/setup")).toBe("");
+  expect(existsSync(join(repo, ".factory"))).toBe(false);
 });
 
 test("the written .factory/ passes the schema check", () => {
   const repo = repoWithCommit();
   writeSetup({ repo, name: "acme-api", slug: "acme/api", basics: {} });
-  const out = mkdtempSync(join(tmpdir(), "co-"));
-  git(repo, "worktree", "add", "-q", out, "factory/setup");
-  expect(validateDir(join(out, ".factory")).filter((r) => r.errors.length)).toEqual([]);
+  expect(validateDir(join(repo, ".factory")).filter((r) => r.errors.length)).toEqual([]);
 });
 
 test("the CLI: setup lists steps, skip and unskip are stored, status.json carries the checklist until .factory/ exists", () => {
@@ -151,11 +171,9 @@ test("the CLI: setup lists steps, skip and unskip are stored, status.json carrie
   run("setup", "unskip", "service");
   expect(buildStatus(db).setup!.steps.find((s) => s.id === "service")!.status).toBe("missing");
 
-  // factory-dir stays missing until the branch is merged; the fix says so.
+  // Written, the checklist is done: .factory/ is in the checkout, and stays there.
   run("setup", "write", "--max-running", "2");
-  expect(out.at(-1)).toContain("factory/setup");
-  expect(buildStatus(db).setup!.steps.find((s) => s.id === "factory-dir")!.fix).toContain("git merge factory/setup");
-  git(repo, "merge", "-q", "factory/setup");
+  expect(out.at(-1)).toContain(".git/info/exclude");
   status = buildStatus(db);
   expect(status.setup).toBeUndefined();
   db.close();
@@ -206,7 +224,7 @@ test("migration copies past tasks as merged tickets with their .md files, and th
   expect(log.join("\n")).toContain("already imported as #10001");
 });
 
-test("migration prints proposals and the lessons count, never edits factory.yaml, and changes nothing in flow-stack", () => {
+test("migration prints what it carries over and the lessons count, writes factory.yaml in place, and changes nothing in flow-stack", () => {
   const { home, repo, db, dir } = flowWorld();
   mkdirSync(join(repo, ".factory"));
   writeFileSync(join(repo, ".factory", "factory.yaml"), "name: acme-api\n");
@@ -226,7 +244,7 @@ test("migration prints proposals and the lessons count, never edits factory.yaml
   expect(text).toContain("prefer early returns");
   expect(text).toContain("feature: 3 tasks, avg $ error +60%");
   expect(text).toContain("budget.headroom: 1.6");
-  expect(readFileSync(join(repo, ".factory", "factory.yaml"), "utf8")).toBe("name: acme-api\n");
+  expect(readFileSync(join(repo, ".factory", "factory.yaml"), "utf8")).toBe("name: acme-api\nmax_running: 2\nbudget:\n  headroom: 1.6\n");
   expect({ ...snapshot(join(home, ".flow-stack")), ...snapshot(join(repo, ".flow")) }).toEqual(flowBefore);
   // Again: every lesson is already in the store.
   log.length = 0;

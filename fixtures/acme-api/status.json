@@ -159,8 +159,21 @@
       "pr": null,
       "blocked_by": null,
       "needs": null,
+      "stage_started_at": "2026-11-21T09:36:00Z",
+      "agent": "builder",
+      "slice": { "n": 2, "of": 3 },
       "session": 2,
       "terminal": "t7",
+      "events": [
+        { "kind": "groomed", "text": "groomed: runs the feature blueprint", "at": "2026-11-21T09:05:00Z" },
+        { "kind": "stage", "text": "entered Plan · planner agent", "at": "2026-11-21T09:06:00Z" },
+        { "kind": "stage", "text": "entered Implement · builder agent · slice 1 of 3", "at": "2026-11-21T09:21:00Z" },
+        { "kind": "session-start", "text": "implement session 1 started (builder): slice S1", "at": "2026-11-21T09:21:00Z" },
+        { "kind": "check", "text": "tests FAIL: exit 1: login.test.ts: expected 429, got 200", "at": "2026-11-21T09:30:00Z" },
+        { "kind": "stage", "text": "entered Implement · builder agent · slice 2 of 3", "at": "2026-11-21T09:36:00Z" },
+        { "kind": "handoff", "text": "implement: session 1 handed off to session 2: handoff at 61% of context", "at": "2026-11-21T09:48:00Z" },
+        { "kind": "session-start", "text": "implement session 2 started (builder): after a handoff at 61%", "at": "2026-11-21T09:48:00Z" }
+      ],
       "artifacts": [
         { "file": "SLICES.md", "url": "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000412", "kind": "artifact", "at": "2026-11-21T09:20:00Z" },
         { "file": "INTENT.md", "url": "https://claude.ai/code/artifact/00000000-0000-4000-8000-000000000411", "kind": "artifact", "at": "2026-11-21T09:12:00Z" }
@@ -207,6 +220,8 @@
       "pr": null,
       "blocked_by": null,
       "needs": null,
+      "stage_started_at": "2026-11-21T09:24:00Z",
+      "agent": "checker",
       "session": 3
     },
     {

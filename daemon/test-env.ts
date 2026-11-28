@@ -16,7 +16,10 @@ process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "factory-home-"));
 // Tests of the PR mechanics (ready rules, the watcher, review rounds) start at a pr stage
 // with no agent, as a blueprint may have; the pr-writer agent has its own test.
 export function agentlessPr(factoryDir: string) {
-  const { readdirSync, readFileSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
+  const { existsSync, readdirSync, readFileSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
   const dir = `${factoryDir}/blueprints`;
   for (const f of readdirSync(dir)) writeFileSync(`${dir}/${f}`, readFileSync(`${dir}/${f}`, "utf8").replace("agent: pr-writer, ", ""));
+  // The shared step the sample blueprints' pr stages name (steps.ts).
+  const step = `${factoryDir}/steps/write-pr.yaml`;
+  if (existsSync(step)) writeFileSync(step, readFileSync(step, "utf8").replace("agent: pr-writer\n", ""));
 }

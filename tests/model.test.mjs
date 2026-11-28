@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { validateStatus } from "../lib/status.js";
-import { prLinks, watchNote, groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks, healthLine } from "../lib/model.js";
+import { prLinks, watchNote, groupTickets, needsYou, subtitle, compact, parseTokens, sharedLinks, healthLine, v2UI } from "../lib/model.js";
 
 const status = JSON.parse(readFileSync(new URL("../fixtures/acme-api/status.json", import.meta.url)));
 const now = Date.parse("2026-11-21T10:00:00Z");
@@ -24,6 +24,21 @@ test("the validator names each broken field in one line", () => {
   assert.ok(errors.some((e) => e === "today.usd: needs a number"), errors.join("\n"));
   assert.ok(errors.every((e) => !e.includes("\n")));
   assert.deepEqual(validateStatus(null), ["status.json: not a JSON object"]);
+});
+
+test("a ticket's journal events are optional, and each needs kind, text and at", () => {
+  const t412 = status.tickets.find((t) => t.id === 412);
+  assert.ok(t412.events.length > 0 && t412.events.length <= 8, "the fixture shows #412's newest events");
+  const bad = structuredClone(status);
+  const t = bad.tickets.find((x) => x.id === 412);
+  t.events = [{ kind: "stage", text: "", at: "2026-11-21T09:06:00Z" }, { kind: "check", text: "tests PASS", at: "yesterday" }];
+  const errors = validateStatus(bad);
+  assert.ok(errors.some((e) => /tickets\[\d+\]\.events\[0\]: needs \{kind, text, at\}/.test(e)), errors.join("\n"));
+  assert.ok(errors.some((e) => /tickets\[\d+\]\.events\[1\]: needs \{kind, text, at\}/.test(e)), errors.join("\n"));
+  t.events = "lots";
+  assert.ok(validateStatus(bad).some((e) => e.endsWith(".events: needs an array")));
+  delete t.events;
+  assert.deepEqual(validateStatus(bad), []);
 });
 
 test("sidebar groups match the Home mockup", () => {
@@ -201,6 +216,21 @@ test("a ticket's space and its worktree's space show their factory, not a factor
   assert.equal(factoryOf(undefined, h), null);
 });
 
+test("with the machine's factories, any repo of a factory, or a folder in one, shows that factory", async () => {
+  const { factoryOf } = await import("../lib/model.js");
+  const h = "/Users/me";
+  const factories = [
+    { name: "acme-api", repos: [{ slug: "acme/api", path: `${h}/src/api`, lead: true }, { slug: "acme/web", path: `${h}/src/web`, lead: false }] },
+    { name: "shop", repos: [{ slug: "other/api", path: `${h}/work/api`, lead: true }] },
+  ];
+  assert.equal(factoryOf(`${h}/src/web`, h, factories), "acme-api", "a second repo shows its factory, not a factory named web");
+  assert.equal(factoryOf(`${h}/src/api/packages/core`, h, factories), "acme-api", "a folder inside a repo");
+  assert.equal(factoryOf(`${h}/work/api`, h, factories), "shop", "same folder name, other factory");
+  assert.equal(factoryOf(`${h}/.herdr/worktrees/web/factory-7-fix`, h, factories), "acme-api", "a worktree of the second repo");
+  assert.equal(factoryOf(`${h}/.factory/shop/tickets/3`, h, factories), "shop");
+  assert.equal(factoryOf(`${h}/elsewhere/tool`, h, factories), "tool", "an unknown folder still falls back to its name");
+});
+
 test("planPct shows a dash when nothing reports the plan's usage", async () => {
   const { planPct } = await import("../lib/model.js");
   const assert = (await import("node:assert/strict")).default;
@@ -209,26 +239,9 @@ test("planPct shows a dash when nothing reports the plan's usage", async () => {
   assert.equal(planPct({ week: 0.42 }, "week"), "42%"); // the sample has no source
 });
 
-test("Config's Pending changes lists the maintainer's open requests only", async () => {
-  const { pendingRequests } = await import("../lib/model.js");
-  const tickets = [
-    { id: 1, blueprint: "factory", state: "running" }, { id: 2, blueprint: "factory", state: "merged" },
-    { id: 3, blueprint: "feature", state: "running" }, { id: 4, blueprint: "factory", state: "queued" }, { id: 5, blueprint: "factory", state: "closed" },
-  ];
-  assert.deepEqual(pendingRequests(tickets).map((t) => t.id), [1, 4]);
-  assert.deepEqual(pendingRequests(undefined), []);
-});
-
-test("Pending changes say who asked: you, or the learner", async () => {
-  const { askedBy } = await import("../lib/model.js");
-  assert.equal(askedBy({ requested_by: "learner" }), "the learner");
-  assert.equal(askedBy({ requested_by: "you" }), "you");
-  assert.equal(askedBy({}), "you"); // a status.json from before the field
-});
-
 test("an agent waiting on you in its terminal is in Needs you, first, whatever its stage", async () => {
   const { groupOf, needsYou } = await import("../lib/model.js");
-  const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "Waiting on you in its terminal (t1): open it to answer" } };
+  const waiting = { id: 9, state: "running", stage: "spec", needs: { kind: "attention", text: "spec asks you in its terminal (t1): press e to answer" } };
   assert.equal(groupOf(waiting), "needs");
   assert.equal(groupOf({ id: 8, state: "running", stage: "spec", needs: null }), "running");
   const order = needsYou([{ id: 1, state: "ready", needs: null }, { id: 2, state: "parked", needs: { kind: "parked", text: "" } }, waiting]);
@@ -236,10 +249,11 @@ test("an agent waiting on you in its terminal is in Needs you, first, whatever i
 });
 
 test("notes between agents: Needs you shows the ones for Overwatch; Pending changes says from whom to whom", async () => {
-  const { agentLabel, askedBy, overwatchNotes, pendingNotes } = await import("../lib/model.js");
+  const { agentLabel, overwatchNotes, pendingNotes } = await import("../lib/model.js");
   assert.equal(agentLabel("overwatch"), "Overwatch");
   assert.equal(agentLabel("babysitter"), "the babysitter");
-  assert.equal(askedBy({ requested_by: "babysitter" }), "the babysitter");
+  assert.equal(agentLabel("maintainer"), "the maintainer");
+  assert.equal(agentLabel("you"), "you");
   assert.deepEqual(status.asks.map((a) => a.id), [3, 4]); // the sample has one of each
   assert.deepEqual(overwatchNotes(status.asks).map((a) => [a.id, a.route]), [[3, "from the spec-writer to Overwatch"]]);
   assert.deepEqual(pendingNotes(status.asks).map((a) => a.route), ["from the spec-writer to Overwatch", "from Overwatch to the learner"]);
@@ -300,4 +314,24 @@ test("the contract checks health entries: a failure names its command and failur
   assert.equal(validateStatus({ ...status, health: [{ ...h, ok: null }] }).length, 1);
   assert.equal(validateStatus({ ...status, health: [{ ...h, ok: "yes" }] }).length, 1);
   assert.equal(validateStatus({ ...status, health: {} }).length, 1);
+});
+
+test("v2UI is on only when status.json says ui.v2: true; ui is optional but checked", () => {
+  assert.equal(v2UI(status), false); // the fixture has no ui
+  assert.equal(v2UI(null), false);
+  assert.equal(v2UI({ ...status, ui: { v2: false } }), false);
+  assert.equal(v2UI({ ...status, ui: { v2: "true" } }), false);
+  assert.equal(v2UI({ ...status, ui: { v2: true } }), true);
+  assert.deepEqual(validateStatus({ ...status, ui: { v2: true } }), []);
+  assert.deepEqual(validateStatus({ ...status, ui: { v2: true, sidebar: true } }), []);
+  assert.deepEqual(validateStatus({ ...status, ui: { v2: "yes" } }), ["ui: needs {v2: boolean, sidebar?: boolean}"]);
+});
+
+test("planAge says how old Claude Code's plan reading is, once it's over an hour", async () => {
+  const { planAge } = await import("../lib/model.js");
+  const now = Date.parse("2026-11-25T12:00:00Z");
+  assert.equal(planAge({ source: "claude", as_of: "2026-11-25T11:30:00Z" }, now), null);
+  assert.equal(planAge({ source: "claude", as_of: "2026-11-25T09:00:00Z" }, now), "as of 3h ago");
+  assert.equal(planAge({ source: "claude", as_of: "2026-11-24T08:57:00Z" }, now), "as of 1d ago");
+  assert.equal(planAge({ source: "estimate", as_of: null }, now), null);
 });

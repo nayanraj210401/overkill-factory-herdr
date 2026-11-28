@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import type { Run } from "./runner.ts";
 import { addLesson, setOverride } from "./learn.ts";
-import { request } from "./maintainer.ts";
 import { tokensToday } from "./budget.ts";
 import { learnerDigest, learnerDue, learnerHold, learningCap, learningSpent, parseProposals, runLearner } from "./learner.ts";
 import { validateFile } from "./validate.ts";
@@ -50,21 +49,21 @@ function setup(yaml = "") {
   return { db, dir, repo, calls, say, ticket, many, answer, go };
 }
 
-test("the digest: outcomes by setting value, the target's trend, reverts, lessons, repeated comments and open requests", () => {
+test("the digest: outcomes by setting value, the target's trend, reverts, lessons, repeated comments, open requests and memory counts", () => {
   const s = setup("learn:\n  target: cost_per_pr\n  tunable: [agents.builder.model]\n  review_every: 2\n");
   s.ticket({ usd: 4 });
   s.ticket({ usd: 6, reverted: true });
   const a = s.ticket({ settings: { "agents.builder.model": "claude-haiku-5-5" }, usd: 1 });
   const b = s.ticket({ settings: { "agents.builder.model": "claude-haiku-5-5" }, usd: 3 });
   s.ticket({ state: "closed" });
-  s.db.query("INSERT INTO tickets (id, title, state, blueprint, updated_at) VALUES (1, 'Raise the budget', 'queued', 'factory', ?)").run(NOW);
+  const req = ask(s.db, { to: "maintainer", from: "you", text: "Raise the budget", slug: "acme/api", run: () => ({ code: 1, out: "" }), now: NOW });
   setOverride(s.db, { key: "agents.builder.model", value: "claude-haiku-5-5", reason: "cheaper", tunable: ["agents.builder.model"], now: NOW });
   addLesson(s.db, { area: "src/auth/**", text: "rotate the session id after login", now: NOW });
   for (const [t, n] of [[a, 1], [b, 1], [a, 2]] as const)
     s.db.query("INSERT INTO comments (ticket, n, pr, gh_id, thread, author, body, at) VALUES (?, ?, 1, ?, 'th', 'sam', ?, ?)").run(t, n, `g${t}${n}`, n === 2 ? "Something else." : "Please add a test for this!", NOW);
 
   const d = learnerDigest(s.db, s.repo);
-  expect(Object.keys(d)).toEqual(["target", "tickets", "trend", "settings", "overrides", "lessons", "repeated_comments", "open_requests"]);
+  expect(Object.keys(d)).toEqual(["target", "tickets", "trend", "settings", "overrides", "lessons", "repeated_comments", "open_requests", "memory"]);
   expect(d.target).toBe("cost_per_pr");
   expect(d.tickets).toEqual({ finished: 5, merged: 4, reverted: 1, revert_rate: 0.25 });
   expect(d.trend).toEqual([{ tickets: "#101–#102", value: 5, n: 2 }, { tickets: `#${a}–#${b}`, value: 2, n: 2 }]);
@@ -75,13 +74,13 @@ test("the digest: outcomes by setting value, the target's trend, reverts, lesson
   expect(d.overrides).toEqual([{ id: 1, key: "agents.builder.model", value: '"claude-haiku-5-5"', since: "2026-11-22", reason: "cheaper" }]);
   expect(d.lessons.map((l) => l.text)).toEqual(["rotate the session id after login"]);
   expect(d.repeated_comments).toEqual([{ text: "Please add a test for this!", times: 2, tickets: 2 }]);
-  expect(d.open_requests).toEqual([{ id: 1, title: "Raise the budget", from: "you" }]);
+  expect(d.open_requests).toEqual([{ id: req.ask.id, title: "Raise the budget", from: "you" }]);
 });
 
 test("a run sends learner.md's prompt and model with the digest; each proposal becomes one learner request, deduped against open ones", () => {
   const s = setup("learn: { warmup_tickets: 2 }\n");
   s.many(2, { usd: 2 });
-  request(s.db, { text: "Add a lint rule for missing tests", repo: "acme/api", run: () => ({ code: 1, out: "" }), now: NOW }); // yours, open
+  ask(s.db, { to: "maintainer", from: "you", text: "Add a lint rule for missing tests", slug: "acme/api", run: () => ({ code: 1, out: "" }), now: NOW }); // yours, open
   s.answer([
     "**PROPOSAL:** Give the reviewer the diff stat first",
     "WHY: review_rounds_per_pr 2.1 -> 1.4 over 12 tickets",
@@ -101,10 +100,9 @@ test("a run sends learner.md's prompt and model with the digest; each proposal b
   // One request filed; the open one isn't asked again; a proposal without WHY is dropped.
   expect(r.filed.map((f) => f.title)).toEqual(["Give the reviewer the diff stat first"]);
   expect(r.skipped).toEqual(["add a lint rule for missing tests."]);
-  const t = s.db.query("SELECT blueprint, trigger_name FROM tickets WHERE id = ?").get(r.filed[0].id);
-  expect(t).toEqual({ blueprint: "factory", trigger_name: "learner" });
-  const md = readFileSync(join(s.dir, "tickets", String(r.filed[0].id), "REQUEST.md"), "utf8");
-  expect(md).toContain("From: the learner");
+  const note = openAsks(s.db, "maintainer").find((a) => a.id === r.filed[0].id)!;
+  expect(note).toMatchObject({ from: "learner", to: "maintainer", text: "Give the reviewer the diff stat first" });
+  const md = note.why!; // the evidence
   expect(md).toContain("- review_rounds_per_pr 2.1 -> 1.4 over 12 tickets");
   expect(md).toContain("From learner run #1 on 2026-11-22 (claude-sonnet-5-5), over the newest 2 finished tickets; learn.target: cost_per_pr.");
   // The next run proposing the same thing files nothing while that request is open.
@@ -141,7 +139,7 @@ test("an answer outside the format is unreadable: no request, and the run is rec
   const r = s.go(NOW, true);
   expect(r.status).toBe("done");
   expect((s.db.query("SELECT tokens_in FROM learner_runs WHERE id = 2").get() as any).tokens_in).toBeGreaterThan(100);
-  expect(s.db.query("SELECT COUNT(*) AS n FROM tickets WHERE blueprint = 'factory'").get()).toEqual({ n: 1 });
+  expect(openAsks(s.db, "maintainer").length).toBe(1);
   // A failing call is recorded as failed and waits an hour before trying again.
   s.say.code = 1; s.say.out = "rate limited";
   s.many(10);
@@ -209,7 +207,7 @@ test("factory.yaml's learn.review_every validates", () => {
 
 test("a run opens with the neighbour map, carries the notes asked of the learner, and handles them once it answers", () => {
   const s = setup("learn: { warmup_tickets: 0 }\n");
-  const note = ask(s.db, { to: "learner", from: "overwatch", text: "Is the spec stage worth it for chores?", why: "the person asked", slug: "acme/api", dir: s.dir, run: () => ({ code: 1, out: "" }), now: NOW });
+  const note = ask(s.db, { to: "learner", from: "overwatch", text: "Is the spec stage worth it for chores?", why: "the person asked", slug: "acme/api", run: () => ({ code: 1, out: "" }), now: NOW });
   s.say.code = 1; // a failed run leaves the note waiting
   s.go();
   expect(openAsks(s.db, "learner").map((a) => a.id)).toEqual([note.ask.id]);

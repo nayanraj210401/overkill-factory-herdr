@@ -3,6 +3,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { backfillJournal } from "./journal.ts";
 
 // A column a migration adds unless it is there already: an abandoned branch's migration added
 // some (tickets.resume_at) to live databases without the repo knowing.
@@ -272,6 +273,89 @@ export const MIGRATIONS: (string | ((db: Database) => void))[] = [
   addColumn("lessons", "restored_at", "TEXT"),
   // A note to a repo agent (ask.ts): the repo whose agent it is; null for a global agent.
   addColumn("asks", "to_repo", "TEXT"),
+  // Agent memory (memory.ts): one row per thing an agent did, with its outcome once known, and
+  // full-text search over what it saw and what it wrote. `ref` ties a row to what it was about
+  // (a review comment's C<n>), so an outcome can find it later.
+  `CREATE TABLE memories (
+     id INTEGER PRIMARY KEY, agent TEXT NOT NULL, repo TEXT NOT NULL, kind TEXT NOT NULL,
+     ticket INTEGER, pr INTEGER, ref TEXT, input TEXT NOT NULL DEFAULT '', output TEXT NOT NULL DEFAULT '',
+     outcome TEXT, outcome_at TEXT, outcome_source TEXT, tokens INTEGER, at TEXT NOT NULL
+   );
+   CREATE INDEX memories_owner ON memories(agent, repo, at);
+   CREATE INDEX memories_kind ON memories(kind, ticket);
+   CREATE VIRTUAL TABLE memories_fts USING fts5(input, output, content = 'memories', content_rowid = 'id');
+   CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts (rowid, input, output) VALUES (new.id, new.input, new.output); END;
+   CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts (memories_fts, rowid, input, output) VALUES ('delete', old.id, old.input, old.output); END;
+   CREATE TRIGGER memories_au AFTER UPDATE OF input, output ON memories BEGIN
+     INSERT INTO memories_fts (memories_fts, rowid, input, output) VALUES ('delete', old.id, old.input, old.output);
+     INSERT INTO memories_fts (rowid, input, output) VALUES (new.id, new.input, new.output);
+   END;`,
+  // Ticket memory, layer 1 (journal.ts): each session's Claude Code id and transcript file, and each
+  // ticket's journal, append-only, with full-text search over its text.
+  `ALTER TABLE sessions ADD COLUMN claude_session TEXT;
+   ALTER TABLE sessions ADD COLUMN transcript TEXT;
+   CREATE TABLE ticket_events (
+     id INTEGER PRIMARY KEY, ticket INTEGER NOT NULL, session INTEGER, kind TEXT NOT NULL, text TEXT NOT NULL, ref TEXT, at TEXT NOT NULL
+   );
+   CREATE INDEX ticket_events_ticket ON ticket_events(ticket, at);
+   CREATE VIRTUAL TABLE ticket_events_fts USING fts5(text, content = 'ticket_events', content_rowid = 'id');
+   CREATE TRIGGER ticket_events_ai AFTER INSERT ON ticket_events BEGIN INSERT INTO ticket_events_fts (rowid, text) VALUES (new.id, new.text); END;
+   CREATE TRIGGER ticket_events_ad AFTER DELETE ON ticket_events BEGIN INSERT INTO ticket_events_fts (ticket_events_fts, rowid, text) VALUES ('delete', old.id, old.text); END;
+   CREATE TRIGGER ticket_events_au AFTER UPDATE OF text ON ticket_events BEGIN
+     INSERT INTO ticket_events_fts (ticket_events_fts, rowid, text) VALUES ('delete', old.id, old.text);
+     INSERT INTO ticket_events_fts (rowid, text) VALUES (new.id, new.text);
+   END;`,
+  // The journal of every ticket from before it, out of the rows the database kept (journal.ts).
+  (db: Database) => { backfillJournal(db); },
+  // Ticket memory, layer 2 (recall.ts): each linked transcript's chunks, redacted, with full-text
+  // search, and how many bytes of each session's transcript are indexed (-1: it wasn't there).
+  // Reading the transcripts is the daemon's tick, not this migration.
+  `CREATE TABLE transcript_chunks (
+     id INTEGER PRIMARY KEY, session INTEGER NOT NULL, ticket INTEGER NOT NULL, line INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, at TEXT
+   );
+   CREATE INDEX transcript_chunks_session ON transcript_chunks(session, line);
+   CREATE INDEX transcript_chunks_ticket ON transcript_chunks(ticket);
+   CREATE VIRTUAL TABLE transcript_chunks_fts USING fts5(text, content = 'transcript_chunks', content_rowid = 'id');
+   CREATE TRIGGER transcript_chunks_ai AFTER INSERT ON transcript_chunks BEGIN INSERT INTO transcript_chunks_fts (rowid, text) VALUES (new.id, new.text); END;
+   CREATE TRIGGER transcript_chunks_ad AFTER DELETE ON transcript_chunks BEGIN INSERT INTO transcript_chunks_fts (transcript_chunks_fts, rowid, text) VALUES ('delete', old.id, old.text); END;
+   CREATE TRIGGER transcript_chunks_au AFTER UPDATE OF text ON transcript_chunks BEGIN
+     INSERT INTO transcript_chunks_fts (transcript_chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+     INSERT INTO transcript_chunks_fts (rowid, text) VALUES (new.id, new.text);
+   END;
+   ALTER TABLE sessions ADD COLUMN chunked_size INTEGER;`,
+  // Ticket memory, layer 3 (digest.ts): each ticket's digest, written by Haiku, when, and the last
+  // journal event and transcript chunk it covers. The link a re-request starts from is
+  // tickets.parent, which splits added earlier: a part and a re-request both start from its digest.
+  `ALTER TABLE tickets ADD COLUMN digest TEXT;
+   ALTER TABLE tickets ADD COLUMN digest_at TEXT;
+   ALTER TABLE tickets ADD COLUMN digest_event INTEGER;
+   ALTER TABLE tickets ADD COLUMN digest_chunk INTEGER;`,
+  // Ticket memory, layer 4 (digest.ts setDigest): the digest as the person last saved it by hand,
+  // and when. Every later rewrite is told to keep their corrections; null until they edit it.
+  `ALTER TABLE tickets ADD COLUMN digest_user TEXT;
+   ALTER TABLE tickets ADD COLUMN digest_edited_at TEXT;`,
+  // A ticket's own chat session (chat.ts): 1 when opening it paused the ticket, so closing it resumes.
+  addColumn("sessions", "paused_ticket", "INTEGER NOT NULL DEFAULT 0"),
+  // The owner's note (factory new --note, the New ticket dialog's second box): their own words,
+  // which outweigh the factory's prompts in every brief ({{ticket.notes}}).
+  addColumn("tickets", "notes", "TEXT"),
+  // The PR's CI checks (watch.ts's rollup): pass | fail | running | none, and the failing checks' names.
+  addColumn("ticket_repos", "pr_ci", "TEXT"),
+  addColumn("ticket_repos", "pr_ci_fail", "TEXT"),
+  // Reviews (reviews.ts): teammates' PRs waiting on you, one row each, with the risk the
+  // intake poll scored, its reasons, and when it first saw the PR (requested_at). checks and
+  // reasons are JSON. Approved rows stay (approved_at set) but drop out of reviews.json.
+  `CREATE TABLE review_queue (
+     repo TEXT, number INTEGER, requested_at TEXT, low_risk INTEGER, risk INTEGER, reasons TEXT,
+     title TEXT, author TEXT, url TEXT, additions INTEGER, deletions INTEGER,
+     pending_review INTEGER, checks TEXT, approved_at TEXT, updated_at TEXT,
+     PRIMARY KEY (repo, number));
+   CREATE INDEX review_queue_open ON review_queue(approved_at);`,
+  // ticket_lead grows the CI columns: a view can't be altered, so it's rebuilt.
+  `DROP VIEW ticket_lead;
+   CREATE VIEW ticket_lead AS
+     SELECT t.*, r.repo, r.worktree, r.branch, r.pr_number, COALESCE(r.pr_watched, 0) AS pr_watched, r.pr_checked_at, r.merged_at, r.pr_ci, r.pr_ci_fail
+     FROM tickets t LEFT JOIN ticket_repos r ON r.ticket = t.id AND r.lead = 1;`,
 ];
 
 export function open(path: string): Database {
@@ -279,7 +363,7 @@ export function open(path: string): Database {
   const db = new Database(path, { create: true, strict: true });
   // busy_timeout: the daemon and the CLI an agent runs share this file; a writer waits
   // for the other's transaction (a PR push can take seconds) instead of failing.
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 30000;");
+  db.exec("PRAGMA busy_timeout = 30000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   const { user_version } = db.query("PRAGMA user_version").get() as { user_version: number };
   for (let v = user_version; v < MIGRATIONS.length; v++) {
     db.transaction(() => {
@@ -339,7 +423,7 @@ export function setRepo(db: Database, r: Repo) {
 
 // A ticket's work in one repo: its worktree, branch and PR. Without `repo`, the lead
 // repo's, whose row is made on the first write, in the factory's lead repo.
-export type Work = { worktree: string | null; branch: string | null; pr_number: number | null; pr_watched: number; pr_checked_at: string | null; merged_at: string | null; merge_pos: number | null; pr_state: "open" | "draft" | "merged" | "closed" | null };
+export type Work = { worktree: string | null; branch: string | null; pr_number: number | null; pr_watched: number; pr_checked_at: string | null; merged_at: string | null; merge_pos: number | null; pr_state: "open" | "draft" | "merged" | "closed" | null; pr_ci: "pass" | "fail" | "running" | "none" | null; pr_ci_fail: string | null };
 export function setWork(db: Database, ticket: number, w: Partial<Work>, repo?: string) {
   const keys = Object.keys(w) as (keyof Work)[];
   if (!keys.length) return;

@@ -42,8 +42,11 @@ test("an agent blocked on you in its terminal puts the ticket in Needs you until
   s.tick("working");
   expect(s.ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: null });
   expect(s.tick("blocked")).toContain("factory: #7's agent in t1 is waiting on you");
-  expect(s.ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: "attention", needs_text: "Waiting on you in its terminal (t1): open it to answer" });
+  expect(s.ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: "attention", needs_text: "spec asks you in its terminal (t1): press e to answer" });
   expect(s.tick("blocked")).not.toContain("factory: #7's agent in t1 is waiting on you"); // said once
+  // Waiting isn't a failure: the session stays open, nothing parks, no retry is spent.
+  expect(s.db.query("SELECT terminal FROM sessions WHERE ended_at IS NULL").all()).toEqual([{ terminal: "t1" }]);
+  expect(s.db.query("SELECT state, retries FROM tickets WHERE id = 7").get()).toEqual({ state: "running", retries: 0 });
   s.tick("working"); // answered in the terminal
   expect(s.ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: null, needs_text: null });
 });
@@ -63,7 +66,7 @@ test("a prompt before the session reports any status (auto mode consent, trust t
   expect(s.ticket()).toMatchObject({ state: "running", needs_kind: null }); // still starting
   s.startedAgo(61_000);
   expect(s.tick(null)).toContain("factory: #7's agent in t1 is waiting on you");
-  expect(s.ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: "attention", needs_text: "Waiting on you in its terminal (t1): open it to answer" });
+  expect(s.ticket()).toMatchObject({ state: "running", stage: "spec", needs_kind: "attention", needs_text: "spec asks you in its terminal (t1): press e to answer" });
   s.tick("working"); // the prompt was answered and the session started
   expect(s.ticket()).toMatchObject({ state: "running", needs_kind: null, needs_text: null });
 });

@@ -51,23 +51,25 @@ factory init            # the factory is named after this folder; the repo slug 
 factory setup           # the checklist: what is missing, and the fix for each
 factory setup trust     # Claude Code trusts the factory's folders, so agents don't stop to ask
 factory setup write --budget 2M/100k --budget-day 10M/1M --merge human --max-running 1
-git merge factory/setup # setup write commits .factory/ to this branch and leaves your checkout alone
 factory validate
 factory service install # if launchctl fails with error 5, run it again
 factory setup           # run it until every line shows ✓
 ```
 
+- `setup write` writes `.factory/` into this checkout and never commits it. `.factory/` stays on your machine: `factory init` adds `/.factory/` to the repo's `.git/info/exclude` (shared by every worktree), and the factory never writes a `.gitignore` or opens a PR that touches `.factory/`. Running `setup write` again adds only files that are missing; it keeps yours.
+- If the repo already tracks `.factory/` in git, `factory validate` and Home say so. The factory doesn't commit the removal for you. Run `git rm -r --cached .factory && git commit` yourself when you are ready. Until then the factory marks those files skip-worktree in your checkout, so your local edits never get staged.
 - `--budget` is per ticket and `--budget-day` is for the whole day, as input/output tokens. Start low until you know what a ticket costs.
 - `--queue <owner>/<project number>` connects a GitHub Project's Ready column. Leave it out to make tickets by hand with `n`.
 - If `setup write` finds no test command, add one to `.factory/factory.yaml`, for example `quality_floor: [bun test]`. The tests check and its ready rule need it.
-- The first `factory init` or `factory setup` writes the factory agents to `~/.factory/agents/`, the example agents to `~/.factory/examples/agents/` and the factory skills to `~/.factory/skills/`. It never overwrites a file (or a skill folder) that is already there, and adds examples and skills a newer factory ships. Put your own skills in `~/.factory/skills/<name>/SKILL.md`; an agent gets one only when its `skills:` lists it (see `examples/skills/README.md`).
+- The first `factory init` or `factory setup` writes the factory agents to `~/.factory/agents/`, the example agents to `~/.factory/examples/agents/`, the example steps to `~/.factory/examples/steps/` and the factory skills to `~/.factory/skills/`. It never overwrites a file (or a skill folder) that is already there, and adds examples and skills a newer factory ships. Put your own skills in `~/.factory/skills/<name>/SKILL.md`; an agent gets one only when its `skills:` lists it (see `examples/skills/README.md`).
 - `setup write` copies into the repo's `.factory/agents/` only the agents its blueprints and grooming name, each from your own example in `~/.factory/examples/agents/` if you wrote one, else the shipped one. The examples themselves never run.
+- `setup write` also copies into `.factory/steps/` the shared steps its blueprints name (`step: write-spec`), the same way: your example in `~/.factory/examples/steps/` first, else the shipped one. A step your `~/.factory/steps/` already has is not copied: every repo's blueprints use that one. A repo's own `.factory/steps/<name>.yaml` wins over the account's.
 
 ## 4. Open it
 
 1. Start Herdr and open a space on the repo's folder. The folder name is how the window finds the factory.
 2. Press ⌘⇧F to switch to factory mode. ⌘⇧F again goes back to Herdr.
-3. Open Config (⌘7). The daemon dot is green when the service runs.
+3. Open Config (⌘8). The daemon dot is green when the service runs.
 4. Press `n` and give a small goal, or an issue number, for a first ticket.
 
 ## What runs without you

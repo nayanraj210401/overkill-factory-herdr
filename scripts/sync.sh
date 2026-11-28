@@ -13,7 +13,9 @@ for a in "$@"; do case "$a" in --keys) keys=1 ;; *) home="$a" ;; esac; done
 node scripts/gen.mjs --check
 mkdir -p "$home/layouts" "$home/themes" "$home/mods" "$home/factory-data"
 cp layouts/factory.json layouts/factory.svg "$home/layouts/"
-cp themes/factory.json "$home/themes/"
+# The theme is Herdr's own (atom-one-dark); the layout's `theme` names it.
+# Clean up the factory theme this script used to install.
+rm -f "$home/themes/factory.json"
 for dir in mods/factory-*/; do
   name=$(basename "$dir")
   # Copies, not symlinks: Herdr refuses imports that resolve outside the mod folder.
@@ -26,6 +28,9 @@ for dir in mods/factory-*/; do
   # stale the way a dist/factory built from an older commit can.
   printf 'export default ["%s", "%s"];\n' "$(command -v bun)" "$PWD/daemon/cli.ts" > "$home/mods/$name/lib/cli.js"
 done
+# The V2 Ticket page embeds factory-chat's view (mods/factory-chat/chat/): a mod can't import
+# another mod's files, so the page gets its own copy, beside its lib/ as in factory-chat.
+rsync -a --delete mods/factory-chat/chat/ "$home/mods/factory-ticket/chat/"
 mkdir -p "$home/mods/factory-soon/previews"
 cp docs/layouts/*.png "$home/mods/factory-soon/previews/"
 rsync -a fixtures/ "$home/factory-data/"
@@ -41,6 +46,12 @@ if (fs.existsSync(path)) {
   fs.copyFileSync(path, `${path}.before-factory-${Date.now()}`);
 }
 for (const [section, keys] of Object.entries(ours)) theirs[section] = { ...theirs[section], ...keys };
+// Bare keys earlier versions bound (scripts/gen.mjs RETIRED_KEYS): they took letters from text boxes.
+const retired = { "layout:factory": ["g f", "]", "["], terminal: ["g", "[", "]"] };
+for (const [section, list] of Object.entries(retired)) {
+  for (const k of list) if (theirs[section] && k in theirs[section]) delete theirs[section][k];
+  if (theirs[section] && !Object.keys(theirs[section]).length) delete theirs[section];
+}
 fs.writeFileSync(path, JSON.stringify(theirs, null, 2) + "\n");
 JS
   echo "keys merged into $home/keys.json"

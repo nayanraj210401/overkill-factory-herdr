@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { newAsk, pauseAsk, mergeAsk, budgetAsk, sendBackAsk, answerAsk, cloudAllAsk, cliCommand } from "../lib/actions.js";
+import { newAsk, pauseAsk, mergeAsk, budgetAsk, sendBackAsk, answerAsk, talkable, terminalOf, cloudAllAsk, cliCommand } from "../lib/actions.js";
 
 const ticket = (o) => ({ id: 409, title: "Bump dependencies", state: "ready", pr: { number: 511, watched: true },
   tokens: { input: 1_200_000, output: 64_000 }, budget: { input: 3_000_000, output: 200_000 }, ...o });
@@ -30,7 +30,7 @@ test("b asks for the new budget, starting from the current one", () => {
   assert.deepEqual(budgetAsk(ticket({ state: "merged" })), { error: "#409 is merged; its budget is final" });
 });
 
-test("x asks for a note on a ready PR; u asks a parked ticket's question", () => {
+test("x asks for a note on a ready PR; u on a park that isn't a question asks for a note", () => {
   const x = sendBackAsk(ticket());
   assert.deepEqual([x.title, x.input.value, x.args], ["Send PR #511 back", "", ["send-back", "409"]]);
   assert.deepEqual(sendBackAsk(ticket({ state: "running" })), { error: "#409 has no PR ready to send back" });
@@ -38,13 +38,39 @@ test("x asks for a note on a ready PR; u asks a parked ticket's question", () =>
   const u = answerAsk(parked);
   assert.deepEqual([u.title, u.detail, u.args], ["Answer #409", "Verify failed 3 times", ["answer", "409"]]);
   assert.deepEqual(answerAsk(ticket()), { error: "#409 isn't waiting for an answer" });
-  const g = answerAsk(ticket({ state: "grooming", needs: { kind: "question", text: "2 questions · Q1: Which plan?" } }));
-  assert.deepEqual([g.title, g.detail, g.args, g.confirm], ["Answer #409's questions", "2 questions · Q1: Which plan?", ["answer", "409"], "Answer"]);
+});
+
+test("u never shows an answer box for a question: a waiting agent's terminal, else talk it through", () => {
+  // A stage agent asking in its live terminal (Herdr status blocked): u is e.
+  const asking = ticket({ state: "running", stage: "implement", pr: null, terminal: "t5n", needs: { kind: "attention", text: "implement asks you in its terminal (t5n): press e to answer" } });
+  assert.deepEqual(answerAsk(asking), { terminal: "t5n" });
+  assert.equal(talkable(asking), false);
+  // Parked on a question by older code, its session gone: a fresh session of its stage asks first, then opens.
+  const parked = ticket({ id: 10000, state: "parked", stage: "implement", pr: null, terminal: null,
+    needs: { kind: "parked", text: "Q1 from the implement stage (product, for the product owner): Which stations?" },
+    questions: [{ n: 1, kind: "product", text: "Which stations?" }] });
+  const talk = answerAsk(parked);
+  assert.equal(talkable(parked), true);
+  assert.deepEqual([talk.title, talk.confirm, talk.args, talk.peek, talk.input], ["Talk #10000 through", "Talk it through", ["talk", "10000", "--json"], true, undefined]);
+  assert.match(talk.detail, /fresh implement session starts and asks you in its terminal/);
+  // Grooming questions nobody's terminal asks (a scope change, older code): talk it through too.
+  const g = answerAsk(ticket({ state: "grooming", pr: null, terminal: null, needs: { kind: "question", text: "2 questions · Q1: Which plan?" } }));
+  assert.deepEqual([g.title, g.args, g.input], ["Talk #409 through", ["talk", "409", "--json"], undefined]);
+  assert.deepEqual(answerAsk(ticket({ state: "grooming", pr: null, terminal: "t1", needs: { kind: "question", text: "Q1" } })), { terminal: "t1" });
+  // Whatever asks, no question gets an input box.
+  for (const t of [asking, parked, ticket({ state: "grooming", pr: null, needs: { kind: "question", text: "Q1" } })]) assert.equal(answerAsk(t).input, undefined);
+});
+
+test("the talk dialog opens the terminal factory talk started", () => {
+  assert.equal(terminalOf('{"stage":"implement","terminal":"t9"}'), "t9");
+  assert.equal(terminalOf('a warning first\n{"stage":"groom","terminal":"t3"}\n'), "t3");
+  assert.equal(terminalOf("not json"), null);
 });
 
 test("n asks for an issue or goal and grooms it first", () => {
   const a = newAsk();
-  assert.deepEqual([a.args, a.input.value, a.confirm], [["new"], "", "Create"]);
+  assert.deepEqual([a.args, a.confirm], [["new", "@goal", "--note", "@note"], "Create"]);
+  assert.deepEqual(a.inputs.map((i) => [i.key, i.value, i.required]), [["goal", "", true], ["note", "", undefined]]);
 });
 
 test("Home's button moves every locally running ticket to the cloud", () => {

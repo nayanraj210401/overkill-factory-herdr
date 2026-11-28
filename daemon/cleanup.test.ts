@@ -1,14 +1,14 @@
-// Housekeeping (cleanup.ts): what a cleanup lists, what it never touches, and the request
-// that removes it only once you merge. Temp repos, worktrees and FACTORY_HOME; gh, hc stubbed.
+// Housekeeping (cleanup.ts): what a cleanup lists, what it never touches, and the run that
+// removes what the list holds, each entry re-checked. Temp repos, worktrees and FACTORY_HOME; gh, hc stubbed.
 import { test, expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo, setWork } from "./db.ts";
 import { worktreeRoot } from "./herdr.ts";
-import { advance, mergeTicket, sh, startTicket, type Run } from "./runner.ts";
-import { applyMerged, request } from "./maintainer.ts";
-import { checkCleanup, cleanupPlan, describe, keyOf, performCleanup, proposeCleanup } from "./cleanup.ts";
+import { sh, type Run } from "./runner.ts";
+import { backup } from "./maintainer.ts";
+import { cleanupDir, cleanupPlan, describe, keyOf, performCleanup, proposeCleanup } from "./cleanup.ts";
 
 const now = new Date(Date.now() + 60_000).toISOString();
 const OLD = "2026-01-01T00:00:00Z";
@@ -117,41 +117,31 @@ test("orphaned factory worktrees go; another tool's worktree and a dirty orphan 
   }
   mkdirSync(join(home, "agents"));
   for (const [f, t] of [["maintainer.md.bak-1-1", old], ["maintainer.md.bak-2-2", old + 5]] as const) { writeFileSync(join(home, "agents", f), "x"); utimesSync(join(home, "agents", f), t, t); }
+  // Backups in FACTORY_HOME/backups/ (maintainer.ts): the old one goes, the newest stays.
+  const file = join(s.repo, ".factory/factory.yaml");
+  const b1 = backup(file, "2026-01-01T00:00:00Z")!, b2 = backup(file, "2026-01-02T00:00:00Z")!;
+  utimesSync(b1, old, old); utimesSync(b2, old + 20, old + 20);
   const p = s.plan();
   const real = (x: string) => sh(["realpath", x]).out;
   const wts = p.items.filter((i) => i.kind === "worktree").map((i) => real((i as any).path));
   expect(wts).toEqual([real(orphan)]);
   expect(p.kept.map((k) => k.why)).toEqual(expect.arrayContaining(["the factory didn't make its branch", "it has uncommitted changes"]));
-  expect(p.items.filter((i) => i.kind === "backup").map((i) => (i as any).path)).toEqual([join(home, "agents", "maintainer.md.bak-1-1"), join(home, "config.yaml.bak-1-1"), join(home, "config.yaml.bak-2-2")]);
+  expect(p.items.filter((i) => i.kind === "backup").map((i) => (i as any).path)).toEqual([b1, join(home, "agents", "maintainer.md.bak-1-1"), join(home, "config.yaml.bak-1-1"), join(home, "config.yaml.bak-2-2")].sort());
   expect(existsSync(mine)).toBe(true);
 });
 
-test("a cleanup request: the maintainer's list goes in its ticket, the check holds it to what is safe, and only your merge removes it", () => {
+test("a cleanup: --propose writes the list to the factory's cleanup/ folder, --run removes what it holds, and nothing needs a ticket", () => {
   const s = setup();
   const a = s.ticket(1, "merged", { merge: true, push: true, space: "sp1" });
   const keepDirty = s.ticket(2, "merged", { merge: true, dirty: true });
-  const { id, kind } = request(s.db, { text: "Clean up merged tickets", repo: "acme/api", run: s.run, now, dir: s.dir });
-  expect(kind).toBe("cleanup");
-  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
-  const folder = join(s.dir, "tickets", String(id));
-  // The maintainer forgot the list: the check sends it back.
-  writeFileSync(join(folder, "PR.md"), "Cleans up.\n\n## What changed\n- x\n## Why\nx\n## How it was verified\nx\n## Risk\nLow.\n");
-  advance(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
-  expect((s.db.query("SELECT detail FROM evidence WHERE ticket = ? AND check_name = 'cleanup' ORDER BY id DESC").get(id) as any).detail).toContain(`run factory cleanup --propose ${id}`);
-  const p = proposeCleanup(s.db, { dir: s.dir, id, run: s.run, now });
+  expect(() => performCleanup(s.db, { dir: s.dir, run: s.run, now })).toThrow(/run factory cleanup --propose first/);
+  const p = proposeCleanup(s.db, { dir: s.dir, run: s.run, now });
+  const folder = cleanupDir(s.dir);
   expect(keys(p)).toContain(`worktree:${a.wt}`);
   expect(readFileSync(join(folder, "CLEANUP.md"), "utf8")).toContain(`- the worktree ${a.wt} in acme/api (#1)`);
   expect(readFileSync(join(folder, "CLEANUP.md"), "utf8")).toContain("Ticket folders and their .md files stay.");
-  advance(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now });
-  const t = () => s.db.query("SELECT * FROM ticket_lead WHERE id = ?").get(id) as any;
-  // Nothing in a repo changes: no PR, it waits at the merge gate, and nothing is removed yet.
-  expect(t()).toMatchObject({ stage: "merge", state: "ready", pr_number: null });
-  expect(s.calls.some((c) => c[0] === "gh" && c[2] === "create")).toBe(false);
-  applyMerged(s.db, { dir: s.dir, run: s.run, now });
-  expect(existsSync(a.wt)).toBe(true);
-  mergeTicket(s.db, { repo: s.repo, id, run: s.run, now, dir: s.dir });
-  const log: string[] = [];
-  const r = applyMerged(s.db, { dir: s.dir, run: s.run, now, log: (l) => log.push(l) });
+  expect(existsSync(a.wt)).toBe(true); // listing removes nothing
+  const r = performCleanup(s.db, { dir: s.dir, run: s.run, now, who: "maintainer" });
   expect(r.vacuum).toBe(true);
   expect(existsSync(a.wt)).toBe(false);
   expect(g(s.repo, "rev-parse", "--verify", "-q", `refs/heads/${a.branch}`).code).not.toBe(0);
@@ -159,38 +149,35 @@ test("a cleanup request: the maintainer's list goes in its ticket, the check hol
   expect(s.calls).toContainEqual(["hc", "rm", "term-1"]);
   expect(s.db.query("SELECT worktree FROM ticket_repos WHERE ticket = 1").get()).toEqual({ worktree: null });
   expect(s.db.query("SELECT space FROM tickets WHERE id = 1").get()).toEqual({ space: null });
-  // What it never touches: the dirty worktree and its branch, the ticket folders.
+  // What it never touches: the dirty worktree and its branch.
   expect(existsSync(join(keepDirty.wt, "scratch.txt"))).toBe(true);
   expect(g(s.repo, "rev-parse", "--verify", "-q", `refs/heads/${keepDirty.branch}`).code).toBe(0); // its worktree stays, so its branch does
   expect(p.kept).toContainEqual({ key: `branch:acme/api:${keepDirty.branch}`, what: `the branch ${keepDirty.branch} in acme/api (#2)`, why: "its worktree stays" });
-  expect(existsSync(join(s.dir, "tickets", String(id), "REQUEST.md"))).toBe(true);
-  expect(log[0]).toMatch(/cleanup: \d+ removed/);
   expect(readFileSync(join(folder, "CLEANUP.md"), "utf8")).toContain("## Done");
-  // Once: a second pass does nothing.
-  expect(applyMerged(s.db, { dir: s.dir, run: s.run, now, log: (l) => log.push(l) }).vacuum).toBe(false);
-  expect(log).toHaveLength(1);
+  expect(s.db.query("SELECT ticket, who, what FROM decisions WHERE what = 'cleaned up'").get()).toEqual({ ticket: null, who: "maintainer", what: "cleaned up" });
+  expect(s.db.query("SELECT COUNT(*) AS n FROM tickets WHERE blueprint = 'factory'").get()).toEqual({ n: 0 });
+  // Once: the list is set aside, so a second run needs a new one.
+  expect(() => performCleanup(s.db, { dir: s.dir, run: s.run, now })).toThrow(/--propose first/);
 });
 
-test("an entry that stopped being safe after the list was made fails the check, and is kept when performing", () => {
+test("a list narrowed to what was asked removes only that; an entry no longer safe is kept and said", () => {
   const s = setup();
   const a = s.ticket(1, "merged", { merge: true });
-  const { id } = request(s.db, { text: "Clean up", kind: "cleanup", repo: "acme/api", run: s.run, now, dir: s.dir });
-  proposeCleanup(s.db, { dir: s.dir, id, run: s.run, now });
+  const b = s.ticket(3, "merged", { merge: true });
+  const p = proposeCleanup(s.db, { dir: s.dir, run: s.run, now });
+  // Narrowed: only ticket 1's and 3's worktrees, nothing else.
+  const json = join(cleanupDir(s.dir), "CLEANUP.json");
+  writeFileSync(json, JSON.stringify({ ...p, items: p.items.filter((i) => i.kind === "worktree") }));
   writeFileSync(join(a.wt, "late.txt"), "someone started work here\n");
-  const c = checkCleanup(s.db, { dir: s.dir, id, run: s.run, now });
-  expect(c).toMatchObject({ ok: false });
-  expect(c.detail).toContain("it has uncommitted changes");
-  // Checked while clean; dirty by the time it merges: kept, and said so.
-  rmLate(a.wt);
-  expect(checkCleanup(s.db, { dir: s.dir, id, run: s.run, now }).ok).toBe(true);
-  writeFileSync(join(a.wt, "late.txt"), "again\n");
-  const r = performCleanup(s.db, { dir: s.dir, id, run: s.run, now });
+  const r = performCleanup(s.db, { dir: s.dir, run: s.run, now });
   expect(existsSync(join(a.wt, "late.txt"))).toBe(true);
   expect(r.skipped.join("\n")).toContain("kept, it has uncommitted changes");
-  expect(r.done.join("\n")).not.toContain(`the worktree ${a.wt}`);
+  expect(existsSync(b.wt)).toBe(false);
+  expect(g(s.repo, "rev-parse", "--verify", "-q", `refs/heads/${b.branch}`).code).toBe(0); // not in the narrowed list
+  expect(r.vacuum).toBe(false);
 });
 
-test("factory cleanup --dry-run lists and removes nothing; factory cleanup files a cleanup request", async () => {
+test("factory cleanup --dry-run lists and removes nothing; factory cleanup alone asks the maintainer", async () => {
   const { main, paths } = await import("./cli.ts");
   process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "home-"));
   const repo = mkdtempSync(join(tmpdir(), "api-"));
@@ -205,11 +192,12 @@ test("factory cleanup --dry-run lists and removes nothing; factory cleanup files
   expect(out.at(-1)).toContain("more than 3 days ago");
   expect(() => cli("cleanup", "--days", "soon")).toThrow(/--days takes a number/);
   cli("cleanup");
-  expect(out.at(-1)).toMatch(/^#\d+: a cleanup request for the maintainer/);
+  expect(out.at(-1)).toMatch(/^note #1: a cleanup for the maintainer; /);
   const db = open(paths("acme").db);
-  const t = db.query("SELECT title, request_kind, state FROM tickets WHERE blueprint = 'factory'").get() as any;
-  expect(t).toEqual({ title: "Clean up tickets closed or merged more than 14 days ago", request_kind: "cleanup", state: "queued" });
-  expect(() => cli("cleanup", "--propose", "1")).toThrow(/isn't a cleanup request/);
+  expect(db.query("SELECT to_agent, text, request FROM asks").get()).toEqual({ to_agent: "maintainer", text: "Clean up tickets closed or merged more than 14 days ago", request: null });
+  expect(db.query("SELECT COUNT(*) AS n FROM tickets").get()).toEqual({ n: 0 });
+  cli("cleanup", "--propose");
+  expect(out.at(-1)).toContain(`→ ${join(paths("acme").dir, "cleanup", "CLEANUP.md")}`);
+  cli("cleanup", "--run");
+  expect(out.find((l) => l.startsWith("cleanup: "))).toMatch(/^cleanup: \d+ removed/);
 });
-
-const rmLate = (wt: string) => sh(["rm", join(wt, "late.txt")]);

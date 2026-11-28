@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import { advance, autoMerge, mergeTicket, runCheck, startTicket, sh, tryPr, type Run } from "./runner.ts";
-import { request, proposeAccount, applyMerged } from "./maintainer.ts";
 import { buildStatus } from "./status.ts";
 import { validateStatus } from "../lib/status.js";
 import { gateWarnings } from "./validate.ts";
@@ -22,8 +21,7 @@ function setup(gate = "auto", factoryYaml = 'name: t\nquality_floor: ["true"]\nr
   for (const c of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"], ["remote", "add", "origin", origin]]) sh(["git", "-C", repo, ...c]);
   cpSync(join(import.meta.dir, "../fixtures/acme-api/.factory"), join(repo, ".factory"), { recursive: true }); agentlessPr(join(repo, ".factory"));
   const bp = join(repo, ".factory/blueprints/chore.yaml");
-  writeFileSync(bp, readFileSync(bp, "utf8").replace("gate: human", `gate: ${gate}`));
-  rmSync(join(repo, ".factory/blueprints/factory.yaml"));
+  writeFileSync(bp, readFileSync(bp, "utf8").replace("step: merge,", `step: merge, gate: ${gate},`));
   writeFileSync(join(repo, ".factory/factory.yaml"), factoryYaml);
   sh(["git", "-C", repo, "add", "."]);
   sh(["git", "-C", repo, "commit", "-q", "-m", "init"]);
@@ -120,20 +118,6 @@ test("a failing gh merge leaves the ticket ready and is tried again a minute lat
   expect(s.ticket().state).toBe("merged");
 });
 
-test("maintainer.gate: auto merges a maintainer request, and the account config applies on that merge", () => {
-  const s = setup("human", 'name: t\nquality_floor: ["true"]\nmaintainer: { gate: auto }\n');
-  const { id } = request(s.db, { text: "Never push to main", repo: "acme/api", run: s.run, now: T0, dir: s.dir });
-  startTicket(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now: new Date(Date.now() + 60_000).toISOString() });
-  writeFileSync(proposeAccount(s.dir, id), "profile: { rules: [never push to main] }\n");
-  writeFileSync(join(s.dir, "tickets", String(id), "PR.md"), "Adds a rule.\n\n## What changed\n- x\n## Why\nx\n## How it was verified\nx\n## Risk\nLow.\n");
-  advance(s.db, { dir: s.dir, repo: s.repo, id, run: s.run, now: new Date(Date.now() + 60_000).toISOString() });
-  expect(s.db.query("SELECT state, stage, pr_number FROM ticket_lead WHERE id = ?").get(id)).toEqual({ state: "ready", stage: "merge", pr_number: null });
-  expect(s.auto()).toEqual([id]);
-  applyMerged(s.db, { dir: s.dir, run: s.run, now: T0 });
-  expect(readFileSync(join(process.env.FACTORY_HOME!, "config.yaml"), "utf8")).toBe("profile: { rules: [never push to main] }\n");
-  expect(s.db.query("SELECT state FROM tickets WHERE id = ?").get(id)).toEqual({ state: "merged" });
-});
-
 test("validate warns when a gate is auto, and never refuses", () => {
   const dir = mkdtempSync(join(tmpdir(), "bp-"));
   const bp = join(dir, "blueprints/chore.yaml");
@@ -146,8 +130,9 @@ test("validate warns when a gate is auto, and never refuses", () => {
   expect(w[1]).toContain("revert rate on Home");
   writeFileSync(bp, "name: chore\nstart: a\nstages:\n  a: { agent: builder, next: [merge] }\n  merge: { gate: human, next: [end] }\n");
   expect(gateWarnings("blueprints/chore.yaml", bp)).toEqual([]);
+  // The maintainer has no PR to gate any more: a leftover maintainer.gate is said to be ignored.
   writeFileSync(join(dir, "factory.yaml"), "name: t\nmaintainer: { gate: auto }\n");
-  expect(gateWarnings("factory.yaml", join(dir, "factory.yaml"))[0]).toContain("maintainer.gate is auto");
+  expect(gateWarnings("factory.yaml", join(dir, "factory.yaml"))[0]).toContain("maintainer.gate is ignored");
 });
 
 test("status lists a blueprint on auto with its revert rate for Home, and a human gate lists nothing", () => {

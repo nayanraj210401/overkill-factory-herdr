@@ -1,15 +1,72 @@
 {
   "days": 7,
+  "drafts": [],
+  "steps": {
+    "build": {
+      "file": ".factory/steps/build.yaml",
+      "label": ".factory/steps/build.yaml",
+      "description": "The builder makes the change in the worktree; a blueprint that plans slices sets per slice on its stage.",
+      "output": null
+    },
+    "check-evidence": {
+      "file": ".factory/steps/check-evidence.yaml",
+      "label": ".factory/steps/check-evidence.yaml",
+      "description": "The daemon checks the evidence the builder left against the spec; a failure goes back along on_fail.",
+      "output": null
+    },
+    "holdout": {
+      "file": ".factory/steps/holdout.yaml",
+      "label": ".factory/steps/holdout.yaml",
+      "description": "The checker writes hidden checks the builder never sees and runs them against the worktree.",
+      "output": null
+    },
+    "merge": {
+      "file": ".factory/steps/merge.yaml",
+      "label": ".factory/steps/merge.yaml",
+      "description": "The PR waits for you to merge it; set the stage's gate to auto to let ready PRs merge themselves.",
+      "output": null
+    },
+    "plan-slices": {
+      "file": ".factory/steps/plan-slices.yaml",
+      "label": ".factory/steps/plan-slices.yaml",
+      "description": "The planner cuts the spec into slices a builder can ship one at a time, in SLICES.md.",
+      "output": "SLICES.md"
+    },
+    "review": {
+      "file": ".factory/steps/review.yaml",
+      "label": ".factory/steps/review.yaml",
+      "description": "The reviewer reads the diff and records a verdict; only a blocker fails it.",
+      "output": null
+    },
+    "run-tests": {
+      "file": ".factory/steps/run-tests.yaml",
+      "label": ".factory/steps/run-tests.yaml",
+      "description": "The daemon runs the repo's tests; a failure goes back along on_fail.",
+      "output": null
+    },
+    "write-pr": {
+      "file": ".factory/steps/write-pr.yaml",
+      "label": ".factory/steps/write-pr.yaml",
+      "description": "Once the ready rules pass, the PR writer opens the PR from PR.md, in the pr-readable template.",
+      "output": "PR.md"
+    },
+    "write-spec": {
+      "file": ".factory/steps/write-spec.yaml",
+      "label": ".factory/steps/write-spec.yaml",
+      "description": "The spec writer turns the ticket into INTENT.md, what to build and how to tell it works.",
+      "output": "INTENT.md"
+    }
+  },
   "blueprints": [
     {
       "name": "address-review",
       "start": "fix",
       "orchestrator": "foreman",
-      "error": null,
-      "grooming_runs": 2,
+      "description": "A reviewer left comments on a factory PR: fix them and run the tests again.",
       "stages": [
         {
           "id": "fix",
+          "step": "build",
           "agent": "builder",
           "role": "build",
           "check": null,
@@ -19,10 +76,52 @@
           "on_fail": null,
           "gate": "auto",
           "requires": null,
-          "runs": 3
+          "output": null,
+          "runs": 3,
+          "pass": 3,
+          "fail": 0,
+          "median_s": 1121,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 321,
+              "title": "Paginate /orders",
+              "outcome": "pass",
+              "started_at": "2026-11-19T12:34:47.038Z",
+              "duration_s": 1121
+            },
+            {
+              "ticket": 323,
+              "title": "Drop unused env vars",
+              "outcome": "pass",
+              "started_at": "2026-11-17T06:07:40.110Z",
+              "duration_s": 765
+            },
+            {
+              "ticket": 322,
+              "title": "Fix timezone in digest",
+              "outcome": "pass",
+              "started_at": "2026-11-16T10:52:49.420Z",
+              "duration_s": 1203
+            },
+            {
+              "ticket": 341,
+              "title": "Search by email",
+              "outcome": "pass",
+              "started_at": "2026-11-13T03:22:30.423Z",
+              "duration_s": 759
+            }
+          ]
         },
         {
           "id": "verify",
+          "step": "run-tests",
           "agent": null,
           "role": null,
           "check": "tests",
@@ -32,19 +131,110 @@
           "on_fail": "fix",
           "gate": "auto",
           "requires": null,
-          "runs": 3
+          "output": null,
+          "runs": 3,
+          "pass": 3,
+          "fail": 0,
+          "median_s": 183,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 321,
+              "title": "Paginate /orders",
+              "outcome": "pass",
+              "started_at": "2026-11-19T12:55:43.504Z",
+              "duration_s": 183
+            },
+            {
+              "ticket": 323,
+              "title": "Drop unused env vars",
+              "outcome": "pass",
+              "started_at": "2026-11-17T06:20:46.833Z",
+              "duration_s": 150
+            },
+            {
+              "ticket": 322,
+              "title": "Fix timezone in digest",
+              "outcome": "pass",
+              "started_at": "2026-11-16T11:14:31.844Z",
+              "duration_s": 259
+            },
+            {
+              "ticket": 341,
+              "title": "Search by email",
+              "outcome": "pass",
+              "started_at": "2026-11-13T03:35:11.166Z",
+              "duration_s": 129
+            }
+          ]
         }
-      ]
+      ],
+      "error": null,
+      "grooming_runs": 3,
+      "stats": {
+        "tickets": 3,
+        "clean": 1,
+        "ask_to_pr_min": null,
+        "usd": null
+      },
+      "grooming": {
+        "pass": 3,
+        "fail": 0,
+        "median_s": 230,
+        "last": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "recent": [
+          {
+            "ticket": 321,
+            "title": "Paginate /orders",
+            "outcome": "pass",
+            "started_at": "2026-11-19T12:29:47.216Z",
+            "duration_s": 230
+          },
+          {
+            "ticket": 323,
+            "title": "Drop unused env vars",
+            "outcome": "pass",
+            "started_at": "2026-11-17T06:02:53.982Z",
+            "duration_s": 257
+          },
+          {
+            "ticket": 322,
+            "title": "Fix timezone in digest",
+            "outcome": "pass",
+            "started_at": "2026-11-16T10:48:52.223Z",
+            "duration_s": 191
+          },
+          {
+            "ticket": 341,
+            "title": "Search by email",
+            "outcome": "pass",
+            "started_at": "2026-11-13T03:14:53.604Z",
+            "duration_s": 280
+          }
+        ]
+      }
     },
     {
       "name": "bugfix",
       "start": "implement",
       "orchestrator": "foreman",
-      "error": null,
-      "grooming_runs": 5,
+      "description": "Something that worked is broken: fix it, prove it with the tests, review it.",
       "stages": [
         {
           "id": "implement",
+          "step": "build",
           "agent": "builder",
           "role": "build",
           "check": null,
@@ -54,10 +244,57 @@
           "on_fail": null,
           "gate": "auto",
           "requires": null,
-          "runs": 5
+          "output": null,
+          "runs": 11,
+          "pass": 11,
+          "fail": 0,
+          "median_s": 1633,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 418,
+              "title": "Timezone in reports",
+              "outcome": "pass",
+              "started_at": "2026-11-21T07:11:49.141Z",
+              "duration_s": 1483
+            },
+            {
+              "ticket": 310,
+              "title": "Fix flaky upload test",
+              "outcome": "pass",
+              "started_at": "2026-11-20T07:35:43.190Z",
+              "duration_s": 3343
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T02:38:58.602Z",
+              "duration_s": 1602
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T01:43:19.755Z",
+              "duration_s": 2619
+            }
+          ]
         },
         {
           "id": "verify",
+          "step": "run-tests",
           "agent": null,
           "role": null,
           "check": "tests",
@@ -67,10 +304,57 @@
           "on_fail": "implement",
           "gate": "auto",
           "requires": null,
-          "runs": 6
+          "output": null,
+          "runs": 11,
+          "pass": 10,
+          "fail": 0,
+          "median_s": 188,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "running"
+          ],
+          "recent": [
+            {
+              "ticket": 418,
+              "title": "Timezone in reports",
+              "outcome": "running",
+              "started_at": "2026-11-21T07:39:17.072Z",
+              "duration_s": null
+            },
+            {
+              "ticket": 310,
+              "title": "Fix flaky upload test",
+              "outcome": "pass",
+              "started_at": "2026-11-20T08:34:17.946Z",
+              "duration_s": 232
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T03:07:34.362Z",
+              "duration_s": 174
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T02:28:39.011Z",
+              "duration_s": 115
+            }
+          ]
         },
         {
           "id": "review",
+          "step": "review",
           "agent": "reviewer",
           "role": "review",
           "check": null,
@@ -80,10 +364,57 @@
           "on_fail": "implement",
           "gate": "auto",
           "requires": null,
-          "runs": 3
+          "output": null,
+          "runs": 10,
+          "pass": 7,
+          "fail": 3,
+          "median_s": 673,
+          "last": [
+            "pass",
+            "pass",
+            "fail",
+            "pass",
+            "pass",
+            "pass",
+            "fail",
+            "fail",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 310,
+              "title": "Fix flaky upload test",
+              "outcome": "pass",
+              "started_at": "2026-11-20T08:38:46.880Z",
+              "duration_s": 779
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T03:12:54.062Z",
+              "duration_s": 606
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "fail",
+              "started_at": "2026-11-20T02:31:32.653Z",
+              "duration_s": 436
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "fail",
+              "started_at": "2026-11-20T01:34:57.846Z",
+              "duration_s": 466
+            }
+          ]
         },
         {
           "id": "pr",
+          "step": "write-pr",
           "agent": "pr-writer",
           "role": "build",
           "check": null,
@@ -93,10 +424,57 @@
           "on_fail": null,
           "gate": "auto",
           "requires": "ready",
-          "runs": 4
+          "output": "PR.md",
+          "runs": 7,
+          "pass": 7,
+          "fail": 0,
+          "median_s": 200,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 310,
+              "title": "Fix flaky upload test",
+              "outcome": "pass",
+              "started_at": "2026-11-20T08:52:04.711Z",
+              "duration_s": 234
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T03:25:06.600Z",
+              "duration_s": 200
+            },
+            {
+              "ticket": 309,
+              "title": "Audit trail for admins",
+              "outcome": "pass",
+              "started_at": "2026-11-18T16:47:24.535Z",
+              "duration_s": 169
+            },
+            {
+              "ticket": 314,
+              "title": "Fix 500 on empty cart",
+              "outcome": "pass",
+              "started_at": "2026-11-18T07:56:03.817Z",
+              "duration_s": 253
+            }
+          ]
         },
         {
           "id": "merge",
+          "step": "merge",
           "agent": null,
           "role": null,
           "check": null,
@@ -106,19 +484,120 @@
           "on_fail": null,
           "gate": "human",
           "requires": null,
-          "runs": 3
+          "output": null,
+          "runs": 7,
+          "pass": 7,
+          "fail": 0,
+          "median_s": 4574,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 310,
+              "title": "Fix flaky upload test",
+              "outcome": "pass",
+              "started_at": "2026-11-20T08:57:53.079Z",
+              "duration_s": 4361
+            },
+            {
+              "ticket": 315,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T03:31:20.750Z",
+              "duration_s": 4574
+            },
+            {
+              "ticket": 309,
+              "title": "Audit trail for admins",
+              "outcome": "pass",
+              "started_at": "2026-11-18T16:51:41.056Z",
+              "duration_s": 5246
+            },
+            {
+              "ticket": 314,
+              "title": "Fix 500 on empty cart",
+              "outcome": "pass",
+              "started_at": "2026-11-18T08:02:51.696Z",
+              "duration_s": 2485
+            }
+          ]
         }
-      ]
+      ],
+      "error": null,
+      "grooming_runs": 8,
+      "stats": {
+        "tickets": 8,
+        "clean": 0.75,
+        "ask_to_pr_min": 101,
+        "usd": 1.51
+      },
+      "grooming": {
+        "pass": 8,
+        "fail": 0,
+        "median_s": 259,
+        "last": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "recent": [
+          {
+            "ticket": 418,
+            "title": "Timezone in reports",
+            "outcome": "pass",
+            "started_at": "2026-11-21T07:08:25.111Z",
+            "duration_s": 161
+          },
+          {
+            "ticket": 310,
+            "title": "Fix flaky upload test",
+            "outcome": "pass",
+            "started_at": "2026-11-20T07:28:03.845Z",
+            "duration_s": 332
+          },
+          {
+            "ticket": 315,
+            "title": "Retry failed webhooks",
+            "outcome": "pass",
+            "started_at": "2026-11-20T00:55:17.732Z",
+            "duration_s": 349
+          },
+          {
+            "ticket": 309,
+            "title": "Audit trail for admins",
+            "outcome": "pass",
+            "started_at": "2026-11-18T15:29:57.765Z",
+            "duration_s": 239
+          }
+        ]
+      }
     },
     {
       "name": "chore",
       "start": "implement",
       "orchestrator": "foreman",
-      "error": null,
-      "grooming_runs": 7,
+      "description": "Upkeep with no behaviour change: dependencies, config, renames.",
       "stages": [
         {
           "id": "implement",
+          "step": "build",
           "agent": "builder",
           "role": "build",
           "check": null,
@@ -128,10 +607,57 @@
           "on_fail": null,
           "gate": "auto",
           "requires": null,
-          "runs": 8
+          "output": null,
+          "runs": 7,
+          "pass": 7,
+          "fail": 0,
+          "median_s": 3022,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 409,
+              "title": "Bump dependencies",
+              "outcome": "pass",
+              "started_at": "2026-11-21T06:16:57.786Z",
+              "duration_s": 3022
+            },
+            {
+              "ticket": 318,
+              "title": "Bump eslint",
+              "outcome": "pass",
+              "started_at": "2026-11-20T14:20:57.531Z",
+              "duration_s": 2023
+            },
+            {
+              "ticket": 317,
+              "title": "Fix login redirect loop",
+              "outcome": "pass",
+              "started_at": "2026-11-18T16:30:32.998Z",
+              "duration_s": 3424
+            },
+            {
+              "ticket": 317,
+              "title": "Fix login redirect loop",
+              "outcome": "pass",
+              "started_at": "2026-11-18T15:59:04.880Z",
+              "duration_s": 1491
+            }
+          ]
         },
         {
           "id": "verify",
+          "step": "run-tests",
           "agent": null,
           "role": null,
           "check": "tests",
@@ -141,10 +667,57 @@
           "on_fail": "implement",
           "gate": "auto",
           "requires": null,
-          "runs": 9
+          "output": null,
+          "runs": 7,
+          "pass": 6,
+          "fail": 1,
+          "median_s": 180,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "fail",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 409,
+              "title": "Bump dependencies",
+              "outcome": "pass",
+              "started_at": "2026-11-21T07:07:40.026Z",
+              "duration_s": 180
+            },
+            {
+              "ticket": 318,
+              "title": "Bump eslint",
+              "outcome": "pass",
+              "started_at": "2026-11-20T14:57:14.497Z",
+              "duration_s": 236
+            },
+            {
+              "ticket": 317,
+              "title": "Fix login redirect loop",
+              "outcome": "pass",
+              "started_at": "2026-11-18T17:28:34.287Z",
+              "duration_s": 162
+            },
+            {
+              "ticket": 317,
+              "title": "Fix login redirect loop",
+              "outcome": "fail",
+              "started_at": "2026-11-18T16:23:56.055Z",
+              "duration_s": 240
+            }
+          ]
         },
         {
           "id": "pr",
+          "step": "write-pr",
           "agent": "pr-writer",
           "role": "build",
           "check": null,
@@ -154,10 +727,56 @@
           "on_fail": null,
           "gate": "auto",
           "requires": "ready",
-          "runs": 6
+          "output": "PR.md",
+          "runs": 6,
+          "pass": 6,
+          "fail": 0,
+          "median_s": 164,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 409,
+              "title": "Bump dependencies",
+              "outcome": "pass",
+              "started_at": "2026-11-21T07:12:00.646Z",
+              "duration_s": 207
+            },
+            {
+              "ticket": 318,
+              "title": "Bump eslint",
+              "outcome": "pass",
+              "started_at": "2026-11-20T15:02:08.153Z",
+              "duration_s": 144
+            },
+            {
+              "ticket": 317,
+              "title": "Fix login redirect loop",
+              "outcome": "pass",
+              "started_at": "2026-11-18T17:34:00.178Z",
+              "duration_s": 92
+            },
+            {
+              "ticket": 319,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-17T18:32:24.524Z",
+              "duration_s": 148
+            }
+          ]
         },
         {
           "id": "merge",
+          "step": "merge",
           "agent": null,
           "role": null,
           "check": null,
@@ -167,80 +786,118 @@
           "on_fail": null,
           "gate": "human",
           "requires": null,
-          "runs": 6
+          "output": null,
+          "runs": 6,
+          "pass": 5,
+          "fail": 0,
+          "median_s": 2540,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "running"
+          ],
+          "recent": [
+            {
+              "ticket": 409,
+              "title": "Bump dependencies",
+              "outcome": "running",
+              "started_at": "2026-11-21T07:16:14.992Z",
+              "duration_s": null
+            },
+            {
+              "ticket": 318,
+              "title": "Bump eslint",
+              "outcome": "pass",
+              "started_at": "2026-11-20T15:05:17.541Z",
+              "duration_s": 4974
+            },
+            {
+              "ticket": 317,
+              "title": "Fix login redirect loop",
+              "outcome": "pass",
+              "started_at": "2026-11-18T17:38:31.069Z",
+              "duration_s": 2540
+            },
+            {
+              "ticket": 319,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-17T18:37:28.421Z",
+              "duration_s": 2387
+            }
+          ]
         }
-      ]
-    },
-    {
-      "name": "factory",
-      "start": "maintain",
-      "orchestrator": null,
+      ],
       "error": null,
-      "grooming_runs": 0,
-      "stages": [
-        {
-          "id": "maintain",
-          "agent": "maintainer",
-          "role": "maintain",
-          "check": null,
-          "next": [
-            "check"
-          ],
-          "on_fail": null,
-          "gate": "auto",
-          "requires": null,
-          "runs": 0
-        },
-        {
-          "id": "check",
-          "agent": null,
-          "role": null,
-          "check": "factory",
-          "next": [
-            "pr"
-          ],
-          "on_fail": "maintain",
-          "gate": "auto",
-          "requires": null,
-          "runs": 0
-        },
-        {
-          "id": "pr",
-          "agent": null,
-          "role": null,
-          "check": null,
-          "next": [
-            "merge"
-          ],
-          "on_fail": null,
-          "gate": "auto",
-          "requires": "ready",
-          "runs": 0
-        },
-        {
-          "id": "merge",
-          "agent": null,
-          "role": null,
-          "check": null,
-          "next": [
-            "end"
-          ],
-          "on_fail": null,
-          "gate": "human",
-          "requires": null,
-          "runs": 0
-        }
-      ]
+      "grooming_runs": 6,
+      "stats": {
+        "tickets": 6,
+        "clean": 0.833,
+        "ask_to_pr_min": 87,
+        "usd": 1.76
+      },
+      "grooming": {
+        "pass": 6,
+        "fail": 0,
+        "median_s": 306,
+        "last": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "recent": [
+          {
+            "ticket": 409,
+            "title": "Bump dependencies",
+            "outcome": "pass",
+            "started_at": "2026-11-21T06:08:59.777Z",
+            "duration_s": 326
+          },
+          {
+            "ticket": 318,
+            "title": "Bump eslint",
+            "outcome": "pass",
+            "started_at": "2026-11-20T14:13:40.557Z",
+            "duration_s": 301
+          },
+          {
+            "ticket": 317,
+            "title": "Fix login redirect loop",
+            "outcome": "pass",
+            "started_at": "2026-11-18T15:54:08.722Z",
+            "duration_s": 274
+          },
+          {
+            "ticket": 319,
+            "title": "Cache user lookups",
+            "outcome": "pass",
+            "started_at": "2026-11-17T17:20:37.075Z",
+            "duration_s": 317
+          }
+        ]
+      }
     },
     {
       "name": "feature",
       "start": "spec",
       "orchestrator": "foreman",
-      "error": null,
-      "grooming_runs": 18,
+      "description": "New behaviour a user will notice: it needs a spec before anyone builds it.",
       "stages": [
         {
           "id": "spec",
+          "step": "write-spec",
           "agent": "spec-writer",
           "role": "spec",
           "check": null,
@@ -251,10 +908,57 @@
           "on_fail": null,
           "gate": "auto",
           "requires": null,
-          "runs": 9
+          "output": "INTENT.md",
+          "runs": 11,
+          "pass": 11,
+          "fail": 0,
+          "median_s": 750,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 412,
+              "title": "Rate-limit login",
+              "outcome": "pass",
+              "started_at": "2026-11-21T05:24:36.796Z",
+              "duration_s": 780
+            },
+            {
+              "ticket": 300,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T19:35:55.345Z",
+              "duration_s": 885
+            },
+            {
+              "ticket": 425,
+              "title": "Export API",
+              "outcome": "pass",
+              "started_at": "2026-11-20T08:34:06.947Z",
+              "duration_s": 989
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T09:07:31.623Z",
+              "duration_s": 531
+            }
+          ]
         },
         {
           "id": "plan",
+          "step": "plan-slices",
           "agent": "planner",
           "role": "plan",
           "check": null,
@@ -264,10 +968,57 @@
           "on_fail": null,
           "gate": "auto",
           "requires": null,
-          "runs": 6
+          "output": "SLICES.md",
+          "runs": 11,
+          "pass": 11,
+          "fail": 0,
+          "median_s": 430,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 412,
+              "title": "Rate-limit login",
+              "outcome": "pass",
+              "started_at": "2026-11-21T05:38:20.214Z",
+              "duration_s": 430
+            },
+            {
+              "ticket": 300,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T19:52:16.380Z",
+              "duration_s": 398
+            },
+            {
+              "ticket": 425,
+              "title": "Export API",
+              "outcome": "pass",
+              "started_at": "2026-11-20T08:51:00.225Z",
+              "duration_s": 456
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T09:19:01.793Z",
+              "duration_s": 353
+            }
+          ]
         },
         {
           "id": "implement",
+          "step": "build",
           "agent": "builder",
           "role": "build",
           "check": null,
@@ -277,10 +1028,57 @@
           "on_fail": null,
           "gate": "auto",
           "requires": null,
-          "runs": 15
+          "output": null,
+          "runs": 17,
+          "pass": 16,
+          "fail": 0,
+          "median_s": 3024,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "running"
+          ],
+          "recent": [
+            {
+              "ticket": 412,
+              "title": "Rate-limit login",
+              "outcome": "running",
+              "started_at": "2026-11-21T05:47:19.734Z",
+              "duration_s": null
+            },
+            {
+              "ticket": 300,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T20:01:09.820Z",
+              "duration_s": 3389
+            },
+            {
+              "ticket": 425,
+              "title": "Export API",
+              "outcome": "pass",
+              "started_at": "2026-11-20T08:59:41.669Z",
+              "duration_s": 3440
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T10:45:06.363Z",
+              "duration_s": 3780
+            }
+          ]
         },
         {
           "id": "verify",
+          "step": "check-evidence",
           "agent": null,
           "role": null,
           "check": "evidence",
@@ -290,10 +1088,57 @@
           "on_fail": "implement",
           "gate": "auto",
           "requires": null,
-          "runs": 21
+          "output": null,
+          "runs": 16,
+          "pass": 13,
+          "fail": 3,
+          "median_s": 173,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "fail",
+            "fail",
+            "pass",
+            "pass",
+            "pass",
+            "fail",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 300,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T20:59:16.235Z",
+              "duration_s": 213
+            },
+            {
+              "ticket": 425,
+              "title": "Export API",
+              "outcome": "fail",
+              "started_at": "2026-11-20T09:59:00.708Z",
+              "duration_s": 261
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T11:48:40.370Z",
+              "duration_s": 264
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T10:29:07.837Z",
+              "duration_s": 178
+            }
+          ]
         },
         {
           "id": "holdout",
+          "step": "holdout",
           "agent": "checker",
           "role": "verify",
           "check": null,
@@ -303,10 +1148,57 @@
           "on_fail": "implement",
           "gate": "auto",
           "requires": null,
-          "runs": 15
+          "output": null,
+          "runs": 13,
+          "pass": 11,
+          "fail": 2,
+          "median_s": 634,
+          "last": [
+            "pass",
+            "fail",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "fail",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 300,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T21:04:43.912Z",
+              "duration_s": 401
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T11:54:46.493Z",
+              "duration_s": 414
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "fail",
+              "started_at": "2026-11-19T10:32:06.439Z",
+              "duration_s": 614
+            },
+            {
+              "ticket": 307,
+              "title": "Fix timezone in digest",
+              "outcome": "pass",
+              "started_at": "2026-11-18T17:36:41.102Z",
+              "duration_s": 634
+            }
+          ]
         },
         {
           "id": "review",
+          "step": "review",
           "agent": "reviewer",
           "role": "review",
           "check": null,
@@ -316,10 +1208,57 @@
           "on_fail": "implement",
           "gate": "auto",
           "requires": null,
-          "runs": 14
+          "output": null,
+          "runs": 11,
+          "pass": 9,
+          "fail": 2,
+          "median_s": 709,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "fail",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 300,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T21:12:31.956Z",
+              "duration_s": 719
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T12:02:20.379Z",
+              "duration_s": 639
+            },
+            {
+              "ticket": 307,
+              "title": "Fix timezone in digest",
+              "outcome": "pass",
+              "started_at": "2026-11-18T17:47:59.341Z",
+              "duration_s": 896
+            },
+            {
+              "ticket": 307,
+              "title": "Fix timezone in digest",
+              "outcome": "fail",
+              "started_at": "2026-11-18T14:51:03.660Z",
+              "duration_s": 709
+            }
+          ]
         },
         {
           "id": "pr",
+          "step": "write-pr",
           "agent": "pr-writer",
           "role": "build",
           "check": null,
@@ -329,10 +1268,57 @@
           "on_fail": null,
           "gate": "auto",
           "requires": "ready",
-          "runs": 12
+          "output": "PR.md",
+          "runs": 9,
+          "pass": 9,
+          "fail": 0,
+          "median_s": 183,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 300,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T21:24:40.483Z",
+              "duration_s": 174
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T12:13:08.448Z",
+              "duration_s": 216
+            },
+            {
+              "ticket": 307,
+              "title": "Fix timezone in digest",
+              "outcome": "pass",
+              "started_at": "2026-11-18T18:04:11.783Z",
+              "duration_s": 229
+            },
+            {
+              "ticket": 302,
+              "title": "Fix login redirect loop",
+              "outcome": "pass",
+              "started_at": "2026-11-18T05:58:39.197Z",
+              "duration_s": 150
+            }
+          ]
         },
         {
           "id": "merge",
+          "step": "merge",
           "agent": null,
           "role": null,
           "check": null,
@@ -342,19 +1328,120 @@
           "on_fail": null,
           "gate": "human",
           "requires": null,
-          "runs": 10
+          "output": null,
+          "runs": 9,
+          "pass": 9,
+          "fail": 0,
+          "median_s": 3821,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 300,
+              "title": "Retry failed webhooks",
+              "outcome": "pass",
+              "started_at": "2026-11-20T21:30:20.737Z",
+              "duration_s": 4707
+            },
+            {
+              "ticket": 304,
+              "title": "Cache user lookups",
+              "outcome": "pass",
+              "started_at": "2026-11-19T12:18:53.109Z",
+              "duration_s": 3593
+            },
+            {
+              "ticket": 307,
+              "title": "Fix timezone in digest",
+              "outcome": "pass",
+              "started_at": "2026-11-18T18:09:12.604Z",
+              "duration_s": 3299
+            },
+            {
+              "ticket": 302,
+              "title": "Fix login redirect loop",
+              "outcome": "pass",
+              "started_at": "2026-11-18T06:02:19.162Z",
+              "duration_s": 4661
+            }
+          ]
         }
-      ]
+      ],
+      "error": null,
+      "grooming_runs": 11,
+      "stats": {
+        "tickets": 11,
+        "clean": 0.545,
+        "ask_to_pr_min": 151,
+        "usd": 3.48
+      },
+      "grooming": {
+        "pass": 11,
+        "fail": 0,
+        "median_s": 218,
+        "last": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "recent": [
+          {
+            "ticket": 412,
+            "title": "Rate-limit login",
+            "outcome": "pass",
+            "started_at": "2026-11-21T05:20:04.823Z",
+            "duration_s": 249
+          },
+          {
+            "ticket": 300,
+            "title": "Retry failed webhooks",
+            "outcome": "pass",
+            "started_at": "2026-11-20T19:32:08.029Z",
+            "duration_s": 189
+          },
+          {
+            "ticket": 425,
+            "title": "Export API",
+            "outcome": "pass",
+            "started_at": "2026-11-20T08:30:00.560Z",
+            "duration_s": 137
+          },
+          {
+            "ticket": 304,
+            "title": "Cache user lookups",
+            "outcome": "pass",
+            "started_at": "2026-11-19T09:01:30.421Z",
+            "duration_s": 237
+          }
+        ]
+      }
     },
     {
       "name": "maintenance",
       "start": "maintain",
       "orchestrator": null,
-      "error": null,
-      "grooming_runs": 0,
+      "description": "Scheduled repo upkeep the maintenance agent files on its own.",
       "stages": [
         {
           "id": "maintain",
+          "step": null,
           "agent": "maintenance",
           "role": "build",
           "check": null,
@@ -364,10 +1451,55 @@
           "on_fail": null,
           "gate": "auto",
           "requires": null,
-          "runs": 0
+          "output": null,
+          "runs": 6,
+          "pass": 6,
+          "fail": 0,
+          "median_s": 835,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 324,
+              "title": "Audit trail for admins",
+              "outcome": "pass",
+              "started_at": "2026-11-18T09:36:07.189Z",
+              "duration_s": 817
+            },
+            {
+              "ticket": 324,
+              "title": "Audit trail for admins",
+              "outcome": "pass",
+              "started_at": "2026-11-18T09:24:02.813Z",
+              "duration_s": 471
+            },
+            {
+              "ticket": 327,
+              "title": "Tidy CI config",
+              "outcome": "pass",
+              "started_at": "2026-11-16T14:21:34.327Z",
+              "duration_s": 981
+            },
+            {
+              "ticket": 327,
+              "title": "Tidy CI config",
+              "outcome": "pass",
+              "started_at": "2026-11-16T13:47:32.170Z",
+              "duration_s": 969
+            }
+          ]
         },
         {
           "id": "verify",
+          "step": "run-tests",
           "agent": null,
           "role": null,
           "check": "tests",
@@ -377,10 +1509,55 @@
           "on_fail": "maintain",
           "gate": "auto",
           "requires": null,
-          "runs": 0
+          "output": null,
+          "runs": 6,
+          "pass": 5,
+          "fail": 1,
+          "median_s": 184,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "fail",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 324,
+              "title": "Audit trail for admins",
+              "outcome": "pass",
+              "started_at": "2026-11-18T09:50:56.480Z",
+              "duration_s": 172
+            },
+            {
+              "ticket": 324,
+              "title": "Audit trail for admins",
+              "outcome": "fail",
+              "started_at": "2026-11-18T09:32:03.841Z",
+              "duration_s": 176
+            },
+            {
+              "ticket": 327,
+              "title": "Tidy CI config",
+              "outcome": "pass",
+              "started_at": "2026-11-16T14:39:53.076Z",
+              "duration_s": 266
+            },
+            {
+              "ticket": 327,
+              "title": "Tidy CI config",
+              "outcome": "pass",
+              "started_at": "2026-11-16T14:05:43.386Z",
+              "duration_s": 192
+            }
+          ]
         },
         {
           "id": "review",
+          "step": "review",
           "agent": "reviewer",
           "role": "review",
           "check": null,
@@ -390,10 +1567,54 @@
           "on_fail": "maintain",
           "gate": "auto",
           "requires": null,
-          "runs": 0
+          "output": null,
+          "runs": 5,
+          "pass": 4,
+          "fail": 1,
+          "median_s": 648,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "fail",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 324,
+              "title": "Audit trail for admins",
+              "outcome": "pass",
+              "started_at": "2026-11-18T09:54:06.745Z",
+              "duration_s": 465
+            },
+            {
+              "ticket": 327,
+              "title": "Tidy CI config",
+              "outcome": "pass",
+              "started_at": "2026-11-16T14:45:14.216Z",
+              "duration_s": 863
+            },
+            {
+              "ticket": 327,
+              "title": "Tidy CI config",
+              "outcome": "fail",
+              "started_at": "2026-11-16T14:09:34.754Z",
+              "duration_s": 640
+            },
+            {
+              "ticket": 325,
+              "title": "Fix flaky upload test",
+              "outcome": "pass",
+              "started_at": "2026-11-16T03:43:55.345Z",
+              "duration_s": 648
+            }
+          ]
         },
         {
           "id": "pr",
+          "step": "write-pr",
           "agent": "pr-writer",
           "role": "build",
           "check": null,
@@ -403,10 +1624,53 @@
           "on_fail": null,
           "gate": "auto",
           "requires": "ready",
-          "runs": 0
+          "output": "PR.md",
+          "runs": 4,
+          "pass": 4,
+          "fail": 0,
+          "median_s": 126,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 324,
+              "title": "Audit trail for admins",
+              "outcome": "pass",
+              "started_at": "2026-11-18T10:02:45.869Z",
+              "duration_s": 127
+            },
+            {
+              "ticket": 327,
+              "title": "Tidy CI config",
+              "outcome": "pass",
+              "started_at": "2026-11-16T15:01:19.958Z",
+              "duration_s": 126
+            },
+            {
+              "ticket": 325,
+              "title": "Fix flaky upload test",
+              "outcome": "pass",
+              "started_at": "2026-11-16T03:57:37.408Z",
+              "duration_s": 269
+            },
+            {
+              "ticket": 326,
+              "title": "Search by email",
+              "outcome": "pass",
+              "started_at": "2026-11-15T06:22:22.089Z",
+              "duration_s": 95
+            }
+          ]
         },
         {
           "id": "merge",
+          "step": "merge",
           "agent": null,
           "role": null,
           "check": null,
@@ -416,9 +1680,102 @@
           "on_fail": null,
           "gate": "human",
           "requires": null,
-          "runs": 0
+          "output": null,
+          "runs": 4,
+          "pass": 4,
+          "fail": 0,
+          "median_s": 2963,
+          "last": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "recent": [
+            {
+              "ticket": 324,
+              "title": "Audit trail for admins",
+              "outcome": "pass",
+              "started_at": "2026-11-18T10:06:11.125Z",
+              "duration_s": 2519
+            },
+            {
+              "ticket": 327,
+              "title": "Tidy CI config",
+              "outcome": "pass",
+              "started_at": "2026-11-16T15:04:09.176Z",
+              "duration_s": 3408
+            },
+            {
+              "ticket": 325,
+              "title": "Fix flaky upload test",
+              "outcome": "pass",
+              "started_at": "2026-11-16T04:02:13.214Z",
+              "duration_s": 2171
+            },
+            {
+              "ticket": 326,
+              "title": "Search by email",
+              "outcome": "pass",
+              "started_at": "2026-11-15T06:26:09.456Z",
+              "duration_s": 3653
+            }
+          ]
         }
-      ]
+      ],
+      "error": null,
+      "grooming_runs": 4,
+      "stats": {
+        "tickets": 4,
+        "clean": 0.5,
+        "ask_to_pr_min": 71,
+        "usd": 1.99
+      },
+      "grooming": {
+        "pass": 4,
+        "fail": 0,
+        "median_s": 245,
+        "last": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "recent": [
+          {
+            "ticket": 324,
+            "title": "Audit trail for admins",
+            "outcome": "pass",
+            "started_at": "2026-11-18T09:20:04.641Z",
+            "duration_s": 216
+          },
+          {
+            "ticket": 327,
+            "title": "Tidy CI config",
+            "outcome": "pass",
+            "started_at": "2026-11-16T13:39:46.098Z",
+            "duration_s": 290
+          },
+          {
+            "ticket": 325,
+            "title": "Fix flaky upload test",
+            "outcome": "pass",
+            "started_at": "2026-11-16T03:17:11.841Z",
+            "duration_s": 238
+          },
+          {
+            "ticket": 326,
+            "title": "Search by email",
+            "outcome": "pass",
+            "started_at": "2026-11-15T05:44:33.474Z",
+            "duration_s": 251
+          }
+        ]
+      }
     }
   ]
 }

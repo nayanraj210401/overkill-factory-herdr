@@ -40,7 +40,7 @@ Earlier drafts and the research pulled in different directions. Each clash is se
 
 1. **Markdown in front, code behind.** You manage work, not files. Every view shows a ticket's Markdown. The diff opens in Herdr's shipped `changes` panel with `d`, and the agent terminals with `e`.
 2. **Rules, not approvals.** The factory never stops to ask permission for reversible work. It checks the result at the end of each stage, and a failure goes back to the agent. You see work only when it is ready, or when the factory is truly stuck.
-3. **The factory is code.** `.factory/` defines everything the daemon does. You change it like any other code. Only the maintainer edits it, when you or another agent asks, through a PR; otherwise the factory only tunes settings you mark tunable, as overrides kept outside it.
+3. **The factory is code.** `.factory/` defines everything the daemon does. You change it like any other code. Only the maintainer edits it, when you or another agent asks, in place with a backup (it is local: there is nothing to merge); otherwise the factory only tunes settings you mark tunable, as overrides kept outside it.
 4. **Every agent has a territory.** Agents know each other and ask each other directly; none acts outside its own territory. Overwatch leads and is the one you talk to.
 5. **Measure everything.** Every session is recorded against its ticket. Four numbers are always on screen: time to PR, cost per PR, human interactions per PR and revert rate.
 
@@ -51,7 +51,8 @@ The factory is one Herdr app layout, `layouts/factory.json`, and it replaces the
 Factory mode has its own shape and its own words. Warp's app was a reference for ideas (a stage timeline per ticket, a metrics page), not a template. What makes it a Herdr mode:
 
 - **It's a mode.** `cmd-shift-f` switches between factory mode and Herdr's normal window. Both show the same spaces, agents and terminals, so nothing is lost by switching.
-- **One factory per window.** The factory is the repo of the space you're in; switching spaces with Herdr's own picker switches factories. There is no list of factories.
+- **One factory per window.** The window shows the factory of the space you're in (any of its repos' checkouts, or a ticket's folder). Factory mode hides Herdr's spaces sidebar, so the brand row at the top of the sidebar is the switcher: `<factory> ▾` over the lead repo, the branch and "· N repos". A click on it, or `g f`, opens the factory picker, a Herdr popup with one row per factory on this machine: its repos (lead first), Herdr's status dot, and its running, needs-you and to-review counts read from that factory's own `status.json`. Picking one switches the Herdr space: Herdr focuses a space in that factory's lead repo, or makes one there, and the window and its terminals follow the space as they always do. Switching spaces with Herdr's own keys switches factories the same way.
+- **Another factory needing you shows.** When another factory has something in its Needs you, a line under the brand says so (`⚠ shop: 1 needs you`, with "+N" when there are more). A click goes to that factory; `]` and `[` go to the next and previous one.
 - **Agents are live, not transcripts.** A ticket's page splits to show its real agent terminal, and you can type into it. Overwatch is a Herdr terminal too.
 - **Herdr's agent status stays.** Every ticket row carries Herdr's working, blocked, idle or done dot.
 - **Keys first.** Every page and action has a key in the layout's own section of `keys.json`, and the layout ships its own theme.
@@ -59,7 +60,7 @@ Factory mode has its own shape and its own words. Warp's app was a reference for
 
 The window has four parts:
 
-- **Sidebar.** At the top, the factory's name, whether the daemon is running, and today's spend. In the middle, the live tickets grouped as Needs you, Running, Ready for review and Queue, then To review (teammates' PRs waiting on you), each row with its title, stage, cost and agent dot. At the bottom, the factory menu: Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Config. At the foot, the day's budget bar.
+- **Sidebar.** It shows only what's alive and what waits on you. At the top, the factory switcher (name, lead repo, branch), the other-factory line when one needs you, and whether the daemon is running. Under it, a Search tickets row that opens Tickets with its search focused. Then **Waiting on you · N** (in the attention colour, hidden when empty): one row per thing you must act on, an agent asking you (a grooming question, a stage agent waiting in its terminal, or a global agent such as Overwatch or the maintainer), a PR ready to merge, or a parked ticket. Each row has a glyph (`?`, `✓`, `⏸`), `#id title`, how long it has waited, and a line saying why ("builder asks you · implement", "PR #52 ready to merge · 6 of 6 rules", "parked · retries used up in verify"). Then **Working · N**: every live agent, running tickets (local or ☁ cloud) and the global agents while they work, each with a spinner, a live timer since its stage or session began, and "agent · stage (S2 of 3)"; "Nothing running." when empty. The queue moved to the Tickets page: the sidebar keeps one quiet line, "4 queued · 1 blocked by #412 →", that opens it. **Settled · N**, folded by default, lists the last 10 tickets merged or closed in the past 7 days. At the bottom, the factory menu (Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Config), with the count of teammates' PRs waiting on Reviews. At the foot, the day's budget bar. A click on a row opens its ticket, or a global agent's terminal (Overwatch's page for Overwatch).
 - **Header bar.** Where you are (`acme-api › Blueprint`) and the page's keys.
 - **Main area.** A `stack` block that shows one page, switched with `layout.select`.
 - **Status bar.** Running agents, PRs ready, spend against budget, and ready rules failing now.
@@ -70,16 +71,17 @@ Each page is drawn below the table. All share one sidebar.
 
 | Page | What it shows |
 | --- | --- |
-| Home | Needs you first (grooming questions, PRs ready to merge, parked tickets), what's running, and today's four numbers |
+| Home | Needs you first (an agent asking you in its terminal, PRs ready to merge, parked tickets), what's running, and today's four numbers |
 | Ticket | One ticket: its stage timeline (STATUS.md, HANDOFF.md), each stage with a plain summary, time and agent; ready rules; decisions made for you; once a PR exists, its watched badge and review rounds; a box to message the session running now. `e` splits in the live agent terminal; `1`–`4` show Plan, Checks, Questions and PR |
 | Tickets | Every ticket, merged ones included, filtered by state and searchable. Its Runs view (press r) lists every agent session instead: stage runs, babysitter fixes, maintenance and benchmark runs, each with its time, cost and transcript |
 | Overwatch | The overwatch agent (PRD 7.1) in a live Herdr terminal: ask what's blocked, start, pause or reorder tickets, and ask for changes to the factory, which it hands to the maintainer |
 | Blueprint | Each blueprint as a graph, with run counts and gates per stage; `y` shows its YAML |
 | Metrics | Throughput, Cost, Quality, Learning and Benchmarks tabs over a date range |
-| Config | The `.factory/` files: a list, a readable view of the one selected, its schema check, and `o` to open it in your editor |
-| Reviews | Teammates' PRs waiting on you, by risk, fast lane on top. Opening one shows what the factory found, the independent check results, and a link to your pending review on GitHub, where you finish and submit it |
+| Repo config | One repo of the shown factory at a time (a switcher, the lead first): its own `.factory/` files, a readable view of the one selected, its schema check, what each file overrides, and ⌘O to open it in your editor |
+| Config | The factory's global settings: the daemon's controls on top, then the files in `~/.factory` every repo shares (factory agents, skills, shared steps, `config.yaml`, `maintainer.json`, `overwatch.json`, `plan.json`), read-only, with ⌘O |
+| Reviews | Teammates' PRs, grouped by what each needs from you: Ready for you, Reviewing now, Waiting to start (risk and cost first, "⚠ may not fit"), Submitted. A review is a ticket, so opening one is its Ticket page with review tabs: Findings, Story, Checks, Questions, Rounds |
 
-**Metrics.** Throughput: time to PR, human interactions per PR, PRs merged, and cycle time split into pickup to PR, PR to your first review, and review to merge. Cost: cost per PR, spend per day against budget, spend by agent and model. Quality: revert rate per blueprint, ready rules passing on the first try, retries per ticket. Learning: the target over time, each tuning shift with an undo, experiments, the lesson store. Benchmarks: the latest report per stage and per blueprint.
+**Metrics.** Throughput: time to PR, human interactions per PR, PRs merged, and cycle time split into pickup to PR, PR to your first review, and review to merge. Cost: cost per PR, spend per day against budget, spend by agent and model. Quality: revert rate per blueprint, ready rules passing on the first try, retries per ticket. Learning: the target over time, each tuning shift with an undo, experiments, the lesson store. Benchmarks: the latest report per stage and per blueprint. An All factories toggle (⇧A, or the chip in the tab row; remembered across reloads) combines every factory on the machine: counts, tokens and spend summed per day, rates recomputed from their counts, medians and the Learning and Benchmarks tabs shown per factory.
 
 #### Home
 
@@ -113,13 +115,73 @@ Each page is drawn below the table. All share one sidebar.
 
 ![Metrics · Cost tab in tokens and plan windows](layouts/06b-metrics-cost.png)
 
+#### Repo config
+
+Repo config (⌘7) shows one repo's `.factory/`. A row of chips above the files picks the repo: every repo of the shown factory (agents-live.json's `factories[].repos`), the lead marked and shown first. A line on the right says the folder is "Local to this machine, never pushed" (`.factory/` sits in `.git/info/exclude`). A repo with no `.factory/` gets an empty state instead of the list.
+
+Each file says where it stands, as the daemon reads it (`lib/configfiles.js` mirrors `agentFile`, `skillDir`, `loadPrompt` and `stepFile`, and `daemon/configfiles.test.ts` checks it against them):
+
+- **overrides built-in / global / lead repo** (accent): the repo's copy runs instead of another one. A lead repo's `prompts/<x>.md` over the built-in prompt; its `steps/<x>.yaml` over `~/.factory/steps/`; a `skills/<x>/` over the lead repo's and `~/.factory/skills/`; another repo's `agents/<x>.md` over the lead repo's.
+- **not used** (blocked): the daemon never reads it. A repo copy of a factory agent (overwatch, babysitter, maintainer, learner: those load from `~/.factory/agents/`, else the shipped one), and another repo's `factory.yaml`, blueprints, prompts and steps (those load from the lead repo).
+- **from global example / from built-in example** (dim): a repo agent or step copied from the example library. Only the repo's copy runs.
+
+Under the badge, "differs from built-in" (or global, lead repo, example) when the two texts differ. Nothing judges which is older.
+
 #### Config
+
+Config (⌘8) is the factory's global page. The daemon bar, Claude Code, pending changes and tuned settings stay on top in their own capped, scrolling area. Below them, `~/.factory`'s config: `agents/*.md`, `skills/**`, `steps/*.yaml`, then `config.yaml`, `maintainer.json`, `overwatch.json` and `plan.json` when present. Logs, backups, examples and each factory's own folder aren't listed. A global factory agent shows "overrides built-in" over the shipped one; skills and steps compare with the shipped examples. The schema check comes from `factory validate --json`'s `~/.factory` rows.
+
+Both pages are read-only, apart from Config's New UI switch (V2 UI gate, below). A line on each says the maintainer makes every change there, with an **Ask maintainer** button: the `factory-ask` dialog takes the change and runs `factory request` (with `--repo <slug>` on another repo's Repo config), which types it into the maintainer's terminal. ⌘O goes to `factory-header`, which every page shows, and opens the file the shown page selected (`shared("factory.open-file")`), since a `<mod>.<command>` reaches only shown copies.
 
 ![Config · factory.yaml as readable settings](layouts/07-config.png)
 
+#### V2 UI gate
+
+`V2_UI: true | false` (default `false`) switches the Ticket and Blueprint pages to their V2 designs. Those pages come in follow-up PRs; the designs they build are the prototypes `docs/prototypes/ticket-v2/index.html` and `docs/prototypes/blueprint-v2/index.html`. Until a page has a V2 version, the gate changes nothing on it.
+
+- **Where it's set:** a top-level key in the account config (`~/.factory/config.yaml`, every factory) or in a repo's `.factory/factory.yaml` (that factory). The lead repo's `factory.yaml` wins over the account. `factory validate` checks it is `true` or `false`.
+- **Turning it on and off:** the Config page (⌘8) has a **New UI** row with an on/off switch, the one setting that page changes itself. It runs `factory config set V2_UI true|false`, which edits that one top-level line of `~/.factory/config.yaml` in place (the rest of the file and its comments stay; the key is added at the end when missing), refuses anything but `true` or `false` and any change that would leave the file invalid, then rewrites every factory's status.json so the window switches at once. `factory config get V2_UI --json` gives `{ account, factory, repo, effective }`; when the shown factory's `factory.yaml` sets the key, the row says so ("irctc-mcp's factory.yaml sets it on; that wins here", `newUIRow` in `lib/configfiles.js`), since the switch only writes the account file and never a repo's.
+- **How the mods read it:** the daemon writes `ui: { v2: <bool> }` into status.json (`lib/status.js` checks it when present). A page calls `v2UI(status())` from `lib/model.js`. It's off when `ui` is missing, so an older daemon keeps the current pages.
+- **Backward compatibility:** the current pages stay the default. A V2 page draws only when the gate is on.
+- **Ticket V2** (`mods/factory-ticket/v2.js`, views in `lib/ticketv2.js`): left, the title, chips (blueprint, source, a deadline the ask names, spend against the budget, hard rules from INTENT.md or GROOMING.md), the ask in short, a stage strip and six tabs (Plan, Checks, Questions, PR, The ask, Memory; ⌘⌥1–6; Memory is ticket memory's layer 4). Right, the agent line and token bar, then by state: the live terminal's tail (`hc read`, read-only) while it works; an inline question card when it waits on you, whose Send types the picked option or your words into the live terminal (`hc keys`/`hc send --force`, options read from the question tool's screen) or, parked, opens the `factory answer` dialog prefilled; the ready rules (`factory ready`) on a ready PR. Then files changed (`factory diff`) and Activity from `events`. x closes a parked ticket (`factory drop`), b sends a ready one back, o opens its PR.
+- **Chat (V2)** (`mods/factory-chat`, picks in `lib/ticketchat.js`; the design is `docs/prototypes/chat-v2/index.html`): with the gate on, the Ticket page gets an **Overview · Chat · Diff** switch over both columns (⌘⌥7–9; ⌘⌥1–6 and bare 1–6 stay the Overview's tabs). Overview is the V2 page above. Diff draws the ticket's `factory diff` in the page, as the d window does. Chat is the ticket's agent as a chat, adapted from [herdr-chat](https://github.com/naruse/herdr-chat) (MIT, commit `05ef3ed`; `mods/factory-chat/UPSTREAM.md` lists what was kept, changed and dropped). Its transcript is a session's `transcript` from `factory sessions <id> --json` (the live session by default, else the newest with one), read as it grows: messages, the reply streamed from the screen, folded tool calls whose rows open to their output, and the agent's questions and permission prompts as buttons. The composer types into the ticket's live terminal (`hc send`), and messages sent while it works show as queued (Send now, Edit). ⌘F searches, and ⌘; opens a side chat that asks a read-only fork of the session. A session switcher (stage · n · time) shows any earlier session's transcript, read-only. With no agent running, the transcript shows read-only and the composer says "No agent running. Press + to open your own session, or use Talk it through (u) or Answer & resume." **+** (at the end of the session switcher, on any started ticket) opens the person's own session on the ticket, outside its blueprint (`factory chat <id>`, `daemon/chat.ts`): `claude` as the person runs it, started in the ticket's worktree: their default model, settings, permission mode, skills, plugins, MCP servers and slash commands, with no factory pins (`--model`, `--permission-mode`, `--settings`, a session plugin) and no hard-stop hook, since the person is driving. The ticket (its id and title, worktrees, ticket folder, intent and digest) goes in with `--append-system-prompt`, and `--add-dir` gives it the ticket's folder and other worktrees. It gets no prompt, so it opens idle ("Your session is ready…") and the person starts the conversation; it never moves the ticket on. The composer passes everything to its terminal as typed except `/btw` and `/side` (the side chat), so `/model`, `/agents`, a skill or any other slash command is Claude's; a menu it leaves on screen (the `/model` picker, a permission prompt) shows as choices in the chat, and **Open in terminal** in the chat's head peeks the session's terminal for what the chat can't draw (a full-screen panel, a menu you type into, Shift+Tab for the mode). Opening it pauses a running ticket, so two agents never edit the worktree; it is then the ticket's terminal, so the chat follows it. **Close your session** (`--close`), its terminal exiting, or Resume ends it, and a ticket it paused resumes where it stopped, its next session starting from the worktree as it was left. Its row is a session with stage `chat` (shown as "your session · n · time"), so its transcript, cost and journal are the ticket's. The page embeds the view as a retained nested view, and `scripts/sync.sh` copies `mods/factory-chat/chat/` into the Ticket page's folder. With the gate off, the page has no switch and the chat isn't reachable. **Phase 2 (built):** the factory sidebar is the chat's thread list. While the Ticket page shows Chat, a click on a Waiting on you or Working ticket opens that ticket on Chat (`threadTarget` in `lib/sidebar.js`; the page writes the view it shows to `factory.ticket.view` in shared.json, and the sidebar asks for Chat with `factory.ticket.open`). Global agents and Settled rows open as before. Each of those rows gets a small dot when its live transcript grew since you last had its chat on screen: status.json's tickets carry `transcript`, the live session's file; the sidebar sizes them on its tick (`wc -c`) and keeps what you've seen per viewer in `factory.chat.seen` (`chatUnread`, `seenNext`); a ticket's first sighting is the baseline, and a new session's transcript counts as unread. Beside the chat, the **Changes + ticket memory** panel (⌘⌥0, or Changes in the chat's head; open or closed is kept per viewer in `factory.chat.panel`): the files changed with +/− from `factory diff` (a click opens that file alone in the Diff view, with All files to go back), the digest short (Current state first, at most three sections of three lines) with **Edit on Memory** (Overview › Memory), and the journal's last four events (`chatPanel` in `lib/ticketchat.js`). It folds away while the Chat view is narrower than 860 px. Clicks in it don't take focus from the message box. With the gate off, none of this shows.
+- **Blueprint V2** (`mods/factory-blueprint/v2.js`, numbers in `lib/blueprint-v2.js`): blueprints.json adds each blueprint's `description` (an optional `description:` line in the blueprint file, the "why grooming picks it"), a `stats` strip (tickets in 7 days, the share with no fail-back, the median ask → PR time and cost over PRs opened), per stage its last 10 outcomes, pass/fail and median time and recent runs (a run fails when the ticket goes next to its `on_fail`, or parks on it with retries used up), and `steps` (each step's file, description and output). A number with nothing to measure is null and the page leaves it out.
+
 #### Reviews
 
-![Reviews · low-risk lane, risk-ordered queue, a prepared pending review](layouts/08-reviews.png)
+Redesigned on 2026-11-23 for peer review as the user redesigned it (below): a review is a ticket on a peer-review blueprint, the agent decides the verdict, the output follows the risk level, and cost comes before tokens. The old page (a low-risk fast lane, then a risk-ordered list with must-fix/suggestion/noise) no longer fits, so the page is two views, both built from Herdr's own parts.
+
+**The queue** (`g r`). One row per PR, grouped by what it needs from you, not by risk:
+
+| Group | Rows show | Your keys |
+| --- | --- | --- |
+| Ready for you | risk, title, author and size, the agent's verdict (Request changes, Comment, Approve), the findings by severity | `enter` opens it · `o` your pending review on GitHub · `a` approve, only a low-risk PR with an Approve verdict |
+| Reviewing now | the live stage with Herdr's agent dot, tokens used against the PR's budget, "round 2" on a re-review | `enter` opens it, with its live terminal |
+| Waiting to start | the estimate; "⚠ may not fit" when it's over what is left of the 5-hour window, the week or today's budget, with one line saying by how much | `r` run anyway · `t` story only · `w` wait for the reset. Nothing starts while the warning stands |
+| Submitted this week | folded; one line of outcomes: kept as written, edited, missed, your minutes | `enter` unfolds |
+
+A strip on top says what the whole queue needs against the 5-hour window, with All, Requested and Teammates filters (`review.queue`). Columns have fixed widths and a title is cut to its column, never pushing the others. A card at the foot previews the selected PR: the main point, the story's tiers, the output, the checks run here and the cost.
+
+**The review** (`enter`). A review is a ticket, so it opens on the Ticket page with review tabs in place of Plan, Checks, Questions and PR:
+
+- **On top:** the agent's verdict and why ("1 blocker, kept by both votes"), and the output the level allows ("Pending on GitHub", or "Submits as Comment" when `submit` is on). Below it, the blueprint's stages as a strip, with tokens against the budget.
+- **1 Findings:** by severity (blocker, major, minor, nit), each with its file and line, the evidence (the input that breaks it, run, or `not reproduced`), the verify vote (kept ✓✓, split ✓✗), and new or pre-existing from `git blame`. A line under the list counts what was dropped by vote and what stays as noise in REVIEW-DRAFT.md (`h` shows them).
+- **2 Story:** the chapters in reading order, each tagged read, skim or skip with its size and its why, linked to where it was written. A why nobody wrote down is marked and becomes a question. `s` opens the full story, the private artifact.
+- **3 Checks:** the author's evidence re-run here, the affected tests, scenarios and lint.
+- **4 Questions:** questions for the author, from the story.
+- **5 Rounds:** on a re-review, each earlier finding as fixed (with the commit), pushed back (with the author's words and what verify made of them) or still open.
+- **The right side:** while the reviewer runs, its live Herdr terminal (type to steer it, as on any ticket). Once it's done, the selected finding in Herdr's read-only code view, with the comment drawn on its line as it will read on GitHub, in your `review.format`. The reviewer's last lines sit below it, and `e` opens its terminal.
+- **Message box:** at the foot, as on every ticket: tell the reviewer to drop a finding or ask something, and it updates the pending review.
+
+The sidebar's To review group shows the same groups as counts (ready, reviewing, may not fit), and opening a review lists it there like a running ticket.
+
+![Reviews · the queue grouped by what each PR needs from you](layouts/08-reviews.png)
+
+![Review · verdict, findings with verify votes, the comment as it will read on GitHub](layouts/08b-review.png)
+
+![Review · round 2: the story's chapters, what round 1's findings became, the live reviewer](layouts/08c-review-round.png)
+
+The mockups' HTML is in `docs/layouts/src/`; `sh docs/layouts/src/render.sh` renders them.
 
 ### The mods
 
@@ -127,7 +189,8 @@ All mods carry a `factory-` prefix, since a mod folder's name is its identity in
 
 | Mod | Starts from | What it does |
 | --- | --- | --- |
-| `factory-chrome` | Herdr's `workspace-chrome` | Brand row (factory, daemon status, spend) and the budget bar |
+| `factory-chrome` | Herdr's `workspace-chrome` | Brand row (the factory switcher, another factory needing you, daemon status, spend) and the budget bar |
+| `factory-picker` | Herdr's `picker` | The factory picker popup: every factory, its repos and counts; picking one switches the space |
 | `factory-tickets` | Herdr's `spaces` | The sidebar's ticket groups |
 | `factory-menu` | new | The factory menu at the bottom of the sidebar |
 | `factory-header` | Herdr's `tabs` | Breadcrumb and page keys |
@@ -138,6 +201,7 @@ All mods carry a `factory-` prefix, since a mod folder's name is its identity in
 | `factory-list` | new | The Tickets page |
 | `factory-blueprint` | new | Blueprint graphs and their YAML |
 | `factory-metrics` | new | The five Metrics tabs |
+| `factory-repo-config` | new | The Repo config page |
 | `factory-config` | new | The Config page |
 | `factory-reviews` | new | The review queue, each PR's findings and check results, and the link to its pending review |
 
@@ -150,16 +214,20 @@ Every action is a click or a key, and each one is a single call to the daemon. T
 | Key | Does |
 | --- | --- |
 | `cmd-shift-f` | Switch to factory mode and back |
-| `g h`, `g t`, `g o`, `g b`, `g m`, `g c` | Home, Tickets, Overwatch, Blueprint, Metrics, Config |
+| `cmd-k` | The factory picker: every factory on this machine; pick one to switch to its space |
+| `cmd-j` / `cmd-shift-j` | The next / previous other factory that needs you |
+
+Factory keys are chords. A key bound for the layout is matched before text input, so a bare key would be taken from every text box on the pages (the chat, search, the answer box). `scripts/sync.sh --keys` removes the bare `g f`, `]` and `[` earlier versions bound.
+| `g h`, `g t`, `g o`, `g b`, `g m`, `g c` | Home, Tickets, Overwatch, Blueprint, Metrics, Config (built as ⌘1–⌘8: Home, Tickets, Reviews, Overwatch, Blueprint, Metrics, Repo config, Config) |
 | `j` / `k`, `enter` | Move through tickets, open one |
 | `e` | The ticket's live agent terminal |
 | `d` | The ticket's diff, in Herdr's `changes` panel |
 | `n` | New ticket: an issue link or a one-line goal |
 | `m` / `x` | Merge a ready PR (after a confirm) / send it back with a note |
-| `u` | Answer a question and restart a waiting ticket |
+| `u` | Answer a waiting ticket: an agent asking now opens its terminal (as `e`); a question with no live session is talked through, in a fresh session of its stage that asks you in its terminal; a park that isn't a question takes a note and restarts |
 | `p` | Pause or resume a ticket |
 | `shift-c / shift-l` | Move the ticket to a cloud session / bring it back to local |
-| `g r, then a / o` | Reviews; approve a low-risk PR / open the PR (`s` too) on github.com. `h` shows the hidden noise |
+| `g r` | Reviews. `o` your pending review on GitHub, `a` approve (low risk, Approve verdict), `r` / `t` / `w` run, story only or wait on a PR that may not fit; in a review, `1`–`5` its tabs, `s` the story, `h` the noise |
 | `b` | Change the ticket's budget |
 
 ## Architecture
@@ -199,7 +267,7 @@ Repo agents can differ per repo: a stricter reviewer for the payments repo, a bu
 - **Blueprints:** creating new blueprints from what you describe, and editing existing ones (stages, `next`, gates, retries), each with a dry run.
 - **Agents:** creating or changing repo agents for any repo, and the factory agents' own prompts.
 - **Housekeeping:** clearing closed tickets and their folders, removing stale worktrees and Herdr workspaces, pruning branches the factory made, compacting the database.
-- **The look of the factory:** layout, pages and colours, when you ask ("this page is hard to read", "use a warmer accent"). You are the author, so this is a change to the factory app's own repo (mods, themes), made as a PR there.
+- **The look of the factory:** layout, pages and colours, when you ask ("this page is hard to read", "use a warmer accent"). You are the author, so this is code in the factory app's own checkout (mods, themes), committed on a local branch there for you to merge and deploy. It is the only change the maintainer commits, and never in any other repo.
 - **Migrations:** flow-stack, old sessions, and the factory's own schema versions.
 
 **Agents are neighbours: each knows the others and asks them directly.** Every agent's brief carries a short map of the factory's agents: who they are, what each owns, and how to ask each one. A repo agent asks the global agents and its own repo's agents; a global agent asks any agent (see Peer review, Who can ask whom), and the map lists only the agents its agent may ask. Asking is `factory ask <agent> "<text>"`, where a repo agent is `<owner/name>:<agent>` (a bare name is the asker's own repo's). It is a request with an origin, routed by the daemon and recorded in SQLite, so every hand-off is visible on Config's Pending changes and in the decision log. The daemon enforces the rule: a repo agent that asks another repo's agent is refused and told to ask a global agent, such as Overwatch, instead. A note to a repo agent is typed into its live session in that repo, or else it comes in that agent's next brief there.
@@ -210,7 +278,7 @@ Repo agents can differ per repo: a stricter reviewer for the payments repo, a bu
 - Babysitter → maintainer: "the same comment keeps coming back on factory PRs; turn it into a lint rule".
 - Babysitter or a repo agent → Overwatch: "#412 needs a product answer", which Overwatch brings to you.
 
-**Overwatch is the only agent that talks to you.** The rest reach you through it, or by flagging a ticket in Needs you when its agent waits in its terminal (a grooming question, a permission). Every change still lands as a reviewable result behind `maintainer.gate`, whoever asked for it.
+**Overwatch is the only agent that talks to you.** The rest reach you through it, or by flagging a ticket in Needs you when its agent waits in its terminal (a question from grooming or any stage, a permission). A change to the factory is made at once, in place, whoever asked for it: the maintainer backs up each file first and says what it changed.
 
 ## Technical design
 
@@ -246,10 +314,10 @@ Each decision is a row: what was decided, the options, the choice, the context, 
 **The learner decides; the maintainer writes.**
 
 - Within `learn.tunable`, the learner changes settings itself, as overrides in SQLite, between tickets. No files change.
-- When an override has held for `learn.promote_after` merged tickets (default 30), the learner files a maintainer request to make it permanent, through the same `request()` Overwatch uses, marked as from the learner. Its evidence goes into the request's REQUEST.md: the metric (`learn.target`), its value before and after, the ticket count and the override's id. The maintainer writes it into `.factory/` and opens the PR. There is one request per override, and none while another for the same setting is open.
-- Anything outside the tunables (a prompt change, a lesson that should be a lint rule or test, a new stage) is a suggestion. The learner files it as a maintainer request with its evidence (`factory learn suggest "<change>" --why "<evidence>"`; a lesson loaded into `learn.promote_after` briefs files one on its own). The maintainer drafts it, runs a benchmark against the current setup when it can, and opens the PR.
-- Config's Pending changes says who asked for each request: you (in Overwatch) or the learner.
-- The learner never writes files and the maintainer never decides a setting by itself, so every change has one source of evidence and one reviewable diff.
+- When an override has held for `learn.promote_after` merged tickets (default 30), the learner asks the maintainer to make it permanent (`factory ask maintainer`, from the learner). Its evidence goes with the request: the metric (`learn.target`), its value before and after, the ticket count and the override's id. The maintainer writes it into `.factory/` in place. There is one request per override, and none while another for the same setting is open.
+- Anything outside the tunables (a prompt change, a lesson that should be a lint rule or test, a new stage) is a suggestion. The learner sends it to the maintainer with its evidence (`factory learn suggest "<change>" --why "<evidence>"`; a lesson loaded into `learn.promote_after` briefs files one on its own). The maintainer makes it, running a benchmark against the current setup when it can.
+- Config's Pending changes lists each open request, saying who asked: you (in Overwatch) or the learner.
+- The learner never writes files and the maintainer never decides a setting by itself, so every change has one source of evidence and one place it is made, with a backup.
 
 ### Storage and dependencies
 
@@ -276,23 +344,26 @@ Once a ticket is groomed, the factory runs it to a ready PR on its own. What kee
 - PR.md follows the readable template (PRD 6.3).
 - The ticket stayed within its budget.
 
-**Grooming is the one stop.** As soon as an issue lands in your queue, the triage agent grooms it: it reads the ticket and the code, picks a blueprint, and asks its open questions in its own live terminal, with Claude Code's question prompt and its options. Needs you shows the ticket as waiting on you (decided 2026-11-22; nothing is posted to the issue); you open its terminal and answer there. Triage records each answer under Decisions in GROOMING.md, and you can change the blueprint it picked meanwhile. Any agent that stops to wait on you in its terminal shows in Needs you the same way. After grooming it runs to a ready PR without stopping. A question that only appears mid-run gets a best guess, recorded in GATES.md and listed in PR.md under "Decisions made for you".
+**Grooming is the one stop.** As soon as an issue lands in your queue, the triage agent grooms it: it reads the ticket and the code, picks a blueprint, and asks its open questions in its own live terminal, with Claude Code's question prompt and its options. Needs you shows the ticket as waiting on you (decided 2026-11-22; nothing is posted to the issue); you open its terminal and answer there. Triage records each answer under Decisions in GROOMING.md, and you can change the blueprint it picked meanwhile. Any agent that stops to wait on you in its terminal shows in Needs you the same way. After grooming it runs to a ready PR without stopping for anything it can settle itself. A question that only the person can settle and only appears mid-run is asked the same way, by the stage's agent in its own live terminal (decided 2026-11-23): its session stays open and waits, the ticket shows in Needs you as "<stage> asks you" while Herdr reports the agent `blocked`, and `e` (or the Ticket page's "Answer in terminal") opens that terminal. Nothing parks, no session ends, no retry is spent, and nothing goes to the issue. The agent writes the question and your answer in GATES.md and HANDOFF.md, so later sessions follow it. A routine engineering choice gets a best guess instead, listed in PR.md under "Decisions made for you".
 
 **Product questions are never ours to answer.** Grooming sorts every question into one of two kinds:
 
-- **Product** (what to build, for whom, what the user sees, pricing, wording, scope): it goes to the ticket's product owner as a comment on the issue, mentioning them, and shows in your Needs you as waiting on the PO. The factory never guesses one, not during grooming and not mid-run. A product question that turns up mid-run parks the ticket.
-- **Engineering** (how to build it): it comes to you. During grooming the ticket waits for your answer; mid-run the agent takes its best guess and lists it under "Decisions made for you".
+- **Product** (what to build, for whom, what the user sees, pricing, wording, scope): the factory never guesses one, not during grooming and not mid-run, and not while you're away: the agent asks in its terminal and waits for you. (The `issue` setting under `grooming.questions` still posts a grooming ticket's recorded questions to the issue for its product owner; mid-run questions never go there.)
+- **Engineering** (how to build it): one only you can settle is asked the same way; a routine one gets the agent's best guess, listed under "Decisions made for you".
+
+A ticket parked on a question by older code, or by a cloud session's RESULT.md, has no live session to ask you. `u` there is **Talk it through**: a fresh session of the stage it stopped at starts in its worktree, in a visible terminal labelled like any stage session, with the parked question and the ticket in its brief; it asks you with its question prompt first, then carries on, and its terminal opens over the page. `factory talk <id>` does the same, and `factory answer <id> <text>` still answers one for scripts. No screen shows an answer box for a question.
 
 The product owner is the issue's author unless the Project has a PO field; `grooming.product_owner` in `factory.yaml` can name one per repo.
 
-**Hard stops.** Only these are blocked on every action, because their damage can't be undone: pushing to main, writing outside the ticket's worktree, destructive commands (flow-stack v1's guard list), and secrets in output. Agents can't push at all; only the daemon opens PRs, and only when the ready rules pass. The daemon enforces the stops `factory.yaml` lists for local Claude sessions with a PreToolUse hook (`daemon/guard.ts`); a hit blocks the action, kills the session and parks the ticket. The checks are patterns on the tool's input, so they catch the usual ways, not every way. Codex sessions and cloud runs aren't covered: they get the stops in their brief only.
+**Hard stops.** Only these are blocked on every action, because their damage can't be undone: pushing to main, writing outside the ticket's worktree, destructive commands (flow-stack v1's guard list), and secrets in output. Agents can't push at all; only the daemon opens PRs, and only when the ready rules pass. It opens them as drafts; merging (your `m`, or a `gate: auto` stage) marks a PR ready for review just before it merges. The daemon enforces the stops `factory.yaml` lists for local Claude sessions with a PreToolUse hook (`daemon/guard.ts`); a hit blocks the action, kills the session and parks the ticket. The checks are patterns on the tool's input, so they catch the usual ways, not every way. Codex sessions and cloud runs aren't covered: they get the stops in their brief only.
 
 **Escalation.** A ticket parks in Needs you only when it is truly stuck: retries used up, budget reached, a hard stop hit, or a ticket the agent can't make sense of. Other tickets keep running.
 
 | You touch the factory when | How often |
 | --- | --- |
 | A PR is ready: review it, then merge (`m`) or send it back with a note (`x`) | Every PR, unless its blueprint's merge gate is auto |
-| A ticket is parked: answer it and restart (`u`) | Only when stuck |
+| An agent asks you in its terminal: answer there (`e`) | Only when it can't settle something itself |
+| A ticket is parked: talk it through, or note and restart (`u`) | Only when stuck |
 | A benchmark shows a better setting: you edit `.factory/` | When you choose |
 | The day's budget is used up: raise it or wait | Rarely |
 | A ticket in grooming has questions: answer in Herdr or on the issue | Once per ticket, only if it has questions |
@@ -310,6 +381,83 @@ The product owner is the issue's author unless the Project has a PO field; `groo
 - A session that reaches the handoff threshold (60% of context by default) writes HANDOFF.md and stops; the next one picks up from there.
 - The follow-up box on a ticket page messages the session running now. Your message is also appended to HANDOFF.md, so the next session sees it too.
 - Sessions for one ticket run one at a time in its worktree. The Runs view lists every one, with its cost and transcript.
+
+## Ticket memory
+
+A ticket's history used to be scattered: `sessions` rows with no link to their transcript, `asks`, decisions, and HANDOFF.md and GATES.md in the ticket folder, which each session overwrites or appends to. Claude Code's transcripts (`~/.claude/projects/<encoded cwd>/<session id>.jsonl`) hold every turn, but nothing linked or indexed them, and Claude Code deletes them after about 30 days. A resumed, sent-back or re-requested ticket saw only the last handoff. Ticket memory gives each ticket a history that lasts, in four layers. Agent memory (above) is different: it is cross-ticket learning, one row per thing an agent did, capped at 4000 characters a row.
+
+| Layer | What | State |
+| --- | --- | --- |
+| 1 | Session → transcript link, and the ticket journal | **Built** (`daemon/journal.ts`, migrations 35 and 36) |
+| 2 | Transcript chunk index, and `factory recall` | **Built** (`daemon/recall.ts`, migration 37) |
+| 3 | A ticket digest, written by Haiku, in every brief | **Built** (`daemon/digest.ts`, migration 38) |
+| 4 | The Ticket page's Activity feed, search, and a digest you can see and edit | **Built** on the V2 Ticket page (`lib/ticketv2.js`, `mods/factory-ticket/v2.js`, migration 39) |
+
+**Layer 1: link and journal (built).**
+
+- **The link.** Every Claude session the daemon starts (a stage, a handoff's next session, triage) gets `--session-id <uuid>`, placed just before the brief. Its `sessions` row keeps `claude_session` and `transcript`, the absolute path of the `.jsonl` file Claude Code writes for it (its folder is named after the real path of the cwd). The daemon never resumes a conversation (`--resume`, `--continue`): a handoff and the plan limit's reset both start a fresh session. So every session has its own id. Cloud sessions and other harnesses have no local transcript, so their rows keep none. Runs uses the stored path once the file exists. Sessions from before this keep finding theirs by birth time.
+- **The journal.** `ticket_events (id, ticket, session, kind, text, ref, at)` is append-only. `ticket_events_fts` (FTS5) indexes `text` and is kept in sync by triggers, the same pattern as `memories_fts`. `ref` points back at the source: `transcript:<path>`, `decision:<id>`, `ask:<id>`, `session:<id>`, `evidence:<id>`, `question:<n>`, `commit:<sha>`, `pr:<n>`, `issue:<n>`, `file:<path>`. `journal(db, {ticket, session?, kind, text, ref?, at})` writes one event; the code that already knows each thing calls it as it happens:
+
+  | Kind | When |
+  | --- | --- |
+  | `created` | `factory new`, the queue, a split's part, a broken check's repair, `ticket add` |
+  | `blueprint`, `groomed` | triage picks a blueprint; grooming finishes (ref: GROOMING.md) |
+  | `stage`, `stage-end`, `retry`, `parked`, `ready` | a stage starts (`enterStage`), ends with its outcome, goes back to its `on_fail`, parks, or the ticket is ready |
+  | `session-start`, `session-end` | a session starts (ref: its transcript) or ends, and why: stage done, failed, paused, handed off, plan limit, cloud |
+  | `handoff` | the daemon asks for a handoff, and session n hands off to n+1 (ref: the kept HANDOFF.session-n.md) |
+  | `question`, `answer`, `talk`, `attention`, `ask` | grooming questions and their answers, `factory talk`, an agent waiting on you in its terminal (ref: its transcript), `factory ask` about the ticket |
+  | `check`, `verdict` | each check result (the daemon's and `factory evidence`), each holdout or review verdict |
+  | `send-back`, `review` | your note on a ready PR, reviewers' comments sending it back |
+  | `pr`, `merged`, `closed` | the PR opened or updated (ref: the commit), merged or closed |
+  | `pause`, `resume`, `cloud`, `split`, `blocked`, `lifecycle` | the rest of a ticket's life |
+- **Backfill.** Migration 36 builds a journal for every ticket that has none from the rows the database kept: decisions (each mapped to a kind by its wording), stages, sessions, checks, verdicts, questions and asks. It runs once, inside the migration, and is idempotent (a ticket with events is skipped). Old sessions have no known transcript, so their ref is the session. A stage row's detail is its last one, so backfilled stage events carry only the name.
+- **CLI.** `factory journal <id> [--name <factory>] [--json]` prints the events in order; `factory journal <id> --search "<words>"` ranks them by FTS (words OR'd, as `factory memory search` does). `factory sessions <id>` shows each session's transcript.
+- **status.json.** Each ticket carries `events: [{kind, text, at}]`, its 8 newest, oldest first, each text cut to 200 characters (optional; `lib/status.js` checks it). A ticket merged or closed more than a week ago goes without, so the file doesn't grow with the factory's history. The V2 Ticket page's Activity feed shows them (layer 4).
+
+**Layer 2: transcript chunk index (built).**
+
+- **Chunks.** `transcript_chunks (id, session, ticket, line, role, text, at)`, with `transcript_chunks_fts` (FTS5) kept in sync by triggers, the same pattern as the journal. A transcript is cut into one chunk per user turn (`user`), assistant text (`assistant`), and tool call joined to its result (`tool`), each with its 1-based line in the JSONL. Thinking, meta lines (skill bodies, hook output) and Claude Code's bookkeeping lines are left out. A tool's input and its result are each cut to their first and last 1000 characters (2000 in all, saying how much was cut); a user or assistant turn, to 8000.
+- **Redaction, before anything is stored.** Private key blocks (PEM), `Bearer`/`Basic` credentials, JWTs, AWS access keys, GitHub tokens (`ghp_…`, `github_pat_…`), `sk-…` and Stripe keys, Slack tokens (`xox…`, `xapp-…`), Google API keys, and the value of any name holding SECRET, TOKEN, KEY, PASSWORD, PASSWD, PASSPHRASE or CREDENTIAL: a `.env` line (`export API_KEY=…`), a YAML key, a shell assignment before a command (`GITHUB_TOKEN=… gh …`) and a quoted JSON key. Then the secrets-in-output hard stop's own patterns (`guard.ts`), so whatever the guard would block is never indexed. Each becomes `[redacted: <what>]`. The rules are patterns, so they catch the usual shapes, not every secret, and they redact some harmless text (`monkey=3`).
+- **When.** A session is indexed when it ends (`endSessions`), from its transcript as it is then. The daemon's tick, once a minute, indexes every ended session with a transcript that hasn't been, and re-reads the ones ended in the last day whose file has grown (Claude may still be writing when the session ends). `sessions.chunked_size` holds the bytes indexed, so the same file is never indexed twice; a grown one replaces its session's chunks; `-1` means the file wasn't there (a session that ended before its first turn), skipped without an error. Old sessions are picked up the same way, which is the backfill: it reads files, so it is the tick's, not a migration's. Chunks are indexed while the transcript still exists, so Claude Code's 30-day cleanup can't take them.
+- **Prune.** The tick deletes the chunks of tickets merged or closed more than `memory.chunk_days` ago (factory.yaml, default 30), and doesn't index them again. The journal is never pruned.
+- **CLI.** `factory recall [<id>] "<words>" [--name <factory>] [--json] [--limit n]` searches the journal and the chunks together (words OR'd, as `factory journal --search` does), one ticket's or, with no id, every ticket's. The two are ranked by bm25 and merged, best first, 20 by default. Each hit prints its ticket, its kind (a journal event) or role (a chunk), a snippet with the matched words in brackets, and its ref: `transcript:<path>#L<line>` for a chunk, the event's own ref for a journal hit.
+
+**Layer 3: ticket digest (built).**
+
+- **What it is.** A short memory of the ticket in five sections: decisions and why, the person's answers (quoted verbatim), what was tried and failed, open questions, and the current state. Haiku (`claude-haiku-5-5`) writes it. It is told to stay under 1,500 tokens (about 6,000 characters), and the factory cuts anything past 8,000 characters (about 2,000 tokens). An answer without at least three of the five headings is not a digest.
+- **Its input.** Three things: the digest before (else the parent's, below), the journal events since the digest was written (up to 30,000 characters, the newest first), and the transcript chunks indexed since (up to 60,000 characters). The chunks are chosen in order: the person's turns, then the agent's text, then tool calls, the newest first within each. A user turn is cut to 3,000 characters, assistant text to 1,500 and a tool call to 600. Each session's first user turn is its brief, which already holds the digest, so it is left out. The chunks were redacted when they were indexed (layer 2). The prompt runs the same redaction again over every part, the journal and the digest before included, so the model sees only redacted text. The digest's own `digest` and `digest-failed` events are not input.
+- **When.** After a session ends or hands off (a `session-end` or `handoff` event since the last digest), on the daemon's tick, after that tick has indexed transcripts. One ticket a tick, oldest first. It never runs inside the code that ends a session, so a slow or failed call can't hold a stage, a handoff or a session end. Only ends in the last two days start one, so the tickets from before layer 3 aren't all digested at once. `factory digest <id> --rebuild` writes one for any ticket.
+- **When it fails.** A failed call, a call that throws, or an unreadable answer is logged and journaled as `digest-failed` with the reason, and the digest it had stays. The ticket isn't tried again on every tick: the next session end retries it. A call that is held is neither logged nor journaled, and the next tick looks again. A call is held by what holds new work: `budget.per_day`, the account's day cap and `plan.pause_at` (`startHold`), and also by a plan window at its limit.
+- **Cost.** `claude -p --output-format json`, run from the factory's folder. That folder isn't a worktree, so the usage scan doesn't count the call a second time. The reported usage and `total_cost_usd` become a `usage` row on the ticket (`digest:<id>:<at>`, no session), so the ticket's spend, the day's budget and the plan meters count it. One digest of a finished ticket's 81 events (a 7,000-character prompt) cost $0.0056: 22k tokens written to cache, mostly Claude Code's own system prompt, 10k read from cache, and 2.2k out. With a full prompt (about 100k characters) it stays near a cent.
+- **Where it lives.** Migration 38 adds `tickets.digest`, `digest_at`, `digest_event` and `digest_chunk`: the last journal event and transcript chunk it covers. The digest is also written to `TICKET-MEMORY.md` in each of the ticket's worktrees, after each digest and when a stage starts. The file is written only where the repo's `.git/info/exclude` keeps it out. `/TICKET-MEMORY.md` goes in that file next to `/.factory/` when a repo is adopted, when the daemon starts, and before the first write. The PR guard that stops a branch changing `.factory/` stops a branch that commits it too, and a cloud handoff unstages it.
+- **The brief.** Every stage brief, handoff brief and triage brief carries the digest (`{{digest}}` in `prompts/stage.md` and `prompts/groom.md`). A factory's own template that doesn't place it gets it after the agents' map. Each one adds: "For detail run `factory recall <id> "words"`." A cloud session's brief carries it as a section, without the pointer, because the cloud has no `factory` command.
+- **Parent.** `tickets.parent` was already there for a split's parts, and it is the link: `factory new <issue | goal> --parent <id>` records that the new ticket re-requests ticket `<id>`. Nothing creates a new ticket from a send-back, because a send-back restarts the same ticket. Until a ticket has a digest of its own, its briefs carry its parent's (up the chain), saying whose it is, and its first digest is written from the parent's. A split's parts start from their parent's in the same way. A paused ticket can't be a parent, because the split code closes a paused parent once its parts merge.
+- **CLI.** `factory digest <id> [--print|--rebuild|--set <file|->] [--json]` prints the digest, or the parent's with a note until the ticket has its own. `--rebuild` asks Haiku now, from the whole journal and every chunk, starting from the parent's digest. It respects the same holds and fails loudly. `--set` stores your own version (layer 4). With `--json` it prints only the digest after, `{text, at, event, from, edited}`.
+
+**Layer 4: the Ticket page (built).** On the V2 Ticket page only; the page with the gate off is unchanged.
+
+- **Activity.** The right column lists `events` from status.json, newest first, each with its time and a mark for its kind (`digest` ◆, `digest-edit` ✎).
+- **The Memory tab** (the sixth, ⌘⌥6 or bare 6). The page runs `factory digest <id> --json` when the tab opens, and again when the ticket's newest event changes. The digest is drawn with each `##` heading as a small section label, under "Digest", "updated 12m ago" and, for a ticket with none of its own, "Digest · #412's" and a note that it is inherited. With no digest yet it says when one is written. On sample data it says a real ticket's shows here.
+- **Edit.** Edit opens the digest in Herdr's editor (Markdown, wrapped). Save pipes the text to `factory digest <id> --set -` (Herdr's `exec` has no stdin, so `sh -c` does `printf | factory …`; `--set <file>` reads a file). `setDigest` (`daemon/digest.ts`) refuses empty text and text over 8,000 characters, stores it as the digest and as `tickets.digest_user` with `digest_edited_at` (migration 39), sets `digest_at`, leaves `digest_event` (an edit covers no new events), journals `digest-edit` ("you edited the digest (423 characters; it had 469)…", ref `file:TICKET-MEMORY.md`), rewrites TICKET-MEMORY.md in each worktree and status.json. Saving an inherited digest makes it the ticket's own. The tab then says "Has your edits (12m ago)".
+- **Haiku keeps your edits.** While a ticket has `digest_user`, every digest prompt, a rebuild's too, carries it under "# The person's edited digest (saved …; authoritative)" with the rule: keep every correction in the person's words, never put back a fact, bullet or line they removed even if the journal, transcripts or digest before still say it, and change their text only for what happened after or what plainly supersedes it. Right after an edit the digest before is the same text, so the prompt says so instead of repeating it. Your version stays until you save another. `digest-edit` is not digest input and doesn't make a digest due.
+- **Rebuild** runs `factory digest <id> --rebuild --json` (3 minutes at most). On a digest you edited it opens the confirm dialog first: your corrections are kept, the rest is rewritten.
+- **Search.** A box at the top of the Memory tab runs `factory recall <id> "words" --json --limit 20`. Each hit row shows its mark, who or what (a journal kind; "you", "agent" or "tool" for a transcript chunk), the snippet with the matched words in brackets, its time, and where it points. A click follows the ref (`refTarget` in `lib/ticketv2.js`): a transcript opens in the system's text editor (`open -t`) and the row and a toast name the line, because Herdr's file open takes no line; a `file:` path opens the same way; `file:TICKET-MEMORY.md` is the Memory tab; `question:<n>` opens Questions and `evidence:<id>` Checks; `pr:`, `issue:` and `commit:` open GitHub. A session, decision or ask has nothing to open.
+- **Smoke props.** The ticket mod takes `{ticket, tab, search, edit}` from a test layout, so a run can show the search hits and the editor, which need typing.
+
+Also on the page: GATES.md in the Questions tab is drawn the same way, its headings ("# Questions", "# Decisions made for you") as small labels, not full-size titles. And `open` (`daemon/db.ts`) sets `busy_timeout` before switching to WAL: the page runs `factory diff` and `factory digest` at once, and a second process opening the file during the first one's switch got "database is locked".
+
+**Decisions.**
+
+- SQLite FTS5, not a vector database. The journal and chunks are short text found by words (a file name, an error, a decision), the factory already has FTS5, and there's nothing new to run.
+- Secrets are redacted when transcripts are indexed (layer 2). The journal holds only what the daemon itself wrote.
+- Journals and digests are kept forever: they are small. Transcript chunks are pruned `memory.chunk_days` (default 30) after the ticket merges or closes.
+- The digest runs on the tick, not at the session end: the session end often runs inside an agent's `factory stage-done`, which must not wait on a model call.
+- A digest that failed waits for the next session end, not the next tick: an API outage would otherwise be retried, and journaled, every few seconds.
+- The backfill runs in the migration, not on daemon start: it needs only rows, so it runs once wherever the database is first opened (the daemon, the CLI, or the window's CLI).
+- status.json gets a ticket's 8 newest events, not the whole journal; the CLI reads the rest.
+- Your edit is kept apart from the digest (`digest_user`), not only marked. After Haiku's next rewrite the digest is Haiku's text, so only the saved version can still tell it which corrections were yours and what you removed.
+- A rebuild keeps your corrections too. It starts over from the journal, not from what you know; to drop an edit, edit again.
+- The page reads the digest through the CLI, not status.json: a digest is up to 8,000 characters a ticket, and only the open ticket's is needed.
 
 ## Watching PRs
 
@@ -414,7 +562,7 @@ A peer review is a ticket that runs a **peer-review blueprint**, so it gets ever
       - { when: { paths: ["src/payments/**"] }, blueprint: peer-review-deep }
   ```
 
-  The maintainer creates, changes and deletes these blueprints like any other, as a `.factory/` PR.
+  The maintainer creates, changes and deletes these blueprints like any other, in `.factory/`.
 
 ### Learning from reviews
 
@@ -432,18 +580,25 @@ Metrics gets a Reviews tab: comments kept unchanged, accepted, pushed back, miss
 
 ### Agent memory
 
-Lessons are rules the learner distilled. Learning also needs the raw examples, so every agent gets a **memory store**: one row per thing it did, in SQLite with full-text search.
+**Built** (`daemon/memory.ts`, migration 34). Lessons are rules the learner distilled. Learning also needs the raw examples, so every agent gets a **memory store**: one row per thing it did, in SQLite with full-text search.
 
 | Field | What |
 | --- | --- |
-| agent, repo | who did it, where |
-| kind | review-comment, verdict, babysitter-verdict, stage-output, … |
-| input | the context it saw (a hunk, a comment thread), trimmed |
-| output | what it wrote or decided |
-| outcome | the signal above, filled in when it arrives |
-| cost, at | tokens and time |
+| agent, repo | who did it, where (the repo's slug) |
+| kind | free text: review-comment, verdict, babysitter-verdict, stage-output, … |
+| ticket, pr, ref | what it was about; `ref` names the part (a comment's C<n>, a stage's name) |
+| input | the context it saw (a hunk, a comment thread), trimmed to 4000 characters |
+| output | what it wrote or decided, trimmed the same way |
+| outcome, outcome_at, outcome_source | the signal above, filled in when it arrives, and who said so; null until then |
+| tokens, at | what it cost and when |
 
-An agent's brief pulls the closest past rows, good and bad, as examples. The learner mines the rows for lessons and prompt changes. The babysitter's verdicts and the agreement benchmark read the same store, so one dataset serves every agent.
+`memories_fts` (FTS5) indexes input and output.
+
+- **Recall.** `recall(db, { agent, repo, query, limit, kinds })` returns the closest rows by FTS rank. Rows with an outcome come first, and the best-ranked good one (kept, accepted, merged, agreed) and bad one (any other outcome) are always among them when both exist. At most one row with no outcome comes after.
+- **Briefs.** A stage's brief gets a "From your memory" block: the top `recall` rows for its agent and the ticket's repo, matched against the ticket's title and INTENT.md, one line each with its outcome (at most 5 rows and 1.5 KB). The block is left out when there are none.
+- **Producers.** The babysitter's judge writes a `babysitter-verdict` row for every comment it pre-judges. It settles as agreed or overruled against your verdict, read the way the agreement benchmark reads it: your `factory label`, else the verdict kept at merge. An agent stage's end writes a `stage-output` row (the stage's output file, or how it ended). It is `failed` right away, or later `merged`, `reverted` (once the revert check finds one) or `closed`. The daemon fills these outcomes in every 10 minutes. The review signals above (kept, edited, accepted, pushed back, missed) land as `review-comment` and `verdict` rows once M6 records them.
+- **CLI.** Agents write and read their own store from their sessions with `factory memory add|outcome|search|list` (identity from `FACTORY_AGENT`, repo from the ticket). The learner's digest counts rows by agent, kind and outcome, and its prompt says how to search them.
+- **Retention.** The daily upkeep keeps 5000 rows per agent and repo. The oldest rows without an outcome go first.
 
 ### Who can ask whom
 
@@ -455,7 +610,7 @@ An agent's brief pulls the closest past rows, good and bad, as examples. The lea
 
 ### Replaces
 
-This replaces the earlier draft of this section (the low-risk `human`/`auto` gate and the noise-filter training). `reviews.json` keeps its shape in `lib/reviews.js` and gains `level`, `verdict`, `story_url`, `budget` (estimate, fits) and per-finding `severity` (blocker, major, minor, nit, pre-existing).
+This replaces the earlier draft of this section (the low-risk `human`/`auto` gate and the noise-filter training). `reviews.json` keeps its home in `lib/reviews.js` and moves to version 2 for the redesigned page: per PR `ticket`, `group` (ready, reviewing, waiting, submitted), `level`, `verdict`, `output` (pending, submit), `round`, `stage`, `story_url`, `budget` (`used`, `limit`, `estimate`, `fits`, `short_by`), `chapters` (title, tier, size, why, `why_url`), `questions`, `rounds` (finding, state: fixed, pushed back, open; commit or reply), and per finding `severity` (blocker, major, minor, nit), `vote` (kept, split), `new` (from blame), `evidence` and `comment` (as it will read on GitHub). `low_risk` and the must-fix, suggestion and noise kinds go; noise is a count and a pointer to REVIEW-DRAFT.md.
 
 ## Learning loop
 
@@ -517,53 +672,63 @@ The first time factory mode opens in a space with no `.factory/` folder, it runs
 2. **Start the daemon** as a login item (`factory service install`: a per-user launchd LaunchAgent with KeepAlive), so the babysitter and triggers keep running with the window closed.
 3. **Connect the queue:** pick the GitHub Project, its Ready column and the assignee.
 4. **Choose the basics:** budget per ticket and per day, the merge gate, `max_running`, the learning target and tunables.
-5. **Write `.factory/`** with the default blueprints and agents, show the files, and commit them to a branch when you agree.
+5. **Write `.factory/`** with the default blueprints and agents into the repo's checkout. It is never committed (below).
 6. **Migrate flow-stack**, when setup finds it (below).
 
-Each step that changes configuration is a maintainer request, not setup code: setup lists what's missing, Overwatch offers each fix, and when you agree it files the request (see Changing the factory).
+Each step that changes configuration goes to the maintainer, not setup code: setup lists what's missing, Overwatch offers each fix, and when you say so it hands it to the maintainer (see Changing the factory).
 
-**Migrating from flow-stack.** Setup looks for `~/.flow-stack/profile.md`, a `.flow/` folder in the repo, and the flow-stack plugin. If it finds any of them, the checklist gets a flow-stack step and Overwatch offers the migration. Accepting runs `factory setup migrate`, which files one maintainer request. The maintainer runs `factory migrate flow-stack --propose <its ticket>` and turns what it proposes into changes in the same PR:
+**Migrating from flow-stack.** Setup looks for `~/.flow-stack/profile.md`, a `.flow/` folder in the repo, and the flow-stack plugin. If it finds any of them, the checklist gets a flow-stack step and Overwatch offers the migration. Accepting runs `factory setup migrate`, which asks the maintainer. The maintainer runs `factory migrate flow-stack`, which writes the configuration in place, each file backed up first, then reads what it wrote and finishes what is left:
 
 | From flow-stack v1 | Into the factory |
 | --- | --- |
-| Profile rules and taste | The account config's `profile:` (`~/.factory/config.yaml`), which every stage brief reads; applied when the PR merges |
+| Profile rules and taste | The account config's `profile:` (`~/.factory/config.yaml`), which every stage brief reads |
 | Profile `max_parallel_agents` | `max_running` in `factory.yaml` |
 | `.flow/lessons.md` | The lesson store, scoped by the first path a lesson names (its folder), else loaded for every ticket |
 | The decisions table and traces | The decision log, so learning starts with history |
 | Calibration | `budget.headroom` in `factory.yaml`: the largest cost overrun the calibration records |
-| `.flow/features/` and verify drivers | `verify: { features: .flow/features }` in `factory.yaml` (a copy under `.factory/features/` when `.flow/` isn't in git). The tests check runs the scenario of each feature whose `owns:` globs a ticket touched, as `feat:<id>`. When a scenario's driver isn't committed, nothing is wired and the PR lists it as a to-do. |
+| `.flow/features/` and verify drivers | `verify: { features: .flow/features }` in `factory.yaml` (a copy under `.factory/features/` when `.flow/` isn't in git). The tests check runs the scenario of each feature whose `owns:` globs a ticket touched, as `feat:<id>`. When a scenario's driver isn't committed, nothing is wired and MIGRATION.md lists it as a to-do. |
 | Past task folders | Merged tickets on the Tickets page |
 
-Past tasks, decisions and lessons go into the database when the migration runs, once each. Everything else waits for the PR. The migration writes `MIGRATION.md` (what it changed and what is left to do), which goes on the PR. It is safe to run again: nothing is imported twice, and the profile, budget and verify edits come out the same. It copies and changes nothing in flow-stack, which keeps working for your normal sessions. Factory worker sessions start without the flow-stack plugin, so its hooks never run inside the factory.
+Past tasks, decisions and lessons go into the database when the migration runs, once each, and the configuration goes into the lead repo's `.factory/factory.yaml` and the account config. The migration writes `MIGRATION.md` in the factory's folder: what it changed, the backups, and what is left to do. It is safe to run again: nothing is imported twice, and the profile, budget and verify edits come out the same. It copies and changes nothing in flow-stack, which keeps working for your normal sessions. Factory worker sessions start without the flow-stack plugin, so its hooks never run inside the factory.
 
 ## Changing the factory: Overwatch and the maintainer
 
 You change the factory by asking for it. Overwatch is where you ask; the **maintainer** is the agent that does the work. It is separate from PRD 7.5's maintenance agent, which looks after the repo's code; the maintainer looks after the factory itself.
 
-**Overwatch sorts every request.** A question ("what's blocking #425?") it answers itself. A ticket action (start, pause, reorder) it sends to the daemon. A change to the factory it turns into a maintainer request, listed on Tickets with a factory tag and on Config under Pending changes.
+**Overwatch does what you tell it.** A question ("what's blocking #425?") it answers itself. A ticket action (start, pause, reorder) it runs through the CLI. A change to the factory it hands straight to the maintainer, without asking you again: you already gave the order. It refuses only what a hard stop forbids, and says which.
 
-**The maintainer owns every change to the factory** (its territory is in "The agents" above). You ask Overwatch, and Overwatch hands the work to the maintainer with `factory request`. Other agents ask it the same way: the learner with its promotions and suggestions, the babysitter with a comment that keeps coming back, Overwatch itself when it spots housekeeping. Nothing else edits `.factory/`, the account config, the factory's agents or its UI.
+**The maintainer owns every change to the factory** (its territory is in "The agents" above). You tell Overwatch, and Overwatch hands it to the maintainer with `factory request`. Other agents ask it the same way: the learner with its promotions and suggestions, the babysitter with a comment that keeps coming back, Overwatch itself when it spots housekeeping. Nothing else edits `.factory/`, the account config, the factory's agents or its UI.
+
+**The maintainer is a live global session, like Overwatch.** One runs for every factory on the machine, in `~/.factory/`. A request is a note (`factory ask maintainer`, or `factory request` from you): typed into its terminal when it runs, else given in its brief when it starts. A request starts it when it isn't running, and the daemon starts it for requests that wait (the learner's), at most every 10 minutes. `factory maintainer` starts it or prints its terminal. A global agent needs no ticket to act: no blueprint, no worktree, no PR, no merge gate. Requests that were tickets on the old `factory` blueprint are closed with a note (their data stays); a repo's leftover `blueprints/factory.yaml` is never groomed, and `factory validate` says to delete it, as it says to remove a leftover `maintainer.gate`.
+
+**The factory is local, so every change is made in place.** The maintainer edits `.factory/` in a repo's main checkout, `~/.factory/config.yaml`, `~/.factory/agents/`, `~/.factory/steps/` and `~/.factory/examples/`. For each change it:
+
+1. runs `factory validate` (and `factory dry-run` for a blueprint) before, so it knows what was already broken;
+2. backs up each file it will change: `factory backup <file>…` copies it to `~/.factory/backups/<when>/<the file's path>`, and `factory restore <backup>` puts it back (backing up what is there first). Backups never land in a repo's `.factory/`, so validate stays clean; cleanup removes old ones and keeps each file's newest;
+3. makes the change and runs `factory validate` again until it passes;
+4. says what it changed (each file, its backup, the validate result) to whoever asked, and closes the note.
+
+**It never commits, pushes or opens a PR for a factory change.** This is enforced, not only written in its prompt: every global agent's session gets the guard hook with the `factory-local` hard stop, which refuses `git push`, `git commit` and any `gh pr` command that writes (create, merge, edit…). The one exception is the look: a commit is allowed only inside the factory app's own checkout, on a local branch, and a push never is.
 
 **What the maintainer handles:**
 
 - **Configuration:** budgets, gates, `max_running`, tunables, the queue.
-- **The account config** (`~/.factory/config.yaml`: `plan`, the account's `budget.per_day`, `away`, `cloud`, `profile`). No repo holds that file, so the maintainer never edits it in place. `factory account propose <id>` copies it into the request's ticket folder as `ACCOUNT-CONFIG.yaml`, and the maintainer edits that copy. The factory check validates it against the account schema, keeps the copy it checked, and puts the diff on the PR (`ACCOUNT-CONFIG.md`). The daemon applies the checked copy only after the request merges, through the same gate (`maintainer.gate`, human by default), and keeps the old file as `config.yaml.bak-<time>-<id>`. If the file changed after the check, nothing is applied and the ticket's log says so. A request that changes only the account config opens no PR: it waits at the merge gate, and `m` applies it.
+- **The account config** (`~/.factory/config.yaml`: `plan`, the account's `budget.per_day`, `away`, `cloud`, `claude.path`, `profile`).
 - **Rules:** a new ready rule, hard stop, lint rule or never-unattended area.
 - **Blueprints:** a new blueprint drafted from what you describe ("a lane for database migrations, with a human gate before the migration runs"), or any edit to an existing one: stages, `next`, gates, retries. Each comes with a dry run.
-- **Agents:** a new repo agent for any repo, a change to one's prompt or model, deleting one no blueprint names any more, or a change to a factory agent (`~/.factory/agents/`). A new or reworked repo agent starts from the closest example in `~/.factory/examples/agents/`: the maintainer copies it into the repo, adapts it, and the PR says which example it started from and what changed. A blueprint can use an example you wrote yourself the same way, copied into the repo in that blueprint's PR.
-- **The example library** (`~/.factory/examples/agents/`): adding, changing or removing an example. Like the factory agents it is in no repo, so `factory examples propose <id> <name> [--from <example>]` copies it into the request's folder as `EXAMPLES/<name>.md`, an emptied copy removes it, the check puts the diff on the PR (`EXAMPLES.md`), and the daemon applies it, with a backup, only once the request merges.
-- **Housekeeping:** clearing closed tickets and their folders, removing stale worktrees and Herdr workspaces, pruning branches the factory made. A cleanup lists what it will remove and waits at the gate like any change.
-- **The factory's look:** pages, layout and colours, as a PR against the factory app's own repo (its mods and themes), since you are the author.
-- **Migrations:** importing old Claude Code sessions into Runs and the decision log, migrating flow-stack's lessons, profile and playbooks (each built-in or repo playbook becomes a blueprint draft), and later, moving between versions of the factory's own schema.
-
-**Every change is a PR against `.factory/`.** The maintainer works in its own worktree, writes the files, runs the schema check, and for a blueprint does a dry run: it replays a few past tickets through the new graph and reports which path each took. The Blueprint page shows the draft graph beside the current one. Merging is a gate: `maintainer.gate: human` by default; small changes such as a budget can be set to `auto`.
+- **Steps:** the shared stages blueprints name, in a repo's `.factory/steps/` or, for every repo, `~/.factory/steps/`, started from `~/.factory/examples/steps/`.
+- **Agents:** a new repo agent for any repo, a change to one's prompt or model, deleting one no blueprint names any more, or a change to a factory agent (`~/.factory/agents/`). A new or reworked repo agent starts from the closest example in `~/.factory/examples/agents/`: the maintainer copies it into the repo, adapts it, and says which example it started from.
+- **The example library** (`~/.factory/examples/agents/`): adding, changing or removing an example.
+- **Housekeeping:** clearing closed tickets and their folders, removing stale worktrees and Herdr workspaces, pruning branches the factory made, compacting the database. `factory cleanup --propose` writes the list to the factory's `cleanup/` folder (narrow `CLEANUP.json` to what was asked), and `factory cleanup --run` removes what it lists, each entry re-checked as still safe. `factory cleanup` alone asks the maintainer.
+- **The factory's look:** pages, layout and colours, in the factory app's own checkout, on a local branch (above).
+- **Migrations:** importing old Claude Code sessions into Runs and the decision log, migrating flow-stack's lessons, profile and playbooks (a playbook becomes a blueprint only when you ask), and later, moving between versions of the factory's own schema.
 
 **Adding your own blueprint** works either way:
 
-- **Ask Overwatch:** "add a blueprint for database migrations with a human gate before the migration runs". The maintainer drafts `blueprints/db-migration.yaml` and any new agents, dry-runs it, and opens the PR. Once merged, it joins `grooming.blueprints`, so grooming can pick it.
+- **Ask Overwatch:** "add a blueprint for database migrations with a human gate before the migration runs". The maintainer writes `blueprints/db-migration.yaml` and any new agents, dry-runs it, and adds it to `grooming.blueprints`, so grooming can pick it from the next ticket on.
 - **Write it yourself:** `n` on the Blueprint page starts from a template and opens it in your editor; the schema check runs on save, and the draft graph updates as you type.
 
-**First run is a conversation.** Setup (above) runs in Overwatch, and the maintainer does each step: "migrate my flow-stack playbooks", "import last month's sessions", "set budgets like my old calibration". Each one becomes a maintainer request, so setup leaves the same reviewable PRs as any later change.
+**First run is a conversation.** Setup (above) runs in Overwatch, and the maintainer does each step: "migrate my flow-stack playbooks", "import last month's sessions", "set budgets like my old calibration". Each one goes to the maintainer and is made in place, with backups, like any later change.
 
 Maintainer work counts against the daily budget and shows as its own line on the Cost tab.
 
@@ -571,11 +736,11 @@ Maintainer work counts against the daily budget and shows as its own line on the
 
 Everything runs locally by default, so a sleeping laptop stops running tickets and the babysitter. Claude Code can also run sessions in the cloud, so the factory can hand a ticket over and take it back.
 
-- **Move to cloud.** On a ticket page, `shift-c` commits the work in progress to the ticket's branch, pushes that branch (never main), and starts a Claude Code cloud session from it with HANDOFF.md as its brief. The ticket shows a cloud badge.
+- **Move to cloud.** On a ticket page, `shift-c` commits the work in progress to the ticket's branch, pushes that branch (never main), and starts a Claude Code cloud session from it. The session's brief is its starting prompt: where the ticket stands, the rules, what to report, and each remaining stage's agent prompt, read from the checkout's `.factory/` and inlined, since `.factory/` isn't on the branch. The ticket shows a cloud badge.
 - **Bring back.** `shift-l` waits for the cloud session to stop at a step boundary, fetches the branch into the ticket's worktree, imports what the session wrote, and resumes locally with a fresh session.
 - **Everything at once.** On Home, "Move running tickets to cloud" does it for every running ticket, for when you close the laptop. An optional setting does it automatically when the machine is about to sleep, and brings tickets back when it wakes.
 - **Watching while asleep.** A scheduled cloud agent can watch factory PRs and handle review rounds while the laptop sleeps, using the same verdict rules.
-- **What travels.** The branch, HANDOFF.md and the ticket's .md files, committed under `.factory-run/<ticket>/` on the branch and removed before the PR is marked ready. SQLite stays local: on return, the daemon reads that folder back into rows, including cost.
+- **What travels.** The branch and the ticket's .md files, committed under `.factory-run/<ticket>/` on the branch and removed before the PR is marked ready. Nothing from `.factory/` travels: not in the pack, not in the push. A branch that committed to `.factory/` stays local; `shift-c` refuses it. SQLite stays local: on return, the daemon reads that folder back into rows, including cost.
 
 Cloud runs keep the same gates, ready rules and hard stops.
 
@@ -592,7 +757,7 @@ artifacts:
 
 - **Who publishes.** Only an agent: the Artifact tool and the Claude Docs connector exist inside an interactive Claude Code session signed in to claude.ai, and no command or API publishes from outside one. A stage whose `output:` is listed ends with publishing it, as is (Markdown renders as a page), then `factory artifact <id> <file> <url>`. A handoff's next session publishes the handoff it starts from as HANDOFF.md.
 - **One link per file.** The daemon keeps each link in SQLite (`ticket_artifacts`). Every later session (a new stage run, a slice, a review round, a handoff) is given the link and republishes to it, so it never changes. Links start private; the person shares one from the page if they want.
-- **Who reads.** Every brief that points at the files also gives the links: stage and handoff briefs, CLOUD.md for `⇧C`, and ROUTINE.md beside each watched PR. A cloud session reads the plan with its own Artifact tool; the pack's copies still travel.
+- **Who reads.** Every brief that points at the files also gives the links: stage and handoff briefs, the cloud brief for `⇧C`, and ROUTINE.md beside each watched PR. A cloud session reads the plan with its own Artifact tool; the pack's copies still travel.
 - **Best-effort.** The local files stay the source of truth, and no ready rule reads a link. A failed publish (`factory artifact <id> <file> --fail <why>`), or a stage that ends with no new link, adds one line to the decision log and nothing else.
 - **What you see.** The Ticket page shows "Shared on claude.ai" with a link per file; status.json carries them.
 
@@ -602,14 +767,22 @@ When tickets run in the cloud and you're away, nobody is there to ask, so the ag
 
 - **An agent pack per ticket.** Before a ticket moves to the cloud, the daemon assembles each agent's prompt in layers: the role prompt, your taste and rules (from `factory.yaml`, or your flow-stack profile after migration), the repo map, the lessons for the areas this ticket touches, and, for the babysitter, a few of your own past review verdicts on similar comments as examples. The pack is written to `.factory-run/<ticket>/agents/` on the branch, so the cloud runs exactly the agents your laptop would. It's assembled per ticket, never appended to, so prompts don't grow.
 - **The babysitter is checked against you before it runs alone.** A benchmark replays your past review comments and measures how often the babysitter's verdict (fix, push back, escalate) matches yours. Below the threshold (`away.min_agreement`, default 85%), it may not push back while you're away: it only fixes clear-cut comments and escalates the rest. The agreement rate is on Metrics.
-- **A stricter policy while away.** `away:` in `factory.yaml` narrows what runs unattended: which blueprints, a lower budget, how many review rounds, and areas that never run unattended (auth, payments). Grooming questions still wait for you, and merge stays human.
+- **A stricter policy while away.** `away:` in `factory.yaml` narrows what runs unattended: which blueprints, a lower budget, how many review rounds, and areas that never run unattended (auth, payments). Grooming questions, and any agent asking you in its terminal, still wait for you (an agent never guesses a product answer because you're away), and merge stays human.
 - **A digest when you're back.** Home opens with what happened while you were away: each run, every decision made for you, every pushback and escalation. Correcting a decision there becomes a lesson or a suggested prompt change, so the next pack decides more like you.
 
 The risk is a pack that sounds like you without deciding like you. The agreement benchmark is what catches that, so it ships before cloud handoff does.
 
 ## Factory as code: .factory/
 
-The factory is defined by files in the repo it works on, so it can be branched, reviewed, rolled back and changed by a PR like any other code. The daemon reads them and hard-codes nothing. The idea comes from Warp Factories; here everything stays local.
+The factory is defined by files in the checkout of the repo it works on. The daemon reads them and hard-codes nothing. The idea comes from Warp Factories; here everything stays local.
+
+**`.factory/` stays local.** The repo is often a team's, and the factory is yours. `.factory/` lives in your checkout and is never committed, pushed or put in a PR:
+
+- Adopting a repo (`factory init`, `factory repo add`, `factory setup write`) adds `/.factory/` to its `.git/info/exclude`, once. That is the common git dir, so every worktree shares it. The factory never writes a `.gitignore` into the repo. The daemon does the same for every registered repo when it starts.
+- Ticket worktrees have no `.factory/`. Every read (blueprints, agents, prompts, skills, triggers, a feature map under `.factory/`) comes from the registered checkout. `factory validate` in a worktree checks the checkout's.
+- A repo that already tracks `.factory/` is left alone in git. `factory validate`, `factory init` and Home say so, with the command to run yourself: `git rm -r --cached .factory && git commit`. Until then its tracked files are marked skip-worktree in the checkout, so a local edit is never staged (`git update-index --no-skip-worktree <file>` undoes it).
+- A cloud session gets what it needs from `.factory/` in its brief (agent prompts inlined), never on the branch. A ticket branch that commits under `.factory/` can't move to the cloud.
+- A ticket branch that commits anything under `.factory/` never reaches a PR. The pr stage waits with "this ticket changed .factory/, which stays local" until those commits come off the branch. The maintainer's requests are not guarded yet: they still edit `.factory/` in a worktree (see Changing the factory).
 
 Rules for every file:
 
@@ -623,6 +796,7 @@ Rules for every file:
 | --- | --- | --- |
 | `factory.yaml` | What the factory covers, defaults, budgets, ready rules, hard stops, merge policy | 4.1, 6.10, 6.11 |
 | `blueprint.yaml` and `blueprints/<name>.yaml` | The graph of stages a ticket moves through | 6.1, 6.3 |
+| `steps/<name>.yaml` | One shared step: what a stage runs, for any blueprint to name | 6.1 |
 | `agents/<name>.md` | One role: a YAML header above a Markdown prompt | 6.2, 6.4, 7.4 |
 | `triggers/<name>.yaml` | What starts work, and which blueprint runs | 6.5, 7.5 |
 | `benchmarks/<name>.yaml` | A replay suite built from past tickets | 6.11 |
@@ -643,6 +817,7 @@ Rules for every file:
 | `queue` | Your queue: a GitHub Project, its Ready column, and the assignee to watch | none; manual tickets only |
 | `grooming` | The triage agent, the blueprints it may pick from, and where questions go | all blueprints; Herdr and the issue |
 | `max_running` | How many groomed tickets run at once; the rest wait in Project order | 3 |
+| `memory` | `chunk_days`: how long a merged or closed ticket's transcript chunks are kept (`factory recall`) | 30 |
 
 ```yaml
 # .factory/factory.yaml
@@ -699,6 +874,30 @@ stages:
 
 Other blueprints sit in `blueprints/<name>.yaml`, such as a short one for lint fixes, and grooming picks one per ticket; you can change its pick while the ticket is in grooming. The blueprint view draws this graph with run counts per stage.
 
+### steps/\<name>.yaml: a shared step
+
+A step is one stage's work as its own file, so writing a spec or opening the PR is written once and used by every blueprint that needs it. A step holds what runs: `agent` or `check`, `output`, `template`, `prompt`, `per`, `requires`, `gate`, a default `max_retries`, and a one-line `description`. It has no `next` or `on_fail`: the graph stays in the blueprint.
+
+```yaml
+# .factory/steps/write-pr.yaml
+description: Once the ready rules pass, the PR writer opens the PR from PR.md, in the pr-readable template.
+agent: pr-writer
+requires: ready
+output: PR.md
+template: pr-readable
+```
+
+A stage names it with `step:`, and any field the stage sets wins over the step's:
+
+```yaml
+stages:
+  implement: { step: build, per: slice, next: [verify] }
+  verify:    { step: run-tests, max_retries: 5, next: [pr], on_fail: implement }
+  pr:        { step: write-pr, next: [merge] }
+```
+
+`step: <name>` loads from the repo's `.factory/steps/<name>.yaml`, then the account's `~/.factory/steps/<name>.yaml`, which every repo on this machine shares. A step in neither is a `factory validate` error naming the blueprint and stage, and that blueprint won't load. A stage without `step:` is written out in full, as before. The shipped steps (`examples/steps/`) install into `~/.factory/examples/steps/`, and `setup write` copies the ones the blueprints name into the repo, unless your `~/.factory/steps/` already has them. The Blueprint page names each stage's step.
+
 ### agents/\<name>.md: one role
 
 The same format as Claude Code agents: a YAML header, then the prompt in Markdown. The default agents are ported from flow-stack v1 (reviewer, checker, advocate, builder) and live in the new repo.
@@ -729,6 +928,8 @@ without a PASS in EVIDENCE.md. Flag code that could be smaller.
 
 A session gets its skills through a plugin folder of its own: the factory copies exactly the listed skills into `<ticket folder>/.skills/<agent>/` (Overwatch's into `~/.factory/.skills/overwatch/`) and starts `claude --plugin-dir=<that folder>`, so they show as `factory:<name>`. The brief names them in one line. Nothing is written into the repo checkout or `~/.claude/skills/`. `factory validate` errors on a listed skill that isn't in either place, and checks each `SKILL.md` in `~/.factory/skills/`. Stage, handoff, triage and Overwatch sessions get them; the one-shot `claude -p` calls (the learner, the babysitter's judge, the orchestrator) don't. `examples/skills/README.md` has the skill format.
 
+The shipped skills (`examples/skills/`, installed by `factory init` and `factory setup`): `commit-message`, `deslop` (builder), `tour` (reviewer), `probe` and `seal` (checker), and `diagnose` (for a bugfix blueprint's diagnose stage). A listed shipped skill also resolves straight from the examples, so it works before setup ran. A listed skill that isn't shipped and isn't yours is an error, as before.
+
 ### triggers/\<name>.yaml: when work starts
 
 | Field | What it sets |
@@ -737,6 +938,7 @@ A session gets its skills through a plugin folder of its own: the factory copies
 | `filter` | Which events count: repos, authors, paths |
 | `blueprint` | The blueprint to run |
 | `concurrency` | How many tickets from this trigger run at once |
+| `every` | How often it runs or polls: `30m`, `6h`, `1d`. A `schedule` trigger needs it. A polling trigger (`project_ready`, `pr_review_comment`) may set it, in whole minutes; without it, the queue polls every 3m and PRs every 2m. A `manual` trigger has none |
 | `enabled` | `false` keeps the trigger from firing; it also turns off the built-in trigger that does the same job. Defaults to `true`, and `factory validate` marks a disabled file "(off)" |
 
 ```yaml
@@ -745,6 +947,7 @@ on: pr_review_comment
 filter: { pr_author: factory }
 blueprint: address-review   # fix, push back, or escalate (PRD 6.5)
 concurrency: 2
+every: 5m                    # poll the factory's PRs every 5 minutes (default 2m)
 ```
 
 Triggers run the babysitter (review comments on factory PRs), the maintenance agent (stale checks, scheduled full test runs, drift) and intake from your GitHub Project queue. Setup ships the maintenance agent's daily trigger with `enabled: false`, so it stays off until you set `enabled: true` in `triggers/maintenance.yaml` or ask Overwatch to turn it on, which the maintainer does in a normal `.factory/` PR. Since everything is local, the daemon polls GitHub every few minutes instead of receiving webhooks, so triggers fire only while the machine is awake.
@@ -788,7 +991,7 @@ Each ticket has one folder of Markdown in the factory's data folder, `~/.factory
 | INTENT.md | Goal, acceptance checks, approaches weighed | Spec agent |
 | SLICES.md | The plan: slices, their order, which are done | Plan agent |
 | EVIDENCE.md | Every check run, PASS or FAIL, with logs or screenshots | Daemon |
-| GATES.md | Grooming questions and their answers, plus any mid-run guesses | Daemon, from agents' rows |
+| GATES.md | Grooming questions and their answers, and the questions agents asked you mid-run in their terminals with your answers | Daemon, from agents' rows; agents, for what they asked you |
 | PR.md | One plain sentence, then what changed, why, how it was verified, risk, decisions made for you | PR stage |
 | REVIEW.md | Review comments, each with its verdict: fixed, pushed back, escalated | Daemon (babysitter) |
 | HANDOFF.md | Decisions and open items, so a fresh session resumes cold | Agents |
@@ -803,7 +1006,7 @@ One repo, laid out like herdr-roundup so Herdr users recognise it, plus the daem
 | --- | --- |
 | `layouts/factory.json`, `layouts/factory.svg` | The window, and its preview picture for Herdr's settings |
 | `mods/factory-*/` | The mods above |
-| `themes/factory.json` | The layout's own theme, light and dark |
+| `themes/factory.json` | Gone. The layout names Herdr's own theme (`atom-one-dark` today, light `paper`); update `gen.mjs` if Herdr's theme changes |
 | `keys.json` | Only the `layout:factory` section, so the user's other keys stay theirs |
 | `daemon/` | TypeScript on Bun (decided 2026-11-21): SQLite via `bun:sqlite`, the blueprint runner, the babysitter, the benchmark runner; shares `lib/status.js` with the mods; `bun build --compile` makes the one binary |
 | `schemas/` | A JSON Schema per `.factory/` file |
@@ -873,7 +1076,7 @@ Each milestone ends when its "done when" passes on a real ticket.
    - Done when: a teammate's PR arrives, its draft is ready before you open it, and its findings are waiting as your pending review on github.com.
 
 7. **M7, Agents with territories.** The factory agents move to `~/.factory/agents/`: one Overwatch for every repo, and the babysitter and learner become agents rather than daemon heuristics. Every brief carries the neighbour map, and an agent asks another through a recorded request (a repo agent asks globals and its own repo's agents; globals ask anyone, from M6). The maintainer's territory grows to blueprints from a description, agents for any repo, housekeeping, and the factory's UI and theme.
-   - Done when: you ask Overwatch for a new blueprint, a stricter reviewer in one repo, a cleanup of merged tickets and a different accent colour, and each comes back from the maintainer as a reviewable change; and a learner finding reaches the maintainer as a request with no one relaying it.
+   - Done when: you ask Overwatch for a new blueprint, a stricter reviewer in one repo, a cleanup of merged tickets and a different accent colour, and the maintainer makes each in place, with a backup, and says what it changed; and a learner finding reaches the maintainer as a request with no one relaying it.
 
 ## Risks and open questions
 

@@ -4,8 +4,8 @@ import { theme, run, setShared, props, exec, notify, home } from "herdr";
 import { needsYou, overwatchNotes, ago, compact, repoBadge, warnMark, holdText, localRunning, healthLine } from "./lib/model.js";
 import { STACK } from "./lib/pages.js";
 import { keyAction, clamp } from "./lib/keys.js";
-import { status, state, act, sampleOn, showSample, peekAgent } from "./lib/store.js";
-import { cliCommand } from "./lib/actions.js";
+import { status, state, act, sampleOn, showSample, peekAgent, pickTicket } from "./lib/store.js";
+import { cliCommand, talkable } from "./lib/actions.js";
 import CLI from "./lib/cli.js"; // written by scripts/sync.sh
 import { SETUP_SAMPLE, setupProgress } from "./lib/setup.js";
 
@@ -13,7 +13,7 @@ import { SETUP_SAMPLE, setupProgress } from "./lib/setup.js";
 const clock = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
 const open = (id) => {
-  setShared("factory.ticket", id);
+  pickTicket(id);
   run("layout.select", { stack: STACK, child: "ticket" });
 };
 // A ticket whose agent waits on you opens straight into that agent's live terminal.
@@ -41,7 +41,7 @@ export default class FactoryHome extends View {
   card(t, s, { ticket, kind }, now, on) {
     const badge = repoBadge(s, ticket);
     const color = kind === "merge" ? t.done : t.blocked;
-    const tag = kind === "attention" ? "waiting on you in its terminal · click to answer" : kind === "question" ? "grooming · waiting on you" : kind === "parked" ? "parked"
+    const tag = kind === "attention" ? "needs your attention · e" : kind === "question" ? "grooming · waiting on you" : kind === "parked" ? (talkable(ticket) ? "asks you · u talks it through" : "parked")
       : ticket.pr?.watched && ticket.pr.checked_at ? `watching · checked ${ago(ticket.pr.checked_at, now)}` : "ready to merge";
     return h_flex().id(`n-${ticket.id}`).rounded(8).bg(t.surface).border(1).border_color(on ? t.accent : t.border).cursor_pointer()
       .hover((s) => s.bg(t.hover)).on_click(() => visit(ticket))
@@ -155,11 +155,15 @@ export default class FactoryHome extends View {
             .child(div().w(44).text_color(t.dim).child(clock(e.at)))
             .child(div().w(52).text_color(t.muted).child(e.ticket != null ? `#${e.ticket}` : ""))
             .child(div().w(70).text_color(t.dim).truncate().child(e.who))
-            .child(div().flex_1().text_color(t.foreground).truncate().child(e.what))))
+            .child(div().flex_1().min_w_0().text_color(t.foreground).truncate().child(e.what))))
           .when(!s.away.events.length, (el) => el.child(div().text_color(t.dim).child("Nothing happened.")))))
       .when(Boolean(holdText(s)), (el) => el.child(v_flex().id("hold").mt(8).p(10).gap(2).rounded(8).bg(t.surface).border(1).border_color(t.blocked)
         .child(div().font_semibold().text_color(t.blocked).child(holdText(s)))
         .child(div().text_color(t.muted).child("Tickets already running carry on; queued ones wait."))))
+      .children((s.tracked_factory ?? []).map((x) => v_flex().id(`tracked-${x.repo}`).mt(8).p(10).gap(2).rounded(8).bg(t.surface).border(1).border_color(t.blocked)
+        .child(div().font_semibold().text_color(t.blocked).child(`${x.repo} tracks .factory/ in git (${x.files} file${x.files === 1 ? "" : "s"}); it should stay on this machine`))
+        .child(div().text_color(t.muted).child("Its PRs never carry it. To stop tracking it, run this yourself in the repo:"))
+        .child(div().text_color(t.accent).child(x.fix))))
       .child(section("Needs you"))
       .children(overwatchNotes(s.asks).map((a) => this.noteCard(t, a)))
       .children(needs.map((n, i) => this.card(t, s, n, now, focused && i === this.at)))

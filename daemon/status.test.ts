@@ -2,8 +2,8 @@ import { test, expect } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, setRepo, setWork } from "./db.ts";
-import { buildStatus } from "./status.ts";
+import { open, setRepo, setWork, MIGRATIONS } from "./db.ts";
+import { buildStatus, appBuild } from "./status.ts";
 import { stageDetail } from "../lib/model.js";
 import { validateStatus } from "../lib/status.js";
 
@@ -26,6 +26,24 @@ test("session N counts the live agent's sessions in its own stage, and is null w
   expect(stageDetail({ state: "now", detail: "" }, { session: session() }).text).toBe("");
 });
 
+test("a running ticket carries its stage's start, its live agent and the slice in hand, for the sidebar", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "status-")), "factory.db"));
+  db.query("INSERT INTO tickets (id, title, state, updated_at) VALUES (1, 'Slugify', 'running', '2026-11-21T00:00:00Z'), (2, 'Queued', 'queued', '2026-11-21T00:00:00Z')").run();
+  db.query("INSERT INTO stages (ticket, name, detail, started_at, ended_at) VALUES (1, 'Plan', 'planner agent', '2026-11-21T00:00:00Z', '2026-11-21T00:05:00Z')").run();
+  db.query("INSERT INTO stages (ticket, name, detail, started_at) VALUES (1, 'Implement', 'builder agent · slice 2 of 3', '2026-11-21T00:05:00Z')").run();
+  db.query("INSERT INTO sessions (ticket, stage, agent, argv, started_at) VALUES (1, 'implement', 'builder', '[]', '2026-11-21T00:06:00Z')").run();
+  const s = buildStatus(db);
+  expect(validateStatus(s)).toEqual([]);
+  const [t, q] = s.tickets as any[];
+  expect([t.stage_started_at, t.agent, t.slice]).toEqual(["2026-11-21T00:05:00Z", "builder", { n: 2, of: 3 }]);
+  expect(["stage_started_at", "agent", "slice", "transcript"].filter((k) => k in q)).toEqual([]); // nothing when there's none
+  expect("transcript" in t).toBe(false); // a live session with no transcript recorded
+  db.query("UPDATE sessions SET transcript = '/p/abc.jsonl'").run();
+  expect((buildStatus(db).tickets[0] as any).transcript).toBe("/p/abc.jsonl");
+  db.query("UPDATE sessions SET ended_at = '2026-11-21T00:07:00Z'").run(); // no live session: none
+  expect("transcript" in (buildStatus(db).tickets[0] as any)).toBe(false);
+});
+
 test("status.json carries each PR's url and state, one per repo for a cross-repo ticket", () => {
   const db = open(join(mkdtempSync(join(tmpdir(), "st-")), "factory.db"));
   setRepo(db, { slug: "acme/api", path: "/src/api", lead: true });
@@ -45,4 +63,36 @@ test("status.json carries each PR's url and state, one per repo for a cross-repo
     ["acme/api", "https://github.com/acme/api/pull/6", "draft"], ["acme/web", "https://github.com/acme/web/pull/7", "open"]]);
   expect(t(3).pr.state).toBe("merged");
   expect(t(4).pr).toBe(null);
+});
+
+test("status.json says whether the V2 UI gate is on: off by default, on with V2_UI: true in factory.yaml", () => {
+  const { mkdirSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
+  const { v2UI } = require("../lib/model.js");
+  const db = open(join(mkdtempSync(join(tmpdir(), "status-")), "factory.db"));
+  expect(buildStatus(db).ui).toEqual({ v2: false, sidebar: false }); // no lead repo yet
+  const repo = mkdtempSync(join(tmpdir(), "status-repo-"));
+  mkdirSync(join(repo, ".factory"));
+  setRepo(db, { slug: "acme/api", path: repo, lead: true });
+  writeFileSync(join(repo, ".factory/factory.yaml"), "name: t\n");
+  expect(v2UI(buildStatus(db))).toBe(false);
+  writeFileSync(join(repo, ".factory/factory.yaml"), "name: t\nV2_UI: true\n");
+  const s = buildStatus(db);
+  expect(validateStatus(s)).toEqual([]);
+  expect([s.ui, v2UI(s)]).toEqual([{ v2: true, sidebar: false }, true]);
+});
+
+test("the factory section carries the daemon's own build and the schema version, and passes the contract", () => {
+  const db = open(join(mkdtempSync(join(tmpdir(), "status-")), "factory.db"));
+  const s = buildStatus(db, new Date(), { commit: "abc1234", date: "2026-11-27T00:00:00Z" });
+  expect(s.factory.schema).toBe(MIGRATIONS.length);
+  expect(s.factory.build).toEqual({ commit: "abc1234", date: "2026-11-27T00:00:00Z" });
+  expect(validateStatus(s)).toEqual([]);
+  // No build to show (git failed): the field is left out rather than lied about.
+  const bare = buildStatus(db, new Date(), null);
+  expect(bare.factory.schema).toBe(MIGRATIONS.length);
+  expect("build" in bare.factory).toBe(false);
+  expect(validateStatus(bare)).toEqual([]);
+  // The daemon's real checkout has a commit (unless tests run from a tarball).
+  const own = appBuild();
+  expect(own === null || /^[0-9a-f]+$/.test(own!.commit)).toBe(true);
 });

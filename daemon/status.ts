@@ -1,12 +1,15 @@
 // Builds status.json (the contract in lib/status.js) from SQLite rows. The
 // window reads only this file, so the daemon stays the one source of truth.
 import { claudeChoice } from "./claude-bin.ts";
+import { v2UI, v2Sidebar } from "./account.ts";
 import type { Database } from "bun:sqlite";
 import { writeIfChanged } from "./files.ts";
 import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateStatus } from "../lib/status.js";
-import { getMeta, leadRepo, listRepos, mergeOrder } from "./db.ts";
+import { getMeta, leadRepo, listRepos, mergeOrder, MIGRATIONS } from "./db.ts";
+import { appCheckout } from "./globals.ts";
+import { reviewQueueCount } from "./reviews.ts";
 import { interactionsBefore, planMeters, revertRate } from "./metrics.ts";
 import { budgetCap, digest } from "./away.ts";
 import { budgetUse, dayCap, startHold } from "./budget.ts";
@@ -14,13 +17,24 @@ import { setupField } from "./setup.ts";
 import { activeOverrides, fileValue } from "./learn.ts";
 import { isLastGate, loadBlueprint, readFactory } from "./runner.ts";
 import { loadAgent } from "./agents.ts";
-import { BLUEPRINT, requestedBy } from "./maintainer.ts";
 import { askTarget, openAsks } from "./ask.ts";
 import { healthOf } from "./health.ts";
+import { trackedFactory, UNTRACK } from "./local.ts";
+import { recentEvents } from "./journal.ts";
 
 type Row = Record<string, any>;
 
 const HEARTBEAT_MS = 15_000;
+
+// Repos whose git tracks .factory/ (local.ts), for Home's warning. git runs at most once a minute per repo.
+const trackedSeen = new Map<string, { at: number; n: number }>();
+function trackedRepos(repos: { slug: string; path: string }[], now: number) {
+  return repos.flatMap((r) => {
+    let c = trackedSeen.get(r.path);
+    if (!c || now - c.at > 60_000) trackedSeen.set(r.path, (c = { at: now, n: existsSync(r.path) ? trackedFactory(r.path).length : 0 }));
+    return c.n ? [{ repo: r.slug, files: c.n, fix: UNTRACK }] : [];
+  });
+}
 
 // A ticket's PR in one repo. The state is what GitHub last said, unless the ticket's own end settles it:
 // merged is merged, and a closed ticket's PR is closed. The url is built, never asked of gh.
@@ -28,6 +42,8 @@ export const prOf = (r: Row, slug: string, ticket: string) => (r.pr_number == nu
   number: r.pr_number, watched: !!r.pr_watched, checked_at: r.pr_checked_at,
   url: `https://github.com/${slug}/pull/${r.pr_number}`,
   state: ticket === "merged" || r.merged_at ? "merged" : ticket === "closed" ? "closed" : r.pr_state ?? "open",
+  // The PR's CI checks (watch.ts's rollup): pass | fail | running | none, with the failing checks' names.
+  ...(r.pr_ci ? { ci: r.pr_ci, ...(r.pr_ci_fail ? { ci_fail: r.pr_ci_fail } : {}) } : {}),
 });
 
 export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: number } | null) {
@@ -43,13 +59,43 @@ export function ticketOf(r: Row, repos?: Row[], cap?: { input: number; output: n
       merged_at: x.merged_at ?? null, merge: mergeOrder(repos as any).indexOf(x) + 1 })) } : {}),
     needs: r.needs_kind ? { kind: r.needs_kind, text: r.needs_text ?? "" } : null,
     blocked_by: r.blocked_by,
+    // The owner's note (#179): its own words, which outweigh the factory's prompts in every brief.
+    ...(r.notes ? { notes: r.notes } : {}),
+    // The sidebar's stage bar (lib/sidebar.js stageBar): how far along the blueprint's planned path
+    // the ticket is — done stages, the one in hand, and the whole path's length. Only while running.
+    ...(r.progress ? { progress: r.progress } : {}),
     // Stopped by the plan limit (planlimit.ts): when its fresh session starts.
     ...(r.resume_at ? { resume_at: r.resume_at } : {}),
     terminal: r.terminal ?? null,
     session: r.sessions || null, // "session 3 of #412": the live agent's session in its stage; null with no live agent
-    // A request for the maintainer: who asked (you in Overwatch, the learner, another agent), for Config's Pending changes.
-    ...(r.blueprint === BLUEPRINT ? { requested_by: r.requester ?? requestedBy(r.trigger_name) } : {}),
+    // The sidebar's Working row (lib/sidebar.js): when the current stage began, the live agent's name, and the
+    // slice it builds ("slice 2 of 3", from the stage's detail: runner.ts startStage). Only when there is one.
+    ...(r.stage_started_at ? { stage_started_at: r.stage_started_at } : {}),
+    ...(r.agent && r.agent !== "cloud" ? { agent: r.agent } : {}),
+    // The live session's Claude transcript, for the sidebar's chat-unread marker (lib/sidebar.js chatUnread).
+    ...(r.live_transcript ? { transcript: r.live_transcript } : {}),
+    ...sliceOf(r.stage_detail),
   };
+}
+
+const sliceOf = (detail: string | null | undefined) => {
+  const m = (detail ?? "").match(/\bslice (\d+) of (\d+)\b/);
+  return m ? { slice: { n: Number(m[1]), of: Number(m[2]) } } : {};
+};
+
+// The daemon's own build, for the About popup: the checkout's commit and its date, read
+// once (git costs more than a status write should) and cached until the process restarts —
+// which is exactly when the build can change (daemon/update.ts fast-forwards and restarts).
+// Git that fails (a tarball checkout) leaves the build out rather than lie about it.
+let buildCache: { commit: string; date: string } | null | undefined;
+export function appBuild(root = appCheckout()) {
+  if (buildCache !== undefined) return buildCache;
+  try {
+    const r = Bun.spawnSync(["git", "-C", root, "show", "-s", "--format=%h %cI", "HEAD"], { env: process.env });
+    const [commit, date] = r.exitCode === 0 ? r.stdout.toString().trim().split(" ") : [];
+    buildCache = commit && date ? { commit, date } : null;
+  } catch { buildCache = null; }
+  return buildCache;
 }
 
 // Tuned settings, each beside the value the files give (null when it can't be read).
@@ -61,26 +107,49 @@ function overridesOf(db: Database, repo: string | undefined) {
   });
 }
 
-export function buildStatus(db: Database, now = new Date()) {
+export function buildStatus(db: Database, now = new Date(), build = appBuild()) {
   // A ticket's terminal: its latest session still open (the window's `e` opens it).
   // Each ticket's repos, lead first; one that hasn't started works in the factory's lead repo.
   const lead = leadRepo(db);
   const work = Map.groupBy(db.query("SELECT * FROM ticket_repos ORDER BY ticket, lead DESC, repo").all() as Row[], (r) => r.ticket);
   const reposOf = (id: number) => work.get(id) ?? (lead ? [{ repo: lead.slug, lead: 1 }] : undefined);
+  // Stage progress for the sidebar's bar (lib/sidebar.js stageBar): a ticket's finished stages,
+  // the one in hand, and how many planned ones are left (planned keeps the rest of the path).
+  const doneStages = new Map<number, number>();
+  for (const r of db.query("SELECT ticket, COUNT(DISTINCT name) AS n FROM stages WHERE ended_at IS NOT NULL GROUP BY ticket").all() as Row[])
+    doneStages.set(r.ticket, r.n);
+  const plannedStages = new Map<number, number>();
+  for (const r of db.query("SELECT ticket, COUNT(*) AS n FROM planned GROUP BY ticket").all() as Row[])
+    plannedStages.set(r.ticket, r.n);
+  const progressOf = (r: Row) => {
+    if (r.state !== "running" || !r.stage) return null;
+    const done = doneStages.get(r.id) ?? 0;
+    return { done, now: r.stage, total: done + 1 + (plannedStages.get(r.id) ?? 0) };
+  };
   const open = Map.groupBy(db.query("SELECT ticket, n, kind, text FROM questions WHERE answer IS NULL ORDER BY ticket, n").all() as Row[], (q) => q.ticket);
   const questionsOf = (id: number) => (open.get(id) ?? []).map((q) => ({ n: q.n, kind: q.kind, text: q.text }));
   // Each ticket's files shared on claude.ai (artifacts.ts), for the Ticket page's links.
   const shared = Map.groupBy(db.query("SELECT ticket, file, url, kind, published_at FROM ticket_artifacts ORDER BY ticket, file").all() as Row[], (a) => a.ticket);
+  // Each ticket's newest journal events (journal.ts), for the Ticket page's Activity. A ticket settled
+  // more than a week ago goes without, so the file doesn't grow with the factory's history.
+  const events = recentEvents(db);
+  const settledBefore = new Date(now.getTime() - 7 * 86_400_000).toISOString();
   const tickets = (db.query(`SELECT t.*, (SELECT terminal FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS terminal,
     -- the live agent's session number within its stage: a handoff starts the next one in the same stage
     (SELECT COUNT(*) FROM sessions s, (SELECT stage FROM sessions l WHERE l.ticket = t.id AND l.ended_at IS NULL AND l.agent IS NOT 'cloud' ORDER BY l.id DESC LIMIT 1) live
-       WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions
-    , (SELECT from_agent FROM asks a WHERE a.request = t.id ORDER BY a.id LIMIT 1) AS requester
+       WHERE s.ticket = t.id AND s.stage = live.stage AND s.agent IS NOT 'cloud') AS sessions,
+    (SELECT agent FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS agent,
+    (SELECT transcript FROM sessions s WHERE s.ticket = t.id AND s.ended_at IS NULL ORDER BY s.id DESC LIMIT 1) AS live_transcript,
+    (SELECT started_at FROM stages st WHERE st.ticket = t.id AND st.ended_at IS NULL ORDER BY st.id DESC LIMIT 1) AS stage_started_at,
+    (SELECT detail FROM stages st WHERE st.ticket = t.id AND st.ended_at IS NULL ORDER BY st.id DESC LIMIT 1) AS stage_detail
     FROM ticket_lead t ORDER BY t.id`).all() as Row[]).map((r) => ({
     ...ticketOf(r, reposOf(r.id), lead ? budgetCap(db, lead.path) : null),
-    // The open grooming questions, numbered as the `A1:` answers are.
-    ...(r.state === "grooming" && open.has(r.id) ? { questions: questionsOf(r.id) } : {}),
+    // The open questions of a ticket in grooming, or parked on one (u talks it through), numbered as the `A1:` answers are.
+    ...((r.state === "grooming" || r.state === "parked") && open.has(r.id) ? { questions: questionsOf(r.id) } : {}),
     ...(shared.has(r.id) ? { artifacts: shared.get(r.id)!.map((a) => ({ file: a.file, url: a.url, kind: a.kind, at: a.published_at })) } : {}),
+    ...(events.has(r.id) && !(["merged", "closed"].includes(r.state) && r.updated_at < settledBefore)
+      ? { events: events.get(r.id)!.map((e) => ({ kind: e.kind, text: e.text, at: e.at })) } : {}),
+    ...(progressOf(r) ? { progress: progressOf(r) } : {}),
   }));
   const setup = lead ? setupField(db, lead.path) : null;
   const hold = lead ? startHold(db, lead.path, now) : null;
@@ -99,7 +168,7 @@ export function buildStatus(db: Database, now = new Date()) {
     version: 1,
     generated_at: now.toISOString(),
     source: "daemon",
-    factory: { name: getMeta(db, "name") ?? "factory", repo: lead?.slug ?? "unknown", ...(lead ? { path: lead.path } : {}), ...(lead ? { repos: listRepos(db).map((r) => r.slug) } : {}), daemon: now.getTime() - beat < HEARTBEAT_MS },
+    factory: { name: getMeta(db, "name") ?? "factory", repo: lead?.slug ?? "unknown", ...(lead ? { path: lead.path } : {}), ...(lead ? { repos: listRepos(db).map((r) => r.slug) } : {}), daemon: now.getTime() - beat < HEARTBEAT_MS, schema: MIGRATIONS.length, ...(build ? { build } : {}) },
     plan: { ...planMeters(db, now), hold },
     today: {
       time_to_pr_min: Math.round(avg(prs.filter((p) => p.began).map((p) => (Date.parse(p.at) - Date.parse(p.began!)) / 60000))),
@@ -111,9 +180,13 @@ export function buildStatus(db: Database, now = new Date()) {
       budget: { input: perDay?.input ?? Number(getMeta(db, "budget_day_in") ?? 40e6), output: perDay?.output ?? Number(getMeta(db, "budget_day_out") ?? 2e6) },
     },
     away: digest(db, now.toISOString()),
+    // Which pages the mods draw (lib/model.js v2UI/v2Sidebar): V2_UI and V2_SIDEBAR in factory.yaml, else config.yaml.
+    ui: { v2: v2UI(lead ? readFactory(lead.path) : {}), sidebar: v2Sidebar(lead ? readFactory(lead.path) : {}) },
     ...(auto.length ? { auto_gates: auto } : {}),
     // Each repo's last full-suite run (health.ts), for Home.
     ...(health.length ? { health } : {}),
+    // Repos that track .factory/ in git: Home says so, with the command to stop (local.ts).
+    ...(() => { const x = trackedRepos(listRepos(db), now.getTime()); return x.length ? { tracked_factory: x } : {}; })(),
     // No .factory/ yet: Home shows the setup checklist instead.
     ...(setup ? { setup } : {}),
     // Which claude the sessions run, for Config (claude-bin.ts); tests never look one up.
@@ -121,7 +194,7 @@ export function buildStatus(db: Database, now = new Date()) {
     overrides: overridesOf(db, lead?.path),
     // Open notes between agents (factory ask): to Overwatch they show in Needs you; all on Config's Pending changes.
     asks: openAsks(db).map((a) => ({ id: a.id, from: a.from, to: askTarget(a), text: a.text, why: a.why, ticket: a.about, at: a.at, delivered: !!a.delivered_at })),
-    to_review: 0,
+    to_review: reviewQueueCount(db),
     rules_failing: tickets.filter((t) => t.state === "running" && t.stage === "pr" && / ready rules · /.test(t.detail ?? "")).length,
     tickets,
   };

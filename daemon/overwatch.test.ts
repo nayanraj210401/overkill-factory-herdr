@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, setRepo } from "./db.ts";
-import { factoriesOf, liveOverwatch, overwatch, stateFile } from "./overwatch.ts";
+import { liveOverwatch, overwatch } from "./overwatch.ts";
+import { factoriesOf, stateFile } from "./globals.ts";
 import type { Run } from "./runner.ts";
 
 // Two factories under one FACTORY_HOME, each with its repos.
@@ -63,6 +64,15 @@ test("one Overwatch for every factory: in FACTORY_HOME, every repo added, every 
   const again = overwatch({ run: (a) => (a[1] === "get" ? { code: 0, out: '{"exit_code":0}' } : h.run(a)), now, home });
   expect(again).toEqual({ terminal: "t2", started: true });
   expect(h.calls.length).toBeGreaterThan(calls);
+});
+
+test("a terminal Herdr stopped (finished, no exit code) isn't the live Overwatch", () => {
+  const { home } = twoFactories();
+  const h = hc();
+  overwatch({ run: h.run, now, home });
+  const stopped: Run = (a) => (a[1] === "get" ? { code: 0, out: '{"exit_code":null,"state":"finished","reason":"stopped_by_restart"}' } : h.run(a));
+  expect(liveOverwatch(stopped, home)).toBeNull();
+  expect(overwatch({ run: stopped, now, home })).toEqual({ terminal: "t2", started: true });
 });
 
 test("in tests, the real hc never starts a terminal", () => {

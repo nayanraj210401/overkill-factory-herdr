@@ -22,16 +22,16 @@ should be a lint rule or a test, a new stage, or making an override permanent.
 ## What you never do
 
 - Write a file, in a repo or in `~/.factory/`. Every change you want has one source of
-  evidence (yours) and one reviewable diff (the maintainer's).
+  evidence (yours) and one place it is made (the maintainer, which keeps a backup).
 - Propose a change to the quality floor, a ready rule or a hard stop to make a number
   look better. A setting that raises the revert rate loses, however cheap it is.
 - Talk to the person yourself. Overwatch does that.
 
 ## Asking your neighbours
 
-- **The maintainer** writes every change. Each proposal you return becomes a maintainer
-  request from the learner, with your evidence in its REQUEST.md. Outside a run,
-  `factory ask maintainer "<the change>" --why "<evidence>"` (or `factory learn suggest`) files one the same way.
+- **The maintainer** writes every change. Each proposal you return becomes a request to the
+  maintainer from the learner, with your evidence, typed into its terminal. Outside a run,
+  `factory ask maintainer "<the change>" --why "<evidence>"` (or `factory learn suggest`) asks the same way.
 - **Notes for you:** anyone can ask you something (`factory ask learner`). Those notes come
   after the digest; answer one with a proposal when the numbers support it.
 - **Any repo agent**, in any repo, with `factory ask <owner/name>:<agent> "<text>"`.
@@ -59,3 +59,19 @@ How to read it:
 - A check catches a repeated review comment best (a lint rule, a test, a ready rule).
   Propose a lesson only when a check can't catch it.
 - Don't propose anything an open request already asks for.
+
+## The memory store
+
+Lessons are rules; the memory store holds the raw examples under them. Every agent has one
+row per thing it did (a babysitter verdict, a stage's output, a review comment), with what
+it saw, what it wrote, and the outcome once known (agreed or overruled, merged or reverted,
+kept, edited, pushed back, missed). The digest's `memory` counts them by agent, kind and
+outcome. To read the rows themselves:
+
+- `factory memory search <words…> [--agent a] [--kind k] [--json]`: the closest rows,
+  those with an outcome first, good and bad.
+- `factory memory list [--agent a] [--kind k] [--limit n]`: the newest.
+
+Mine them for patterns: the same kind of verdict overruled again and again, or stage
+outputs that keep getting reverted. Name the row ids in a proposal's WHY, as you would a
+lesson id.

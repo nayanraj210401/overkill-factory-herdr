@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SHIPPED_SKILLS, installSkills, sessionPlugin, skillFileErrors, withAccess } from "./skills.ts";
+import { SHIPPED_SKILLS, installSkills, sessionPlugin, skillDir, skillFileErrors, withAccess } from "./skills.ts";
 import { validateDir, validateFile } from "./validate.ts";
 import { main } from "./cli.ts";
 import { open, setRepo } from "./db.ts";
@@ -72,7 +72,7 @@ test("factory init installs the skills, and factory validate lists them and chec
   const out: string[] = [];
   const cwd = process.cwd();
   main(["init", "--repo", "acme/api", "--path", r, "--name", "sk"], (s) => out.push(s));
-  expect(out.join("\n")).toContain("the factory skills (commit-message)");
+  expect(out.join("\n")).toMatch(/the factory skills \(commit-message, [a-z-, ]+\)/);
   try {
     process.chdir(r);
     out.length = 0;
@@ -112,6 +112,15 @@ test("the claude flags: --plugin-dir for skills, --tools for tools (with Skill w
   expect(withAccess(argv, { skills: ["a"], tools: ["Read"] }, "/p")).toEqual(["claude", "--plugin-dir=/p", "--tools=Read,Skill", "--model", "m", "the brief"]);
   expect(withAccess(argv, { skills: ["a"] }, "/p")).toEqual(["claude", "--plugin-dir=/p", "--model", "m", "the brief"]);
   expect(withAccess(["codex", "x"], { tools: ["Read"] }, null)).toEqual(["codex", "x"]);
+});
+
+test("a listed shipped skill resolves from the examples before setup installed it", () => {
+  process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "skills-empty-"));
+  expect(skillDir([], "commit-message")).toBe(join(SHIPPED_SKILLS, "commit-message"));
+  expect(skillDir([], "ghost")).toBeNull();
+  // The shipped examples all pass the SKILL.md check.
+  for (const n of readdirSync(SHIPPED_SKILLS).filter((x) => existsSync(join(SHIPPED_SKILLS, x, "SKILL.md"))))
+    expect([n, skillFileErrors(readFileSync(join(SHIPPED_SKILLS, n, "SKILL.md"), "utf8"))]).toEqual([n, []]);
 });
 
 const git = (dir: string) => {

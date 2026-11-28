@@ -1,11 +1,10 @@
 // `factory setup`: the first-run checklist as data (docs/plan.md § First run), and
-// `factory setup write`, which puts .factory/ on its own branch without touching the
-// checkout you're working in.
+// `factory setup write`, which writes .factory/ into the checkout, where it stays local.
 import { DEFAULT_MODEL } from "./models.ts";
 import type { Database } from "bun:sqlite";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { worktreeRoot } from "./herdr.ts";
 import { getMeta, setMeta } from "./db.ts";
 import { readFactory, sh } from "./runner.ts";
@@ -13,11 +12,12 @@ import { service } from "./service.ts";
 import { validateDir } from "./validate.ts";
 import { MAINTENANCE, NEVER_GROOMED } from "./groom.ts";
 import { exampleFile, neededAgents } from "./agents.ts";
+import { exampleStepFile, neededSteps, stepFile } from "./steps.ts";
+import { keepLocal } from "./local.ts";
 
 export type Step = { id: string; label: string; status: "ok" | "missing" | "skipped"; fix: string | null; detail: string | null };
 export type Probe = { has: (bin: string) => boolean; ghLoggedIn: () => boolean; service: () => string; trusted?: (dir: string) => boolean; flowStack?: (repo: string) => string[] };
 
-export const BRANCH = "factory/setup";
 export const STEP_IDS = ["herdr-core", "gh", "harness", "trust", "service", "queue", "basics", "factory-dir", "flow-stack"];
 
 // flow-stack v1 on this machine or in this repo: what setup offers to migrate.
@@ -31,13 +31,18 @@ export function findFlowStack(o: { home: string | null; repo: string; plugins: s
 }
 const pluginsDir = () => (process.env.CLAUDE_CONFIG_DIR ? join(process.env.CLAUDE_CONFIG_DIR, "plugins") : join(homedir(), ".claude", "plugins"));
 
-// Accepting the offer: one maintainer request, which runs the migration and turns its
-// proposals into changes in the same PR. Asking again while one is open returns it.
+// Accepting the offer asks the maintainer, which runs the migration in place. The offer is
+// done once a migration ran (`factory migrate flow-stack` sets flow_migrated_at), and waits
+// while the request is open; a request handled without migrating offers it again.
 export const MIGRATION_META = "flow_migration_request";
 export const MIGRATION_REQUEST = "Migrate flow-stack into this factory: import its past tasks, decisions and lessons, and turn its profile, calibration and feature map into configuration";
-export function migrationRequest(db: Database) {
+export type Migration = { id: number | null; state: "asked" | "migrated"; at: string };
+export function migrationRequest(db: Database): Migration | null {
+  const done = getMeta(db, "flow_migrated_at");
+  if (done) return { id: null, state: "migrated", at: done };
   const id = Number(getMeta(db, MIGRATION_META));
-  return id ? (db.query("SELECT id, state FROM tickets WHERE id = ?").get(id) as { id: number; state: string } | null) : null;
+  const a = id ? (db.query("SELECT id, at FROM asks WHERE id = ? AND done_at IS NULL AND to_agent = 'maintainer'").get(id) as { id: number; at: string } | null) : null;
+  return a ? { id: a.id, state: "asked", at: a.at } : null;
 }
 
 // What this machine has. Cached for 30 s: the daemon asks on every tick while setup shows.
@@ -96,7 +101,7 @@ export function skipStep(db: Database, id: string, skip: boolean) {
   setMeta(db, "setup_skipped", (skip ? [...rest, id] : rest).join(","));
 }
 
-export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe; migration?: { id: number; state: string } | null }): Step[] {
+export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe; migration?: Migration | null }): Step[] {
   const probe = o.probe ?? realProbe();
   const written = existsSync(join(o.repo, ".factory", "factory.yaml"));
   const f = written ? readFactory(o.repo) : {};
@@ -117,13 +122,13 @@ export function setupSteps(o: { repo: string; skipped?: string[]; probe?: Probe;
   add("service", "The daemon runs at login", probe.service() !== "absent", "factory service install");
   add("queue", "The queue is set in factory.yaml", !!f.queue?.github_project, "set queue: { github_project: owner/<n or title>, column: Ready, assignee: me } in .factory/factory.yaml");
   add("basics", "Budgets, merge gate and max_running are set", written && lacks.length === 0, "factory setup write --budget 3M/150k --merge human --max-running 3", written ? lacks.join(", ") || null : null);
-  const onBranch = !written && sh(["git", "-C", o.repo, "show-ref", "--verify", "--quiet", `refs/heads/${BRANCH}`]).code === 0;
-  add("factory-dir", ".factory/ is written", written, onBranch ? `review and merge the ${BRANCH} branch (git merge ${BRANCH})` : "factory setup write");
-  // Offered only when there is something to migrate; the maintainer does it, as a PR.
+  add("factory-dir", ".factory/ is written", written, "factory setup write");
+  // Offered only when there is something to migrate; the maintainer does it, in place.
   const flow = probe.flowStack?.(o.repo) ?? [];
-  const m = o.migration?.state === "closed" ? null : o.migration; // closed unmerged: offered again
+  const m = o.migration;
   if (flow.length)
-    add("flow-stack", "flow-stack's history and settings are migrated (by the maintainer, as a PR)", !!m, "factory setup migrate", m ? `#${m.id}, ${m.state}` : `found ${flow.join(", ")}`);
+    add("flow-stack", "flow-stack's history and settings are migrated (by the maintainer, in place)", m?.state === "migrated", "factory setup migrate",
+      m?.state === "migrated" ? `migrated ${m.at.slice(0, 10)}` : m ? `asked the maintainer: note #${m.id}` : `found ${flow.join(", ")}`);
   return steps;
 }
 
@@ -188,31 +193,37 @@ const triggered = (dir: string) => existsSync(join(dir, "triggers"))
   ? readdirSync(join(dir, "triggers")).flatMap((f) => [...readFileSync(join(dir, "triggers", f), "utf8").matchAll(/^blueprint:\s*(\S+)/gm)].map((m) => m[1]))
   : [];
 
-// factory.yaml plus the default blueprints, the agents they name and prompt templates, committed on factory/setup from a
-// temporary worktree. Run again, it adds one more commit if anything changed.
+// factory.yaml plus the default blueprints, the steps and agents they name and prompt templates, written
+// into the checkout's .factory/, which stays local (local.ts): never committed, and /.factory/
+// goes in the repo's .git/info/exclude. Built and checked in a temporary folder first; a file
+// already in .factory/ is yours and is never overwritten, so running it again adds only what's missing.
 export function writeSetup(o: { repo: string; name: string; slug: string; basics: Basics }) {
-  const git = (...a: string[]) => sh(["git", "-C", o.repo, ...a]);
-  const head = git("rev-parse", "--abbrev-ref", "HEAD");
-  if (head.code !== 0) throw new Error(`${o.repo} isn't a git checkout with a commit yet: ${head.out}`);
-  if (head.out === BRANCH) throw new Error(`${o.repo} is on ${BRANCH}; switch to your own branch first, setup writes there from the side`);
-  // Check the values before a worktree exists.
+  if (sh(["git", "-C", o.repo, "rev-parse", "--git-dir"]).code !== 0) throw new Error(`${o.repo} isn't a git checkout`);
+  // Check the values before anything is written.
   factoryYaml({ name: o.name, slug: o.slug, blueprints: [], basics: o.basics });
   const tmp = mkdtempSync(join(tmpdir(), "factory-setup-"));
-  const wt = join(tmp, "wt");
-  const known = git("show-ref", "--verify", "--quiet", `refs/heads/${BRANCH}`).code === 0;
-  const add = git("worktree", "add", ...(known ? [wt, BRANCH] : ["-b", BRANCH, wt, "HEAD"]));
-  if (add.code !== 0) throw new Error(`git worktree add failed: ${add.out}`);
   try {
-    const dir = join(wt, ".factory");
+    const dir = join(tmp, ".factory");
     mkdirSync(dir, { recursive: true });
-    for (const sub of ["blueprints", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true });
+    // Not the global agents' templates: Overwatch and the maintainer are one for every repo, and a repo's copy is ignored.
+    const global = new Set(["overwatch.md", "maintainer.md"]);
+    for (const sub of ["blueprints", "prompts"]) if (existsSync(join(DEFAULTS, sub))) cpSync(join(DEFAULTS, sub), join(dir, sub), { recursive: true, filter: (f) => sub !== "prompts" || !global.has(basename(f)) });
     // The maintenance agent's daily trigger, shipped with enabled: false so it stays off until you turn it on;
     // the built-in queue and review-comment triggers still run beside it.
     mkdirSync(join(dir, "triggers"), { recursive: true });
     cpSync(join(DEFAULTS, "triggers", `${MAINTENANCE}.yaml`), join(dir, "triggers", `${MAINTENANCE}.yaml`));
     const blueprints = readdirSync(join(dir, "blueprints")).filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""))
       .filter((b) => !triggered(DEFAULTS).includes(b) && !NEVER_GROOMED.includes(b));
-    writeFileSync(join(dir, "factory.yaml"), factoryYaml({ name: o.name, slug: o.slug, blueprints, basics: o.basics, floor: detectFloor(wt) }));
+    writeFileSync(join(dir, "factory.yaml"), factoryYaml({ name: o.name, slug: o.slug, blueprints, basics: o.basics, floor: detectFloor(o.repo) }));
+    // The shared steps the blueprints name, from the example library like the agents below
+    // (steps.ts). One the account's ~/.factory/steps/ already has stays shared: no repo copy.
+    for (const name of neededSteps(dir)) {
+      if (stepFile(null, name)) continue;
+      const from = exampleStepFile(name);
+      if (!from) throw new Error(`a blueprint names the step ${name}, and the example library has no ${name}.yaml`);
+      mkdirSync(join(dir, "steps"), { recursive: true });
+      cpSync(from.file, join(dir, "steps", `${name}.yaml`));
+    }
     // The repo gets only the agents its blueprints and grooming name, each from the example
     // library: yours in ~/.factory/examples/agents/ first, then the shipped one.
     mkdirSync(join(dir, "agents"), { recursive: true });
@@ -224,16 +235,18 @@ export function writeSetup(o: { repo: string; name: string; slug: string; basics
     const results = validateDir(dir);
     const bad = results.filter((r) => r.errors.length);
     if (bad.length) throw new Error(`the files fail the schema check:\n${bad.map((r) => `${r.path}: ${r.errors.join("; ")}`).join("\n")}`);
-    const g = (...a: string[]) => sh(["git", "-C", wt, ...a]);
-    g("add", "-A", ".factory");
-    const changed = g("diff", "--cached", "--quiet").code !== 0;
-    if (changed) {
-      const c = g("commit", "-q", "-m", "factory: set up .factory/ (factory setup write)");
-      if (c.code !== 0) throw new Error(`git commit failed: ${c.out}`);
+    const local = keepLocal(o.repo); // the exclude line before the first file lands
+    const written: string[] = [];
+    const kept: string[] = [];
+    for (const r of results) {
+      const to = join(o.repo, ".factory", r.path);
+      if (existsSync(to)) { kept.push(r.path); continue; }
+      mkdirSync(dirname(to), { recursive: true });
+      cpSync(join(dir, r.path), to);
+      written.push(r.path);
     }
-    return { branch: BRANCH, committed: changed, sha: g("rev-parse", "--short", "HEAD").out, files: results.map((r) => r.path), from: head.out };
+    return { dir: join(o.repo, ".factory"), written, kept, excluded: local.excluded, tracked: local.tracked };
   } finally {
-    git("worktree", "remove", "--force", wt);
     rmSync(tmp, { recursive: true, force: true });
   }
 }

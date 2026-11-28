@@ -1,8 +1,10 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, readTextFile, watchFolder, checking } from "herdr";
+import { theme, readTextFile, watchFolder, checking, props } from "herdr";
 import { validateBlueprints, stageOrder, stageNotes, draftsFor } from "./lib/blueprints.js";
-import { root } from "./lib/store.js";
+import { root, status } from "./lib/store.js";
+import { v2UI } from "./lib/model.js";
+import { BlueprintV2 } from "./v2.js";
 
 // Blueprint: each blueprint's stages in the order a ticket meets them, with run
 // counts from the daemon's blueprints.json (docs/layouts/05-blueprint.png).
@@ -11,6 +13,7 @@ export default class FactoryBlueprint extends View {
     this.doc = null;
     this.error = null;
     this.picked = null;
+    this.v2 = new BlueprintV2(cx, props() ?? {}); // props: only smoke.sh passes them // drawn instead while the V2_UI gate is on (v2.js)
     cx.spawn(async (cx) => {
       for (;;) {
         const dir = root();
@@ -44,6 +47,7 @@ export default class FactoryBlueprint extends View {
   }
 
   render() {
+    if (v2UI(status())) return this.v2.render(this.doc, this.error);
     const t = theme();
     const current = this.doc?.blueprints ?? [];
     // A blueprint only a pending request creates still gets a chip, with just its draft.
@@ -61,7 +65,8 @@ export default class FactoryBlueprint extends View {
     const tone = (s) => (s.gate === "human" ? "blocked" : "border");
     const stageBox = (s) => v_flex().gap(4).items_center()
       .child(this.box(t, { id: s.id, label: s.id, sub: runs(s.runs), tone: tone(s) }))
-      .child(div().text_size(11).text_color(s.gate === "human" ? t.blocked : t.dim).child(s.gate === "human" ? "human gate" : s.requires === "ready" ? "needs ready rules" : s.who));
+      .child(div().text_size(11).text_color(s.gate === "human" ? t.blocked : t.dim).child(s.gate === "human" ? "human gate" : s.requires === "ready" ? "needs ready rules" : s.who))
+      .when(Boolean(s.step), (el) => el.child(div().text_size(11).text_color(t.muted).child(`step: ${s.step}`)));
     const MARK = { added: ["done", "+ added"], changed: ["blocked", "~ changed"] };
     const draftBox = (s) => {
       const [tn, word] = MARK[s.change] ?? ["border", ""];

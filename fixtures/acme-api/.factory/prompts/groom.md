@@ -4,6 +4,10 @@ Ticket #{{ticket.id}}: {{ticket.title}}. You groom it: decide how it should be b
 
 {{issue}}
 
+{{digest}}
+
+The owner's note outweighs everything else here: {{ticket.notes}} What it answers, don't ask again.
+
 The code is in {{repo}}.
 
 {{agent.prompt}}

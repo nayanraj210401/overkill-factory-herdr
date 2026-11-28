@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import type { Run } from "./runner.ts";
 import { matchesFilter, type Trigger } from "./triggers.ts";
+import { journal } from "./journal.ts";
 
 // Goals without an issue get ids from here up, clear of any repo's issue numbers.
 export const LOCAL_IDS = 10000;
@@ -18,7 +19,15 @@ export function parseSource(text: string): Source {
   return { goal: t.replace(/\s+/g, " ") };
 }
 
-export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string; groom?: boolean }) {
+// `parent`: the ticket this one re-requests (factory new --parent). Its digest is where this one's
+// memory starts (digest.ts). A paused ticket can't be one: a paused ticket with parts is a split's,
+// which closes once its parts merge.
+export function newTicket(db: Database, o: { text: string; repo: string; blueprint: string; run: Run; now: string; trigger?: string; groom?: boolean; parent?: number; note?: string }) {
+  if (o.parent != null) {
+    const p = db.query("SELECT state FROM tickets WHERE id = ?").get(o.parent) as { state: string } | null;
+    if (!Number.isInteger(o.parent) || !p) throw new Error(`--parent: no ticket ${o.parent}`);
+    if (p.state === "paused") throw new Error(`--parent: #${o.parent} is paused; resume or drop it first (a paused ticket's parts come from factory split)`);
+  }
   const src = parseSource(o.text);
   let id: number;
   let title: string;
@@ -40,9 +49,13 @@ export function newTicket(db: Database, o: { text: string; repo: string; bluepri
     title = issue.title;
   }
   if (db.query("SELECT 1 FROM tickets WHERE id = ?").get(id)) throw new Error(`#${id} is already a ticket`);
+  const note = o.note?.trim() || null;
   // Groomed first (plan: grooming is the one stop), unless the caller starts it right away.
-  db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, title, o.groom ? "grooming" : "queued", o.blueprint, o.trigger ?? "manual", o.now);
-  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, `added ${"goal" in src ? "a goal" : `issue #${id}`}`, o.now);
+  db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, parent, notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(id, title, o.groom ? "grooming" : "queued", o.blueprint, o.trigger ?? "manual", o.parent ?? null, note, o.now);
+  const added = `${"goal" in src ? "a goal" : `issue #${id}`}: ${title}`;
+  db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'you', ?, ?)").run(id, "goal" in src ? "added a goal" : `added issue #${id}`, o.now);
+  journal(db, { ticket: id, kind: "created", text: `you added ${added} (${o.blueprint} blueprint${o.groom ? ", grooming first" : ""}${o.parent != null ? `; it re-requests #${o.parent}` : ""}${note ? "; with your note" : ""})`, ref: "goal" in src ? null : `issue:${id}`, at: o.now });
+  if (note) journal(db, { ticket: id, kind: "note", text: `your note, which outweighs the factory's prompts in every brief: ${note}`, at: o.now });
   return { id, title };
 }
 
@@ -104,6 +117,7 @@ export function pollQueue(db: Database, o: { queue: { github_project?: string; c
     db.query("INSERT INTO tickets (id, title, state, blueprint, trigger_name, updated_at) VALUES (?, ?, 'grooming', ?, ?, ?)")
       .run(c.number, c.title ?? `Issue #${c.number}`, o.trigger?.blueprint ?? "feature", o.trigger?.name ?? "queue", o.now);
     db.query("INSERT INTO decisions (ticket, who, what, at) VALUES (?, 'daemon', ?, ?)").run(c.number, `joined from ${q.github_project}'s ${q.column ?? "Ready"} column`, o.now);
+    journal(db, { ticket: c.number, kind: "created", text: `joined from ${q.github_project}'s ${q.column ?? "Ready"} column: ${c.title ?? `Issue #${c.number}`}`, ref: `issue:${c.number}`, at: o.now });
     added.push(c.number);
   }
   return added;

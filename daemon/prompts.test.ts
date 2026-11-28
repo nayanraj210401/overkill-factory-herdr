@@ -5,11 +5,13 @@ import { basename, join } from "node:path";
 import { open, setRepo } from "./db.ts";
 import { triageBrief } from "./groom.ts";
 import { overwatchBrief } from "./overwatch.ts";
+import { maintainerBrief } from "./maintainer.ts";
 import { BUILT_IN_PROMPTS, PLACEHOLDERS, loadPrompt, render, templateErrors } from "./prompts.ts";
 import { brief, sh, startTicket, type Run } from "./runner.ts";
 import { validateDir, validateFile } from "./validate.ts";
 import { matchBrief } from "./snap.ts";
 import { neighbourMap } from "./agents.ts";
+import { digestBlock } from "./digest.ts";
 import { ask } from "./ask.ts";
 
 const FIXTURE = join(import.meta.dir, "../fixtures/acme-api/.factory");
@@ -28,22 +30,34 @@ test("the built-in templates give the briefs the code used to build", () => {
   matchBrief("stageBare", brief({ id: 1, title: "t" }, "spec", null, "/f"));
   matchBrief("stageOne", brief({ id: 1, title: "t" }, "spec", "P", "/f", undefined, [repos[0]], ["(src/**) one", "(x) two"]));
   matchBrief("stageMulti", brief({ id: 1, title: "t" }, "implement", "P", "/f", "build", repos, ["(src/**) one", "(x) two"]));
+  matchBrief("stageMemory", brief({ id: 1, title: "t" }, "implement", "P", "/f", "build", [repos[0]], [], undefined, "", {}, "", "- [merged] stage-output #4 implement: Add login → done\n- [reverted] stage-output #5 implement: Rate limit → done"));
   matchBrief("stageHoldout", brief({ id: 1, title: "t" }, "verify", "P", "/f", "verify"));
   matchBrief("stageReview", brief({ id: 1, title: "t" }, "review", "P", "/f", "review"));
   matchBrief("stageFix", brief({ id: 1, title: "t" }, "implement", "P", dir, "build", repos).split(dir).join("/f"));
-  // The maintainer's brief: its whole territory and the request kinds (maintainer.md).
-  const maintainer = readFileSync(join(import.meta.dir, "../agents/maintainer.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
-  matchBrief("stageMaintainer", brief({ id: 10001, title: "Use a warmer accent" }, "maintain", maintainer, "/f", "maintain"));
+  // The ticket's digest (digest.ts), with the pointer to factory recall; a re-request's is its parent's.
+  const db = open(join(dir, "factory.db"));
+  db.query("INSERT INTO tickets (id, title, digest, digest_at, updated_at) VALUES (1, 't', ?, 'x', 'x')").run("## Decisions and why\n- A sliding window.\n## The person's answers\n- Q1: \"sliding, please\"\n## Tried and failed\n- none\n## Open questions\n- none\n## Current state\n- Spec written.");
+  db.query("INSERT INTO tickets (id, title, parent, updated_at) VALUES (7, 'x', 1, 'x')").run();
+  matchBrief("stageDigest", brief({ id: 1, title: "t" }, "implement", "P", "/f", "build", [repos[0]], [], undefined, "", {}, "", "", digestBlock(db, 1)));
+  matchBrief("groomDigest", triageBrief({ id: 7, title: "x" }, { ...o, digest: digestBlock(db, 7) }));
   // One Overwatch for every factory: its brief lists each, with its repos and data folder.
   const acme = { name: "acme-api", dir: "/h/acme-api", repos: [{ slug: "acme/api", path: "/src/api", lead: true }, { slug: "acme/web", path: "/src/web", lead: false }] };
   const shop = { name: "shop", dir: "/h/shop", repos: [{ slug: "acme/shop", path: "/src/shop", lead: true }] };
   matchBrief("overwatchNone", overwatchBrief({ home: "/h", factories: [], neighbours: "MAP" }));
   matchBrief("overwatchTwo", overwatchBrief({ home: "/h", factories: [acme, shop], neighbours: "MAP" }));
+  // The maintainer, a live global session like Overwatch: its whole territory, the direct-edit
+  // flow (maintainer.md), every factory, the app's checkout and the requests waiting for it.
+  const prev = process.env.FACTORY_APP_REPO;
+  process.env.FACTORY_APP_REPO = "/src/factory-app";
+  const waiting = [{ id: 4, from: "learner", to: "maintainer", toRepo: null, text: "Make max_running 3 permanent", why: "held for 30 tickets", about: null, request: null, at: "", delivered_at: null, done_at: null }];
+  try {
+    matchBrief("maintainerTwo", maintainerBrief({ home: "/h", factories: [acme, shop], neighbours: "MAP", notes: waiting, name: "acme-api" }));
+  } finally { if (prev === undefined) delete process.env.FACTORY_APP_REPO; else process.env.FACTORY_APP_REPO = prev; }
 });
 
 test("the fixture's default templates are the built-in ones, and each passes the validator", () => {
   expect(BUILT_IN_PROMPTS).toBe(join(FIXTURE, "prompts"));
-  expect(readdirSync(BUILT_IN_PROMPTS).sort()).toEqual(["groom.md", "handoff.md", "overwatch.md", "stage.md"]);
+  expect(readdirSync(BUILT_IN_PROMPTS).sort()).toEqual(["groom.md", "handoff.md", "maintainer.md", "overwatch.md", "stage.md"]);
   for (const name of Object.keys(PLACEHOLDERS)) {
     const text = readFileSync(join(BUILT_IN_PROMPTS, `${name}.md`), "utf8");
     expect(validateFile(`prompts/${name}.md`, text)).toEqual([]);
@@ -116,7 +130,7 @@ test("a stage's `prompt:` picks its own template; other stages keep stage.md", (
   const { dir, db, calls, run, repo } = stageSetup();
   prompts(repo, { "specs.md": "SPEC TEMPLATE for #{{ticket.id}}: {{agent.prompt}}" });
   const bp = join(repo, ".factory/blueprints/feature.yaml");
-  writeFileSync(bp, readFileSync(bp, "utf8").replace("agent: spec-writer,", "agent: spec-writer, prompt: specs,"));
+  writeFileSync(bp, readFileSync(bp, "utf8").replace("step: write-spec,", "step: write-spec, prompt: specs,"));
   expect(readFileSync(bp, "utf8")).toContain("prompt: specs");
   expect(validateDir(join(repo, ".factory")).filter((r) => r.errors.length)).toEqual([]);
   startTicket(db, { dir, repo, id: 412, run, now: "2026-11-21T10:00:00Z" });
@@ -125,8 +139,8 @@ test("a stage's `prompt:` picks its own template; other stages keep stage.md", (
 
 test("a note left for a repo agent with no live session comes last in its next brief in that repo, once", () => {
   const { dir, db, calls, run, repo } = stageSetup();
-  const note = ask(db, { to: "spec-writer", text: "Keep the API names stable", from: "overwatch", slug: "acme/api", dir, run, now: "2026-11-21T09:00:00Z", name: basename(dir) });
-  expect(note).toMatchObject({ kind: "note", delivered: false });
+  const note = ask(db, { to: "spec-writer", text: "Keep the API names stable", from: "overwatch", slug: "acme/api", run, now: "2026-11-21T09:00:00Z", name: basename(dir) });
+  expect(note).toMatchObject({ delivered: false });
   startTicket(db, { dir, repo, id: 412, run, now: "2026-11-21T10:00:00Z" });
   const text = calls[0].at(-1)!;
   expect(text.endsWith(`\n\n## Notes other agents left you\n\n- Note #${note.ask.id} from overwatch: Keep the API names stable. When it's handled: factory asks done ${note.ask.id} --name ${basename(dir)}`)).toBe(true);
@@ -139,7 +153,7 @@ test("validate: a stage prompt must name a file; unknown placeholders and empty 
   prompts(repo, { "good.md": "Hi {{ticket.title}}", "typo.md": "Hi {{ticket.titel}}", "empty.md": "  \n" });
   const bp = join(repo, ".factory/blueprints/feature.yaml");
   const text = readFileSync(bp, "utf8");
-  const add = (name: string) => writeFileSync(bp, text.replace("agent: spec-writer,", `agent: spec-writer, prompt: ${name},`));
+  const add = (name: string) => writeFileSync(bp, text.replace("step: write-spec,", `step: write-spec, prompt: ${name},`));
   const errors = () => Object.fromEntries(validateDir(join(repo, ".factory")).filter((r) => r.errors.length).map((r) => [r.path, r.errors]));
   expect(errors()).toMatchObject({ "prompts/typo.md": [expect.stringContaining("{{ticket.titel}}: unknown placeholder")], "prompts/empty.md": ["prompt: the file is empty"] });
   add("good");
@@ -150,7 +164,7 @@ test("validate: a stage prompt must name a file; unknown placeholders and empty 
   expect(errors()["blueprints/feature.yaml"]).toEqual(["stages.spec.prompt: no file prompts/nope.md"]);
   add("groom"); // grooming's template doesn't fit a stage
   expect(errors()["blueprints/feature.yaml"]![0]).toContain("groom is not a stage template");
-  writeFileSync(bp, text.replace("agent: spec-writer,", "agent: spec-writer, prompt: [a],"));
+  writeFileSync(bp, text.replace("step: write-spec,", "step: write-spec, prompt: [a],"));
   expect(errors()["blueprints/feature.yaml"]![0]).toContain("expected text");
   expect(existsSync(join(repo, ".factory/prompts/good.md"))).toBe(true);
 });

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { listRepos, open, type Repo } from "./db.ts";
 import { isFactoryAgent } from "./agents.ts";
 import { writeIfChanged } from "./files.ts";
-import { factoryHome, readState } from "./overwatch.ts";
+import { factoryHome, readState, SESSIONS } from "./globals.ts";
 import type { Run } from "./runner.ts";
 
 export const liveFile = (home = factoryHome()) => join(home, "agents-live.json");
@@ -118,11 +118,13 @@ export function liveRoster(o: { run: Run; now: string; home?: string; db?: (name
   const terms = liveTerminals(o.run);
   const factories: Roster["factories"] = [];
   const agents: LiveAgent[] = [];
-  // Overwatch, when its terminal is live: one for every factory (overwatch.ts).
-  const ow = readState(home);
-  const owTerm = ow.terminal ? terms?.get(ow.terminal) : undefined;
-  if (owTerm) agents.push({ factory: null, repo: null, agent: "overwatch", tier: "global", ticket: null, pr: null, stage: null,
-    ...statusOf(null, owTerm, false), terminal: ow.terminal!, live: true, started_at: ow.started_at ?? null, tokens: { input: 0, output: 0 } });
+  // Overwatch and the maintainer, when their terminals are live: one each for every factory (globals.ts).
+  for (const agent of SESSIONS) {
+    const st = readState(home, agent);
+    const term = st.terminal ? terms?.get(st.terminal) : undefined;
+    if (term) agents.push({ factory: null, repo: null, agent, tier: "global", ticket: null, pr: null, stage: null,
+      ...statusOf(null, term, false), terminal: st.terminal!, live: true, started_at: st.started_at ?? null, tokens: { input: 0, output: 0 } });
+  }
   for (const name of factoryNames(home)) {
     const kept = o.db?.(name);
     const db = kept ?? open(join(home, name, "factory.db"));

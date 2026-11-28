@@ -7,6 +7,7 @@ import type { Run } from "./runner.ts";
 import { needLead } from "./db.ts";
 import { LOCAL_IDS } from "./intake.ts";
 import { repairFor } from "./broken.ts";
+import { journal } from "./journal.ts";
 
 // "broken": a check the rule counts can't run (broken.ts). It doesn't block the PR, which
 // says so; gate: auto won't merge it.
@@ -35,6 +36,7 @@ export function recordVerdict(db: Database, o: { id: number; kind: VerdictKind; 
   const voter = o.by ?? s?.agent ?? "you";
   db.query("INSERT INTO verdicts (ticket, session, kind, voter, result, detail, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run(o.id, s?.id ?? null, o.kind, voter, o.result, o.detail, o.now);
+  journal(db, { ticket: o.id, session: s?.id ?? null, kind: "verdict", text: `${o.kind} ${o.result} from ${voter}${o.detail ? `: ${o.detail}` : ""}`, at: o.now });
   return voter;
 }
 
@@ -114,12 +116,8 @@ export function readyRules(db: Database, o: { id: number; dir: string; worktrees
 
 export const rulesPass = (rules: Rule[]) => rules.every((r) => r.result !== "fail");
 
-// PR.md, then what the maintainer's work left: the migration's report, the blueprint dry run, the diffs of files no repo holds, a cleanup's list.
-export function prText(dir: string, id: number) {
-  const folder = join(dir, "tickets", String(id));
-  const extra = ["MIGRATION.md", "DRYRUN.md", "ACCOUNT-CONFIG.md", "FACTORY-AGENTS.md", "EXAMPLES.md", "CLEANUP.md"].map((f) => join(folder, f)).filter((f) => existsSync(f));
-  return [readFileSync(join(folder, "PR.md"), "utf8"), ...extra.map((f) => readFileSync(f, "utf8"))].map((s) => s.trim()).join("\n\n");
-}
+// A ticket's PR body text: its PR.md.
+export const prText = (dir: string, id: number) => readFileSync(join(dir, "tickets", String(id), "PR.md"), "utf8").trim();
 
 export const RULE_MARK: Record<Rule["result"], string> = { pass: "✓", skipped: "–", broken: "⚠", fail: "✗" };
 
@@ -141,8 +139,9 @@ export function closesIssue(db: Database, id: number, repo: { lead: number }, cr
   return cross ? `Closes ${needLead(db).slug}#${id}` : `Closes #${id}`;
 }
 
-// All rules pass: push the ticket's branch and open the PR from PR.md, ready for review
-// (every ready rule has passed, so it isn't a draft), with the rule results appended. Agents can't push; only the daemon does (plan: Hard stops).
+// All rules pass: push the ticket's branch and open the PR from PR.md as a draft, with the
+// rule results appended. You asked for drafts: a PR turns ready for review only when it merges
+// (mergeOnGithub runs `gh pr ready` before `gh pr merge`, for `m` and for the auto gate alike). Agents can't push; only the daemon does (plan: Hard stops).
 export function openPr(db: Database, o: { id: number; dir: string; worktree: string; branch: string; rules: Rule[]; run: Run; existing?: number | null; others?: { repo: string; pr: number | null }[]; closes?: string | null; base?: string }) {
   const t = db.query("SELECT title FROM ticket_lead WHERE id = ?").get(o.id) as { title: string };
   const md = prText(o.dir, o.id);
@@ -159,7 +158,7 @@ export function openPr(db: Database, o: { id: number; dir: string; worktree: str
     if (edit.code !== 0) throw new Error(`gh pr edit failed: ${edit.out}`);
     return found;
   }
-  const pr = o.run(["gh", "pr", "create", "--head", o.branch, ...(o.base ? ["--base", o.base] : []), "--title", t.title, "--body-file", bodyFile], o.worktree);
+  const pr = o.run(["gh", "pr", "create", "--draft", "--head", o.branch, ...(o.base ? ["--base", o.base] : []), "--title", t.title, "--body-file", bodyFile], o.worktree);
   if (pr.code !== 0) throw new Error(`gh pr create failed: ${pr.out}`);
   const number = Number(pr.out.match(/\/pull\/(\d+)/)?.[1]);
   if (!number) throw new Error(`gh pr create printed no PR link: ${pr.out}`);

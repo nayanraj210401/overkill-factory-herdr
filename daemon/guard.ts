@@ -3,15 +3,21 @@
 // agent why, and notes it in the ticket's hard-stops.jsonl; the daemon parks the ticket.
 // The checks are pattern rules on the tool's input, so they catch the usual ways to do
 // each thing, not every way. Codex sessions get no hook, so they aren't covered.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+// A global agent's live session (Overwatch, the maintainer: globals.ts) always gets the hook,
+// with the factory-local stop: no commit, push or PR for a factory change (localHit).
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
 export const STOPS = ["push-to-main", "outside-worktree", "destructive-commands", "secrets-in-output"] as const;
-export type Hit = { stop: (typeof STOPS)[number]; reason: string };
-export type Guard = { stops: string[]; roots: string[]; cwd: string };
+// Not one factory.yaml lists: every global agent's session has it (localHit).
+export type Hit = { stop: (typeof STOPS)[number] | "factory-local"; reason: string };
+// `local`: a global agent's session (Overwatch, the maintainer). Factory changes are local
+// files, so it never pushes, opens or edits a PR, or commits; `app` is the factory app's own
+// checkout, where a look change may be committed on a local branch (and still never pushed).
+export type Guard = { stops: string[]; roots: string[]; cwd: string; local?: { app: string | null } };
 
-const SECRETS: [RegExp, string][] = [
+export const SECRETS: [RegExp, string][] = [
   [/AKIA[0-9A-Z]{16}/, "an AWS access key"],
   [/gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}/, "a GitHub token"],
   [/sk-(ant-)?[A-Za-z0-9_-]{24,}/, "an API key"],
@@ -25,6 +31,38 @@ const words = (cmd: string) => (cmd.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((w)
 const segments = (cmd: string) => cmd.split(/&&|\|\||[;|\n]/).map((s) => words(s.trim())).filter((w) => w.length);
 const isPath = (w: string) => /^(\/|~)/.test(w) || /(^|\/)\.\.(\/|$)/.test(w);
 
+// git's subcommand and the folder it works in: `git -C dir commit` commits in dir.
+function gitCall(args: string[], cwd: string) {
+  let dir = cwd;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-C") { dir = resolve(dir, (args[++i] ?? "").replace(/^~(?=\/|$)/, homedir())); continue; }
+    if (a === "-c" || a === "--git-dir" || a === "--work-tree" || a === "--namespace") { i++; continue; }
+    if (a.startsWith("-")) continue;
+    return { sub: a, dir };
+  }
+  return { sub: undefined, dir };
+}
+
+const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+const within = (p: string, root: string) => p === root || p.startsWith(root.replace(/\/$/, "") + "/");
+
+// gh pr commands that only read.
+const GH_PR_READS = new Set(["view", "list", "status", "diff", "checks"]);
+
+function localHit(w: string[], g: Guard): Hit | null {
+  const [prog, ...args] = w[0] === "sudo" || w[0] === "env" || w[0] === "command" ? w.slice(1) : w;
+  const app = g.local!.app;
+  if (prog === "git") {
+    const { sub, dir } = gitCall(args, g.cwd);
+    if (sub === "push") return stop("factory-local", "a global agent never pushes: factory changes are local files, edited in place");
+    if (sub === "commit" && !(app && (within(dir, app) || within(real(dir), real(app)))))
+      return stop("factory-local", "a global agent never commits into a repo: factory changes are local files, edited in place (a look change is committed only in the factory app's own checkout)");
+  }
+  if (prog === "gh" && args[0] === "pr" && args[1] && !GH_PR_READS.has(args[1])) return stop("factory-local", `a global agent never runs gh pr ${args[1]}: factory changes are local, with nothing to review or merge`);
+  return null;
+}
+
 const abs = (path: string, g: Guard) => resolve(g.cwd, path.replace(/^~(?=\/|$)/, homedir()));
 export function inside(path: string, g: Guard) {
   const p = abs(path, g);
@@ -37,6 +75,8 @@ const stop = (stop: Hit["stop"], reason: string): Hit => ({ stop, reason });
 function bashHit(cmd: string, g: Guard): Hit | null {
   const on = (s: string) => g.stops.includes(s);
   for (const w of segments(cmd)) {
+    const local = g.local ? localHit(w, g) : null;
+    if (local) return local;
     const sudo = w[0] === "sudo";
     const [prog, ...args] = sudo || w[0] === "env" || w[0] === "command" ? w.slice(1) : w;
     if (!prog) continue;
@@ -87,11 +127,13 @@ export function guardHit(tool: string, input: Record<string, any>, g: Guard): Hi
 }
 
 // The settings JSON a worker's `claude` takes with --settings. No listed stops, no hook.
-export function guardSettings(o: { stops: string[]; roots: string[]; log: string; script?: string; bun?: string }) {
+// `local`: a global agent's session, which always gets the hook (see Guard).
+export function guardSettings(o: { stops: string[]; roots: string[]; log: string; script?: string; bun?: string; local?: { app: string | null } }) {
   const stops = o.stops.filter((s) => (STOPS as readonly string[]).includes(s));
-  if (!stops.length) return null;
+  if (!stops.length && !o.local) return null;
   const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-  const command = [q(o.bun ?? process.execPath), q(o.script ?? import.meta.path), "--stops", q(stops.join(",")), "--roots", q(o.roots.join(":")), "--log", q(o.log)].join(" ");
+  const command = [q(o.bun ?? process.execPath), q(o.script ?? import.meta.path), "--stops", q(stops.join(",")), "--roots", q(o.roots.join(":")), "--log", q(o.log),
+    ...(o.local ? ["--local", q(o.local.app ?? "")] : [])].join(" ");
   return JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash|Edit|Write|MultiEdit|NotebookEdit", hooks: [{ type: "command", command }] }] } });
 }
 
@@ -110,12 +152,15 @@ export function takeHardStop(log: string): string | null {
 if (import.meta.main) {
   const arg = (n: string) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? "" : process.argv[i + 1] ?? ""; };
   const event = JSON.parse(await Bun.stdin.text());
-  const g: Guard = { stops: arg("stops").split(",").filter(Boolean), roots: arg("roots").split(":").filter(Boolean), cwd: event.cwd ?? process.cwd() };
+  const local = process.argv.includes("--local") ? { app: arg("local") || null } : undefined;
+  const g: Guard = { stops: arg("stops").split(",").filter(Boolean), roots: arg("roots").split(":").filter(Boolean), cwd: event.cwd ?? process.cwd(), local };
   const hit = guardHit(event.tool_name, event.tool_input ?? {}, g);
   if (hit) {
     mkdirSync(dirname(arg("log")), { recursive: true });
     appendFileSync(arg("log"), JSON.stringify({ ...hit, tool: event.tool_name, at: new Date().toISOString() }) + "\n");
-    console.error(`Hard stop (${hit.stop}): ${hit.reason}. This ticket is parked for a person to look at; stop work and don't try another way around it.`);
+    console.error(local
+      ? `Hard stop (${hit.stop}): ${hit.reason}. Don't try another way around it; tell whoever asked which hard stop this was.`
+      : `Hard stop (${hit.stop}): ${hit.reason}. This ticket is parked for a person to look at; stop work and don't try another way around it.`);
     process.exit(2);
   }
 }
